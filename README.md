@@ -14,6 +14,7 @@ We are building a modular platform for Hospitals, Clinics and Patients. We want 
 3) The Patient App, which can initiate a notice to a hospital, and then can communicate with the hospital according to the stage of the pipeline the patient is in. 
 
 Below is our proposed tech stack: 
+```
                 ┌───────────────────────────┐
                 │   Patient Web App (SPA)   │
                 │   React + Vite + TS       │
@@ -53,6 +54,7 @@ Below is our proposed tech stack:
 │  • Messages         │
 │  • Audit logs       │
 └─────────────────────┘
+```
 
 For our protoype, we want to implement a complete backend that can handle live updates from our Hospital App users and our Patient App users. 
 
