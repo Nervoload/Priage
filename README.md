@@ -1,11 +1,11 @@
-# Priage
+# 🚑💨 Priage 🤕
 An AI powered emergency department patient pipeline.
 
-Priage improves the emergency room experience for hospitals and patients. Through seemless data transfer, open communication, and quality patient monitoring--Priage transforms confusing and concern into certainty and satisfaction. Priage saves lives by tracking patients, and informing staff on potential disease or injury progression before treatment: whether on the way to the hospital or in the waiting room.
+Priage improves the emergency room experience for hospitals and patients. Through seemless data transfer, open communication, and quality patient monitoring--Priage transforms confusement and concern into certainty and satisfaction. Priage saves lives by tracking patients, and informing staff on potential disease or injury progression before treatment: whether on the way to the hospital or in the waiting room.
 
 Priage enables communication between patients and ER staff, allowing for updates directly from the waiting room. The medical team can view the condition, health status, messages and more for all patients. 
 
-# Development
+# Development 
 
 We are building a modular platform for Hospitals, Clinics and Patients. We want to build a prototype to present to Hospitals, and so we need to build the basic architecture which will be the foundation for scaling in the future. We are going to build the following:
 
@@ -66,7 +66,7 @@ For our database management, we will use **PostgreSQL** (standard for webapps) t
 
 Redis will manage read/write jobs from our backend.
 
-## Backend
+## Backend:
 
 Our backend will encapsulate the communication between our apps, the server, and initiate updates via our own REST APIs. We will manage the following:
 
@@ -80,6 +80,6 @@ Prisma will deal with our query packaging for our DB.
 
 Our backend will be built on Nest.js: Node and typescript
 
-## Frontend
+## Frontend:
 
 Our front end will be built using Vite and React --> for interactive webapps, and easy deployment using Vite. 
