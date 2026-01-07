@@ -121,7 +121,7 @@ From the repo root (the folder that contains `backend/` and `apps/`):
 
 ### macOS (Terminal)
 ~~~bash
-cd /path/to/your/repo
+cd /Priage/backend/
 
 # Prefer a clean, reproducible install when a lockfile exists
 if [ -f package-lock.json ]; then
@@ -133,7 +133,7 @@ fi
 
 ### Windows
 ~~~powershell
-cd C:\path\to\your\repo
+cd C:\Priage\backend\
 
 # Prefer a clean, reproducible install when a lockfile exists
 if (Test-Path package-lock.json) {
@@ -147,29 +147,29 @@ if (Test-Path package-lock.json) {
 
 ## 3) Create local environment files (secrets/config)
 
-Copy the committed examples into local-only files, then edit them.
+Copy the committed examples into local-only files, then edit them in Priage/backend.
 
 ### Backend env (NestJS)
 #### macOS
 ~~~bash
-cp backend/.env.example backend/.env
+cp .env.example .env
 ~~~
 
 #### Windows
 ~~~powershell
-Copy-Item backend\.env.example backend\.env
+Copy-Item .env.example .env
 ~~~
 
-### Frontend env (Vite apps)
-(We don't have this yet)
+### ~~Frontend env (Vite apps)~~
+**‼️(We don't have this yet)**
 
-#### macOS
+#### ~~macOS~~
 ~~~bash
 cp apps/patient/.env.example apps/patient/.env.local
 cp apps/hospital/.env.example apps/hospital/.env.local
 ~~~
 
-#### Windows
+#### ~~Windows~~
 ~~~powershell
 Copy-Item apps\patient\.env.example apps\patient\.env.local
 Copy-Item apps\hospital\.env.example apps\hospital\.env.local
@@ -179,16 +179,10 @@ Copy-Item apps\hospital\.env.example apps\hospital\.env.local
 
 ## 4) Start local infrastructure :PostgreSQL + Redis via Docker Compose
 
-Run from the folder that contains `docker-compose.yml`
+Run from the folder that contains `docker-compose.yml` (The root, /Priage)
 
-### macOS
-~~~bash
-docker compose up -d
-docker compose ps
-~~~
-
-### Windows 
-~~~powershell
+### macOS & Windows:
+~~~bash/powershell
 docker compose up -d
 docker compose ps
 ~~~
@@ -208,40 +202,24 @@ To wipe DB data volumes (destructive):
 
 Run from `backend/'
 
-### macOS
-~~~bash
-cd backend
+### macOS & Windows
+~~~bash/powershell
 npx prisma generate
-npx prisma migrate dev
-cd ..
-~~~
-
-### Windows (PowerShell)
-~~~powershell
-cd backend
-npx prisma generate
-npx prisma migrate dev
-cd ..
+npx prisma migrate dev --name init
 ~~~
 
 If this fails, check:
-- Docker DB is up (`docker compose ps`)
-- `DATABASE_URL` in `backend/.env` is correct
-
+- Docker DB is up (`docker compose ps`) (or in docker desktop)
+- `DATABASE_URL` in `backend/.env` is correct & that backend/.env exists
+- Misplaced files (.env, main.ts, tsconfig.json, prisma.config.ts)
 ---
 
 # Running the Software
 For testing locally, we need to start 3 terminals: 1) The backend, 2) the patient app, and 3) the hospital app. Here, we can see how the pipeline works on our docker container DB.
 
 ### Terminal 1 — Backend (NestJS)
-#### macOS
-~~~bash
-cd backend
-npm run start:dev
-~~~
-
-#### Windows (PowerShell)
-~~~powershell
+#### macOS & Windows
+~~~bash/powershell
 cd backend
 npm run start:dev
 ~~~
@@ -253,7 +231,7 @@ cd apps/patient
 npm run dev
 ~~~
 
-#### Windows (PowerShell)
+#### Windows
 ~~~powershell
 cd apps\patient
 npm run dev
@@ -266,7 +244,7 @@ cd apps/hospital
 npm run dev
 ~~~
 
-#### Windows (PowerShell)
+#### Windows 
 ~~~powershell
 cd apps\hospital
 npm run dev
