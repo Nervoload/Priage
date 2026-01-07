@@ -9,7 +9,6 @@ generator client {
 
 datasource db { // will update with actual db connection info later 
   provider = "postgresql"
-  //url      = env("DATABASE_URL")
 }
 
 enum EncounterStatus {
@@ -27,6 +26,7 @@ model Hospital {
   slug        String      @unique
   encounters  Encounter[]
   users       User[]
+  // admittance form questions?
 }
 
 model User {
@@ -55,6 +55,10 @@ model Patient {
   displayName String
   phone       String?
   encounters  Encounter[]
+  // Additional patient details to be considered:
+  // account info:like;y not necessary for this schema
+  // patient metris (like weight, etc)
+  // admittance form answers
 }
 
 model Encounter {
@@ -96,3 +100,4 @@ model Message {
   encounter   Encounter @relation(fields: [encounterId], references: [id])
   encounterId Int
 }
+

@@ -14,9 +14,11 @@ import { PrismaPg } from '@prisma/adapter-pg'; // might fix constructor issue
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   constructor() {
+    
+    // check if DATABASE_URL is set (from npx prisma generate and cp .env.example .env)
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
-      // Fail fast with a clear message (otherwise you’ll get confusing downstream errors).
+       
       throw new Error('DATABASE_URL is not set. Add it to your environment/.env for the backend process.');
     }
 

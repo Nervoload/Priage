@@ -7,11 +7,13 @@
 
 import { Module } from '@nestjs/common';
 
+import { RealtimeModule } from '../realtime/realtime.module';
 import { EncountersController } from './encounters.controller';
 import { EncountersService } from './encounters.service';
 
 @Module({
   controllers: [EncountersController],
   providers: [EncountersService],
+  imports: [RealtimeModule],
 })
 export class EncountersModule {}
