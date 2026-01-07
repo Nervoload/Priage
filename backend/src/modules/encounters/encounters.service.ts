@@ -10,7 +10,7 @@
 // Auth is intentionally skipped; later enforce role rules (admittance vs triage vs waiting staff) here.
 
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { EncounterStatus, MessageAuthor } from '../../../generated/prisma/client';
+import { EncounterStatus, MessageAuthor } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';

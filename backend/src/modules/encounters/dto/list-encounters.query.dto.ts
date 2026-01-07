@@ -5,7 +5,7 @@
 // Last Edited: Jan 6 2026
 // DTO for listing encounters with optional filters.
 
-import { EncounterStatus } from '../../../../generated/prisma/client';
+import { EncounterStatus } from '@prisma/client';
 import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class ListEncountersQueryDto {

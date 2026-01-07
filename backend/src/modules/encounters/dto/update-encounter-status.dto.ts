@@ -7,7 +7,7 @@
 
 // DTO for updating encounter status.
 
-import { EncounterStatus } from '../../../../generated/prisma/client';
+import { EncounterStatus } from '@prisma/client';
 import { IsEnum } from 'class-validator';
 
 export class UpdateEncounterStatusDto {

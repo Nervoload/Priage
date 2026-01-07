@@ -5,8 +5,6 @@
 // Last Modified: Jan 6 2026
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma"
-  module   = "commonjs"
 }
 
 datasource db { // will update with actual db connection info later 

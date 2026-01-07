@@ -6,26 +6,30 @@
 // PrismaService: injectable PrismaClient with NestJS lifecycle hooks.
 // This is the standard NestJS+Prisma pattern so the client connects cleanly and closes on shutdown.
 
-import { INestApplication, Injectable, OnModuleInit } from '@nestjs/common';
-import { PrismaClient } from '../../../generated/prisma/client';
+import { INestApplication, Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+
+import { PrismaPg } from '@prisma/adapter-pg'; // might fix constructor issue
 
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit {
+export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  constructor() {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      // Fail fast with a clear message (otherwise you’ll get confusing downstream errors).
+      throw new Error('DATABASE_URL is not set. Add it to your environment/.env for the backend process.');
+    }
+
+    //fixing constructor hooks
+    const adapter = new PrismaPg({ connectionString });
+    super({ adapter });
+  }
+
   async onModuleInit(): Promise<void> {
     await this.$connect();
   }
 
-  /**
-   * Call this in bootstrap if you want Prisma to close on app shutdown.
-   * (Optional for prototype, but safe to keep.)
-   */
-  async enableShutdownHooks(app: INestApplication): Promise<void> {
-    // Prisma no longer uses beforeExit in newer versions; rely on process signals and Nest shutdown.
-    process.on('SIGINT', async () => {
-      await app.close();
-    });
-    process.on('SIGTERM', async () => {
-      await app.close();
-    });
+  async onModuleDestroy(): Promise<void> {
+    await this.$disconnect();
   }
 }

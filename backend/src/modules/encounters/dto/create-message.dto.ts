@@ -6,7 +6,7 @@
 // DTO for posting a message tied to an encounter.
 // "from" is intentionally limited to PATIENT/STAFF for the prototype.
 
-import { MessageAuthor } from '../../../../generated/prisma/client';
+import { MessageAuthor } from '@prisma/client';
 import { IsEnum, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateMessageDto {
