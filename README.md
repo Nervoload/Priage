@@ -175,9 +175,9 @@ Copy-Item apps\hospital\.env.example apps\hospital\.env.local
 
 ---
 
-## 4) Start local infrastructure (PostgreSQL + Redis via Docker Compose)
+## 4) Start local infrastructure :PostgreSQL + Redis via Docker Compose
 
-Run from the folder that contains `compose.yaml` or `docker-compose.yml` (often the repo root).
+Run from the folder that contains `docker-compose.yml`
 
 ### macOS
 ~~~bash
@@ -185,7 +185,7 @@ docker compose up -d
 docker compose ps
 ~~~
 
-### Windows (PowerShell)
+### Windows 
 ~~~powershell
 docker compose up -d
 docker compose ps
@@ -202,9 +202,9 @@ To wipe DB data volumes (destructive):
 
 ---
 
-## 5) Prisma (generate client + apply migrations)
+## 5) Generate Prisma client + apply migrations)
 
-Run from `backend/` (or wherever `prisma/schema.prisma` lives).
+Run from `backend/'
 
 ### macOS
 ~~~bash
@@ -228,7 +228,8 @@ If this fails, check:
 
 ---
 
-## 6) Run the apps (3 terminals)
+# Running the Software
+For testing locally, we need to start 3 terminals: 1) The backend, 2) the patient app, and 3) the hospital app. Here, we can see how the pipeline works on our docker container DB.
 
 ### Terminal 1 — Backend (NestJS)
 #### macOS
@@ -269,20 +270,6 @@ cd apps\hospital
 npm run dev
 ~~~
 
-Each dev server prints the local URL in the terminal output.
+(Each dev server prints the local URL in the terminal output btw)
 
 ---
-
-## 7) Git hygiene (do not commit secrets or build output)
-
-Recommended `.gitignore` entries (merge with your existing file):
-~~~gitignore
-node_modules/
-dist/
-build/
-coverage/
-*.log
-.env
-.env.*
-*.local
-~~~
