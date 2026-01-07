@@ -42,6 +42,11 @@ enum Role {
   SUPPORT_STAFF
 }
 
+enum MessageAuthor {
+  PATIENT
+  STAFF
+}
+
 model Patient {
   id          Int         @id @default(autoincrement())
   displayName String
@@ -55,11 +60,12 @@ model Encounter {
   updatedAt      DateTime        @updatedAt
   status         EncounterStatus @default(PRE_TRIAGE)
 
+  hospitalName   String
   chiefComplaint String
   details        String?
 
-  hospital       Hospital        @relation(fields: [hospitalId], references: [id])
-  hospitalId     Int
+  hospital       Hospital?       @relation(fields: [hospitalId], references: [id])
+  hospitalId     Int?
 
   patient        Patient         @relation(fields: [patientId], references: [id])
   patientId      Int
@@ -72,8 +78,8 @@ model TriageNote {
   id          Int       @id @default(autoincrement())
   createdAt   DateTime  @default(now())
   note        String
-  createdBy   User      @relation(fields: [userId], references: [id])
-  userId      Int
+  createdBy   User?     @relation(fields: [userId], references: [id])
+  userId      Int?
   encounter   Encounter @relation(fields: [encounterId], references: [id])
   encounterId Int
 }
@@ -81,7 +87,7 @@ model TriageNote {
 model Message {
   id          Int       @id @default(autoincrement())
   createdAt   DateTime  @default(now())
-  fromRole    Role      // PATIENT vs STAFF? or string
+  from        MessageAuthor
   content     String
 
   encounter   Encounter @relation(fields: [encounterId], references: [id])

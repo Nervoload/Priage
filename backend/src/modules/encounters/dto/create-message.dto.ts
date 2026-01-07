@@ -4,14 +4,15 @@
 // Date Created: Jan 6 2026
 // Last Edited: Jan 6 2026
 // DTO for posting a message tied to an encounter.
-// "from" is a string for prototype ("PATIENT" | "STAFF"); later replace with structured identity.
+// "from" is intentionally limited to PATIENT/STAFF for the prototype.
 
-import { IsIn, IsString, MaxLength, MinLength } from 'class-validator';
+import { MessageAuthor } from '@prisma/client';
+import { IsEnum, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateMessageDto {
   @IsString()
-  @IsIn(['PATIENT', 'STAFF'])
-  from!: 'PATIENT' | 'STAFF';
+  @IsEnum(MessageAuthor)
+  from!: MessageAuthor;
 
   @IsString()
   @MinLength(1)

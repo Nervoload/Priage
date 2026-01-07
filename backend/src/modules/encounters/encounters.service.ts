@@ -10,7 +10,7 @@
 // Auth is intentionally skipped; later enforce role rules (admittance vs triage vs waiting staff) here.
 
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { EncounterStatus } from '@prisma/client';
+import { EncounterStatus, MessageAuthor } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -146,7 +146,7 @@ export class EncountersService {
     return triageNote;
   }
 
-  async addMessage(encounterId: number, from: 'PATIENT' | 'STAFF', content: string) {
+  async addMessage(encounterId: number, from: MessageAuthor, content: string) {
     const encounter = await this.prisma.encounter.findUnique({
       where: { id: encounterId },
       select: { id: true, hospitalName: true },
