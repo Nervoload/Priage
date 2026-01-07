@@ -6,9 +6,10 @@
 // Bootstraps the NestJS server.
 // Enables global validation and basic CORS for prototype development.
 
+import 'reflect-metadata';
+import 'dotenv/config';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import 'reflect-metadata';
 
 import { AppModule } from './app.module';
 

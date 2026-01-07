@@ -9,7 +9,6 @@ generator client {
 
 datasource db { // will update with actual db connection info later 
   provider = "postgresql"
-  //url      = env("DATABASE_URL")
 }
 
 enum EncounterStatus {
