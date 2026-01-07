@@ -92,6 +92,8 @@ Our front end will be built using Vite and React --> for interactive webapps, an
 ---
 
 ## 1) Pre-flight checks--verify your machine can run the stack:
+Make sure you have node and npm installed! Latest version is fine.
+You might also have to download nestjs globally.
 
 ### macOS (Terminal)
 ~~~bash
