@@ -1,7 +1,9 @@
 // backend/prisma/schema.prisma
-datasource db {
+// Prisma schema file
+// John Surette5
+datasource db { // will update with actual db connection info later 
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  //url      = env("DATABASE_URL")
 }
 
 generator client {
