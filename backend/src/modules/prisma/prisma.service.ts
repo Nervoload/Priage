@@ -7,7 +7,7 @@
 // This is the standard NestJS+Prisma pattern so the client connects cleanly and closes on shutdown.
 
 import { INestApplication, Injectable, OnModuleInit } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../../generated/prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit {

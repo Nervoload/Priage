@@ -17,7 +17,7 @@
 // - POST   /encounters/:id/messages        post message
 
 import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
-import { EncounterStatus } from '@prisma/client';
+import { EncounterStatus } from '../../../generated/prisma/client';
 
 import { EncountersService } from './encounters.service';
 import { AddTriageNoteDto } from './dto/add-triage-note.dto';

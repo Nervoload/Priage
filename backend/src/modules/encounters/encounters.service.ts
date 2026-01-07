@@ -10,7 +10,7 @@
 // Auth is intentionally skipped; later enforce role rules (admittance vs triage vs waiting staff) here.
 
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { EncounterStatus, MessageAuthor } from '@prisma/client';
+import { EncounterStatus, MessageAuthor } from '../../../generated/prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -104,9 +104,13 @@ export class EncountersService {
     if (!current) throw new NotFoundException(`Encounter ${encounterId} not found`);
 
     // Minimal transition sanity check: don't change after COMPLETE/CANCELLED.
-    if ([EncounterStatus.COMPLETE, EncounterStatus.CANCELLED].includes(current.status)) {
+    if (
+      current.status === EncounterStatus.COMPLETE ||
+      current.status === EncounterStatus.CANCELLED
+    ) {
       throw new BadRequestException(`Encounter ${encounterId} is terminal (${current.status})`);
     }
+
 
     const updated = await this.prisma.encounter.update({
       where: { id: encounterId },

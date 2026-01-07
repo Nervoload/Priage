@@ -1,0 +1,100 @@
+/// backend/prisma/schema.prisma
+// Prisma schema file
+// John Surette
+// Date Created: Dec 8 2025
+// Last Modified: Jan 6 2026
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+  module   = "commonjs"
+}
+
+datasource db {
+  provider = "postgresql"
+  //url      = env("DATABASE_URL")
+}
+
+enum EncounterStatus {
+  PRE_TRIAGE // patient initiated on app, not arrived yet
+  ARRIVED // admittance confirmed arrival
+  TRIAGE // currently in triage
+  WAITING // in waiting room
+  COMPLETE // left ED / visit done
+  CANCELLED // patient cancelled
+}
+
+model Hospital {
+  id         Int         @id @default(autoincrement())
+  name       String
+  slug       String      @unique
+  encounters Encounter[]
+  users      User[]
+}
+
+model User {
+  id          Int          @id @default(autoincrement())
+  email       String       @unique
+  password    String // hashed
+  role        Role
+  hospital    Hospital     @relation(fields: [hospitalId], references: [id])
+  hospitalId  Int
+  triageNotes TriageNote[]
+}
+
+enum Role {
+  ADMIN
+  MEDICAL_STAFF
+  SUPPORT_STAFF
+}
+
+enum MessageAuthor {
+  PATIENT
+  STAFF
+}
+
+model Patient {
+  id          Int         @id @default(autoincrement())
+  displayName String
+  phone       String?
+  encounters  Encounter[]
+}
+
+model Encounter {
+  id        Int             @id @default(autoincrement())
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  status    EncounterStatus @default(PRE_TRIAGE)
+
+  hospitalName   String
+  chiefComplaint String
+  details        String?
+
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id])
+  hospitalId Int?
+
+  patient   Patient @relation(fields: [patientId], references: [id])
+  patientId Int
+
+  triageNotes TriageNote[]
+  messages    Message[]
+}
+
+model TriageNote {
+  id          Int       @id @default(autoincrement())
+  createdAt   DateTime  @default(now())
+  note        String
+  createdBy   User?     @relation(fields: [userId], references: [id])
+  userId      Int?
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId Int
+}
+
+model Message {
+  id        Int           @id @default(autoincrement())
+  createdAt DateTime      @default(now())
+  from      MessageAuthor
+  content   String
+
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId Int
+}

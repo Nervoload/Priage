@@ -1,13 +1,17 @@
-// backend/prisma/schema.prisma
+/// backend/prisma/schema.prisma
 // Prisma schema file
-// John Surette5
+// John Surette
+// Date Created: Dec 8 2025
+// Last Modified: Jan 6 2026
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+  module   = "commonjs"
+}
+
 datasource db { // will update with actual db connection info later 
   provider = "postgresql"
   //url      = env("DATABASE_URL")
-}
-
-generator client {
-  provider = "prisma-client-js"
 }
 
 enum EncounterStatus {
@@ -34,6 +38,7 @@ model User {
   role        Role
   hospital    Hospital @relation(fields: [hospitalId], references: [id])
   hospitalId  Int
+  triageNotes TriageNote[]
 }
 
 enum Role {
