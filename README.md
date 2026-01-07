@@ -83,3 +83,206 @@ Our backend will be built on Nest.js: Node and typescript
 ## Frontend:
 
 Our front end will be built using Vite and React --> for interactive webapps, and easy deployment using Vite. 
+
+# Development Setup:
+
+## External Software
+- Docker Desktop (required to run local PostgreSQL + Redis)
+
+---
+
+## 1) Pre-flight checks--verify your machine can run the stack:
+
+### macOS (Terminal)
+~~~bash
+node -v
+npm -v
+docker --version
+docker compose version
+~~~
+
+### Windows (PowerShell)
+~~~powershell
+node -v
+npm -v
+docker --version
+docker compose version
+~~~
+
+If `docker compose` fails, open Docker Desktop and confirm it’s running.
+
+---
+
+## 2) Install repo dependencies (Node packages):
+
+From the repo root (the folder that contains `backend/` and `apps/`):
+
+### macOS (Terminal)
+~~~bash
+cd /path/to/your/repo
+
+# Prefer a clean, reproducible install when a lockfile exists
+if [ -f package-lock.json ]; then
+  npm ci
+else
+  npm install
+fi
+~~~
+
+### Windows
+~~~powershell
+cd C:\path\to\your\repo
+
+# Prefer a clean, reproducible install when a lockfile exists
+if (Test-Path package-lock.json) {
+  npm ci
+} else {
+  npm install
+}
+~~~
+
+---
+
+## 3) Create local environment files (secrets/config)
+
+Copy the committed examples into local-only files, then edit them.
+
+### Backend env (NestJS)
+#### macOS
+~~~bash
+cp backend/.env.example backend/.env
+~~~
+
+#### Windows
+~~~powershell
+Copy-Item backend\.env.example backend\.env
+~~~
+
+### Frontend env (Vite apps)
+(We don't have this yet)
+
+#### macOS
+~~~bash
+cp apps/patient/.env.example apps/patient/.env.local
+cp apps/hospital/.env.example apps/hospital/.env.local
+~~~
+
+#### Windows
+~~~powershell
+Copy-Item apps\patient\.env.example apps\patient\.env.local
+Copy-Item apps\hospital\.env.example apps\hospital\.env.local
+~~~
+
+---
+
+## 4) Start local infrastructure (PostgreSQL + Redis via Docker Compose)
+
+Run from the folder that contains `compose.yaml` or `docker-compose.yml` (often the repo root).
+
+### macOS
+~~~bash
+docker compose up -d
+docker compose ps
+~~~
+
+### Windows (PowerShell)
+~~~powershell
+docker compose up -d
+docker compose ps
+~~~
+
+To watch logs:
+- `docker compose logs -f`
+
+To stop everything:
+- `docker compose down`
+
+To wipe DB data volumes (destructive):
+- `docker compose down -v`
+
+---
+
+## 5) Prisma (generate client + apply migrations)
+
+Run from `backend/` (or wherever `prisma/schema.prisma` lives).
+
+### macOS
+~~~bash
+cd backend
+npx prisma generate
+npx prisma migrate dev
+cd ..
+~~~
+
+### Windows (PowerShell)
+~~~powershell
+cd backend
+npx prisma generate
+npx prisma migrate dev
+cd ..
+~~~
+
+If this fails, check:
+- Docker DB is up (`docker compose ps`)
+- `DATABASE_URL` in `backend/.env` is correct
+
+---
+
+## 6) Run the apps (3 terminals)
+
+### Terminal 1 — Backend (NestJS)
+#### macOS
+~~~bash
+cd backend
+npm run start:dev
+~~~
+
+#### Windows (PowerShell)
+~~~powershell
+cd backend
+npm run start:dev
+~~~
+
+### Terminal 2 — Patient web app (React + Vite + TypeScript)
+#### macOS
+~~~bash
+cd apps/patient
+npm run dev
+~~~
+
+#### Windows (PowerShell)
+~~~powershell
+cd apps\patient
+npm run dev
+~~~
+
+### Terminal 3 — Hospital web app (React + Vite + TypeScript)
+#### macOS
+~~~bash
+cd apps/hospital
+npm run dev
+~~~
+
+#### Windows (PowerShell)
+~~~powershell
+cd apps\hospital
+npm run dev
+~~~
+
+Each dev server prints the local URL in the terminal output.
+
+---
+
+## 7) Git hygiene (do not commit secrets or build output)
+
+Recommended `.gitignore` entries (merge with your existing file):
+~~~gitignore
+node_modules/
+dist/
+build/
+coverage/
+*.log
+.env
+.env.*
+*.local
+~~~
