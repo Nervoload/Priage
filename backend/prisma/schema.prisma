@@ -27,6 +27,7 @@ model Hospital {
   slug        String      @unique
   encounters  Encounter[]
   users       User[]
+  // admittance form questions?
 }
 
 model User {
@@ -55,6 +56,10 @@ model Patient {
   displayName String
   phone       String?
   encounters  Encounter[]
+  // Additional patient details to be considered:
+  // account info:like;y not necessary for this schema
+  // patient metris (like weight, etc)
+  // admittance form answers
 }
 
 model Encounter {
@@ -96,3 +101,4 @@ model Message {
   encounter   Encounter @relation(fields: [encounterId], references: [id])
   encounterId Int
 }
+
