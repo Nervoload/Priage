@@ -1,4 +1,4 @@
-# 🚑💨 Priage 🤕
+# PRIAGE 🚑💨 
 An AI powered emergency department patient pipeline.
 
 Priage improves the emergency room experience for hospitals and patients. Through seemless data transfer, open communication, and quality patient monitoring--Priage transforms confusement and concern into certainty and satisfaction. Priage saves lives by tracking patients, and informing staff on potential disease or injury progression before treatment: whether on the way to the hospital or in the waiting room.
