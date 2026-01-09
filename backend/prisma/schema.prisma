@@ -7,97 +7,219 @@ generator client {
   provider = "prisma-client-js"
 }
 
-datasource db { // will update with actual db connection info later 
+datasource db {
   provider = "postgresql"
 }
 
+/////////////////////////
+// ENUMS
+/////////////////////////
+
 enum EncounterStatus {
-  PRE_TRIAGE      // patient initiated on app, not arrived yet
-  ARRIVED         // admittance confirmed arrival
-  TRIAGE          // currently in triage
-  WAITING         // in waiting room
-  COMPLETE        // left ED / visit done
-  CANCELLED       // patient cancelled
-}
-
-model Hospital {
-  id          Int         @id @default(autoincrement())
-  name        String
-  slug        String      @unique
-  encounters  Encounter[]
-  users       User[]
-  // admittance form questions?
-}
-
-model User {
-  id          Int      @id @default(autoincrement())
-  email       String   @unique
-  password    String   // hashed
-  role        Role
-  hospital    Hospital @relation(fields: [hospitalId], references: [id])
-  hospitalId  Int
-  triageNotes TriageNote[]
+  PRE_TRIAGE
+  ARRIVED
+  TRIAGE
+  WAITING
+  COMPLETE
+  CANCELLED
 }
 
 enum Role {
   ADMIN
   MEDICAL_STAFF
   SUPPORT_STAFF
+  PATIENT
 }
 
 enum MessageAuthor {
   PATIENT
   STAFF
+  SYSTEM
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  VERIFIED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum EventType {
+  STATUS_CHANGE
+  SYMPTOM_UPDATE
+  AI_PRETRIAGE_COMPLETE
+  NURSE_ACKNOWLEDGED
+  NURSE_APPROVED
+  PATIENT_LEFT
+  PATIENT_RETURNED
+}
+
+/////////////////////////
+// CORE MODELS
+/////////////////////////
+
+model Hospital {
+  id   Int    @id @default(autoincrement())
+  name String
+  slug String @unique
+
+  users      User[]
+  encounters Encounter[]
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  role      Role
+  createdAt DateTime @default(now())
+
+  // Personal / health profile (used by AI pre-triage)
+  firstName         String?
+  lastName          String?
+  age               Int?
+  gender            String?
+  heightCm          Int?
+  weightKg          Int?
+  allergies         String?
+  conditions        String?
+  preferredLanguage String  @default("en")
+
+  // Hospital staff association (null for patients)
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id])
+  hospitalId Int?
+
+  // Relations
+  encounters  Encounter[]
+  triageNotes TriageNote[]
+  approvals   NurseApproval[]
+
+  patient Patient?
 }
 
 model Patient {
-  id          Int         @id @default(autoincrement())
-  displayName String
-  phone       String?
-  encounters  Encounter[]
-  // Additional patient details to be considered:
-  // account info:like;y not necessary for this schema
-  // patient metris (like weight, etc)
-  // admittance form answers
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // Optional link to a registered user
+  user   User? @relation(fields: [userId], references: [id])
+  userId Int?  @unique
+
+  encounters Encounter[]
 }
 
 model Encounter {
-  id             Int             @id @default(autoincrement())
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  status         EncounterStatus @default(PRE_TRIAGE)
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  hospitalName   String
-  chiefComplaint String
-  details        String?
+  // Patient visit
+  patient   Patient @relation(fields: [patientId], references: [id])
+  patientId Int
 
-  hospital       Hospital?       @relation(fields: [hospitalId], references: [id])
-  hospitalId     Int?
+  // Hospital assignment (optional until routed)
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id])
+  hospitalId Int?
 
-  patient        Patient         @relation(fields: [patientId], references: [id])
-  patientId      Int
+  // Creator / owner (patient user)
+  user   User? @relation(fields: [userId], references: [id])
+  userId Int?
 
-  triageNotes    TriageNote[]
-  messages       Message[]
+  // Relations (opposite sides)
+  preTriageAnswers PreTriageAnswer[]
+  nurseApprovals   NurseApproval[]
+  triageNotes      TriageNote[]
+  messages         Message[]
+  events           EncounterEvent[]
+}
+
+/////////////////////////
+// PRE-TRIAGE (AI-ASSISTED)
+/////////////////////////
+
+model PreTriageQuestion {
+  id        Int      @id @default(autoincrement())
+  prompt    String
+  inputType String // text, number, boolean, select
+  language  String // en, fr, etc
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  answers PreTriageAnswer[]
+}
+
+model PreTriageAnswer {
+  id         Int      @id @default(autoincrement())
+  answer     String
+  translated String?
+  createdAt  DateTime @default(now())
+
+  question   PreTriageQuestion @relation(fields: [questionId], references: [id])
+  questionId Int
+
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId Int
+}
+
+/////////////////////////
+// NURSE REVIEW & SAFETY
+/////////////////////////
+
+model NurseApproval {
+  id        Int            @id @default(autoincrement())
+  status    ApprovalStatus @default(PENDING)
+  notes     String?
+  createdAt DateTime       @default(now())
+
+  nurse   User @relation(fields: [nurseId], references: [id])
+  nurseId Int
+
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId Int
 }
 
 model TriageNote {
-  id          Int       @id @default(autoincrement())
-  createdAt   DateTime  @default(now())
-  note        String
-  createdBy   User?     @relation(fields: [userId], references: [id])
-  userId      Int?
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  note      String
+
+  createdBy User? @relation(fields: [userId], references: [id])
+  userId    Int?
+
   encounter   Encounter @relation(fields: [encounterId], references: [id])
   encounterId Int
 }
+
+/////////////////////////
+// COMMUNICATION
+/////////////////////////
 
 model Message {
-  id          Int       @id @default(autoincrement())
-  createdAt   DateTime  @default(now())
-  from        MessageAuthor
-  content     String
+  id        Int           @id @default(autoincrement())
+  createdAt DateTime      @default(now())
+  author    MessageAuthor
+  content   String
+  original  String?
+  language  String?
 
   encounter   Encounter @relation(fields: [encounterId], references: [id])
   encounterId Int
 }
 
+/////////////////////////
+// AUDIT & TIMELINE
+/////////////////////////
+
+model EncounterEvent {
+  id        Int       @id @default(autoincrement())
+  type      EventType
+  metadata  Json?
+  createdAt DateTime  @default(now())
+
+  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  encounterId Int
+}
