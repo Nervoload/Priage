@@ -6,67 +6,120 @@
 // Last Edited: Jan 6 2026
 
 // Business logic for encounters.
-// Writes to Postgres via Prisma and emits real-time events via RealtimeGateway.
-// Auth is intentionally skipped; later enforce role rules (admittance vs triage vs waiting staff) here.
+// Writes to Postgres via Prisma and emits domain events.
+// Auth is intentionally skipped; later enforce role rules here.
 
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { EncounterStatus, MessageAuthor } from '@prisma/client';
+import { EncounterStatus, EventType, Prisma } from '@prisma/client';
 
+import { EventsService } from '../events/events.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
+
+export type EncounterActor = {
+  actorUserId?: number;
+  actorPatientId?: number;
+};
+
+type EncounterTransition = {
+  to: EncounterStatus;
+  allowedFrom: EncounterStatus[];
+  timestampField?: keyof Prisma.EncounterUpdateInput;
+  eventType?: EventType;
+};
+
+const TERMINAL_STATUSES = new Set<EncounterStatus>([
+  EncounterStatus.COMPLETE,
+  EncounterStatus.CANCELLED,
+  EncounterStatus.UNRESOLVED,
+]);
+
+const TRANSITIONS: Record<string, EncounterTransition> = {
+  confirm: {
+    to: EncounterStatus.ADMITTED,
+    allowedFrom: [EncounterStatus.EXPECTED],
+    timestampField: 'arrivedAt',
+  },
+  markArrived: {
+    to: EncounterStatus.ADMITTED,
+    allowedFrom: [EncounterStatus.EXPECTED],
+    timestampField: 'arrivedAt',
+  },
+  createWaiting: {
+    to: EncounterStatus.WAITING,
+    allowedFrom: [EncounterStatus.ADMITTED, EncounterStatus.TRIAGE],
+    timestampField: 'waitingAt',
+  },
+  startExam: {
+    to: EncounterStatus.TRIAGE,
+    allowedFrom: [EncounterStatus.ADMITTED, EncounterStatus.WAITING],
+    timestampField: 'seenAt',
+  },
+  discharge: {
+    to: EncounterStatus.COMPLETE,
+    allowedFrom: [EncounterStatus.ADMITTED, EncounterStatus.TRIAGE, EncounterStatus.WAITING],
+    timestampField: 'departedAt',
+  },
+  cancel: {
+    to: EncounterStatus.CANCELLED,
+    allowedFrom: [
+      EncounterStatus.EXPECTED,
+      EncounterStatus.ADMITTED,
+      EncounterStatus.TRIAGE,
+      EncounterStatus.WAITING,
+    ],
+    timestampField: 'cancelledAt',
+  },
+};
 
 @Injectable()
 export class EncountersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly realtime: RealtimeGateway,
+    private readonly events: EventsService,
   ) {}
 
-  async createEncounter(dto: CreateEncounterDto) {
+  async createEncounter(dto: CreateEncounterDto, actor?: EncounterActor) {
+    const { encounter, event } = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.encounter.create({
+        data: {
+          status: EncounterStatus.EXPECTED,
+          hospitalId: dto.hospitalId,
+          patientId: dto.patientId,
+          chiefComplaint: dto.chiefComplaint,
+          details: dto.details,
+        },
+        include: {
+          patient: true,
+        },
+      });
 
-    // Create links Patient + Encounter with PRE_TRIAGE.
-    // emit WebSocket event encounter.created to admittance view
-    
-    // **Prototype: create a new Patient record every time.
-    // Later: de-dup patients by phone/email or use an external identity system
-    const patient = await this.prisma.patient.create({
-      data: {
-        displayName: dto.patientDisplayName,
-        phone: dto.patientPhone,
-      },
+      const createdEvent = await this.events.emitEncounterEventTx(tx, {
+        encounterId: created.id,
+        hospitalId: created.hospitalId ?? undefined,
+        type: EventType.ENCOUNTER_CREATED,
+        metadata: {
+          status: created.status,
+        },
+        actor,
+      });
+
+      return { encounter: created, event: createdEvent };
     });
 
-    const encounter = await this.prisma.encounter.create({
-      data: {
-        status: EncounterStatus.PRE_TRIAGE,
-        hospitalName: dto.hospitalName,
-        chiefComplaint: dto.chiefComplaint,
-        details: dto.details,
-        patientId: patient.id,
-      },
-      include: {
-        patient: true,
-        triageNotes: true,
-        messages: true,
-      },
-    });
-
-    // Push to hospital admittance dashboard (room keyed by hospitalName).
-    this.realtime.emitEncounterCreated(encounter.hospitalName, encounter);
-
-    // Also push an "updated" event to the encounter room (if patient has joined it).
-    this.realtime.emitEncounterUpdated(encounter.hospitalName, encounter.id, encounter);
+    if (event) {
+      this.events.dispatchEncounterEvent(event);
+    }
 
     return encounter;
   }
 
   async listEncounters(query: ListEncountersQueryDto) {
-    const where: Record<string, unknown> = {};
+    const where: Prisma.EncounterWhereInput = {};
 
     if (query.status) where.status = query.status;
-    if (query.hospitalName) where.hospitalName = query.hospitalName;
+    if (query.hospitalId) where.hospitalId = query.hospitalId;
 
     return this.prisma.encounter.findMany({
       where,
@@ -82,8 +135,10 @@ export class EncountersService {
       where: { id: encounterId },
       include: {
         patient: true,
-        triageNotes: { orderBy: { createdAt: 'asc' } },
+        triageAssessments: { orderBy: { createdAt: 'asc' } },
         messages: { orderBy: { createdAt: 'asc' } },
+        alerts: { orderBy: { createdAt: 'asc' } },
+        assets: { orderBy: { createdAt: 'asc' } },
       },
     });
 
@@ -94,83 +149,99 @@ export class EncountersService {
     return encounter;
   }
 
-  async updateEncounterStatus(encounterId: number, status: EncounterStatus) {
-    // Optional: enforce allowed transitions here for prototype sanity.
-    // checks role: SUPPORT_STAFF can set ARRIVED, CANCELLED, NO_SHOW, etc.
-    // MEDICAL-STAFF can set TRIAGE, WAITING, TREATING, OUTBOUND, etc
-    // emit WebSocket event encounter.updated 
-    
-    const current = await this.prisma.encounter.findUnique({ where: { id: encounterId } });
-    if (!current) throw new NotFoundException(`Encounter ${encounterId} not found`);
+  async confirm(encounterId: number, actor?: EncounterActor) {
+    return this.transition(encounterId, 'confirm', actor);
+  }
 
-    // Minimal transition sanity check: don't change after COMPLETE/CANCELLED.
-    if (
-      current.status === EncounterStatus.COMPLETE ||
-      current.status === EncounterStatus.CANCELLED
-    ) {
-      throw new BadRequestException(`Encounter ${encounterId} is terminal (${current.status})`);
+  async markArrived(encounterId: number, actor?: EncounterActor) {
+    return this.transition(encounterId, 'markArrived', actor);
+  }
+
+  async createWaiting(encounterId: number, actor?: EncounterActor) {
+    return this.transition(encounterId, 'createWaiting', actor);
+  }
+
+  async startExam(encounterId: number, actor?: EncounterActor) {
+    return this.transition(encounterId, 'startExam', actor);
+  }
+
+  async discharge(encounterId: number, actor?: EncounterActor) {
+    return this.transition(encounterId, 'discharge', actor);
+  }
+
+  async cancel(encounterId: number, actor?: EncounterActor) {
+    return this.transition(encounterId, 'cancel', actor);
+  }
+
+  private async transition(
+    encounterId: number,
+    transitionKey: keyof typeof TRANSITIONS,
+    actor?: EncounterActor,
+  ) {
+    const transition = TRANSITIONS[transitionKey];
+    if (!transition) {
+      throw new BadRequestException(`Unknown transition: ${String(transitionKey)}`);
     }
 
+    const now = new Date();
 
-    const updated = await this.prisma.encounter.update({
-      where: { id: encounterId },
-      data: { status },
-      include: {
-        patient: true,
-        triageNotes: true,
-        messages: true,
-      },
+    const { encounter, event } = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.encounter.findUnique({ where: { id: encounterId } });
+      if (!current) throw new NotFoundException(`Encounter ${encounterId} not found`);
+
+      if (TERMINAL_STATUSES.has(current.status)) {
+        throw new BadRequestException(`Encounter ${encounterId} is terminal (${current.status})`);
+      }
+
+      if (!transition.allowedFrom.includes(current.status)) {
+        throw new BadRequestException(
+          `Invalid transition ${transitionKey} from ${current.status} to ${transition.to}`,
+        );
+      }
+
+      const updateData: Prisma.EncounterUpdateInput = {
+        status: transition.to,
+      };
+
+      if (transition.timestampField) {
+        const timestampField = transition.timestampField as keyof typeof current;
+        if (!current[timestampField]) {
+          updateData[transition.timestampField] = now;
+        }
+      }
+
+      const updated = await tx.encounter.update({
+        where: { id: encounterId },
+        data: updateData,
+      });
+
+      const createdEvent = await this.events.emitEncounterEventTx(tx, {
+        encounterId: updated.id,
+        hospitalId: updated.hospitalId ?? undefined,
+        type: EventType.STATUS_CHANGE,
+        metadata: {
+          fromStatus: current.status,
+          toStatus: updated.status,
+          transition: transitionKey,
+          timestamps: {
+            arrivedAt: updated.arrivedAt,
+            triagedAt: updated.triagedAt,
+            waitingAt: updated.waitingAt,
+            seenAt: updated.seenAt,
+            departedAt: updated.departedAt,
+            cancelledAt: updated.cancelledAt,
+          },
+        },
+        actor,
+      });
+
+      return { encounter: updated, event: createdEvent };
     });
 
-    this.realtime.emitEncounterUpdated(updated.hospitalName, updated.id, updated);
-    return updated;
-  }
+    if (event) {
+      this.events.dispatchEncounterEvent(event);
+    }
 
-  async addTriageNote(encounterId: number, note: string) {
-    // Ensure encounter exists and capture hospitalName for broadcast.
-    const encounter = await this.prisma.encounter.findUnique({
-      where: { id: encounterId },
-      select: { id: true, hospitalName: true },
-    });
-    if (!encounter) throw new NotFoundException(`Encounter ${encounterId} not found`);
-
-    const triageNote = await this.prisma.triageNote.create({
-      data: {
-        note,
-        encounterId,
-      },
-    });
-
-    this.realtime.emitTriageNoteCreated(encounter.hospitalName, encounterId, triageNote);
-
-    // Emit updated encounter snapshot as well (handy for UIs).
-    const updated = await this.getEncounter(encounterId);
-    this.realtime.emitEncounterUpdated(encounter.hospitalName, encounterId, updated);
-
-    return triageNote;
-  }
-
-  async addMessage(encounterId: number, from: MessageAuthor, content: string) {
-    const encounter = await this.prisma.encounter.findUnique({
-      where: { id: encounterId },
-      select: { id: true, hospitalName: true },
-    });
-    if (!encounter) throw new NotFoundException(`Encounter ${encounterId} not found`);
-
-    const message = await this.prisma.message.create({
-      data: {
-        from,
-        content,
-        encounterId,
-      },
-    });
-
-    this.realtime.emitMessageCreated(encounter.hospitalName, encounterId, message);
-
-    // Emit updated encounter snapshot (optional but convenient).
-    const updated = await this.getEncounter(encounterId);
-    this.realtime.emitEncounterUpdated(encounter.hospitalName, encounterId, updated);
-
-    return message;
+    return encounter;
   }
 }

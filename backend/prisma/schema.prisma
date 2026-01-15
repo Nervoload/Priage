@@ -73,6 +73,8 @@ model Encounter {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   status    EncounterStatus @default(EXPECTED)
+  chiefComplaint String?
+  details        String?
 
   hospital   Hospital? @relation(fields: [hospitalId], references: [id])
   hospitalId Int?
@@ -257,6 +259,22 @@ model PatientProfile {
   encounters Encounter[]
   messages   Message[]
 
+}
+
+model PatientSession {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime?
+
+  patientId Int
+  patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  encounterId Int
+  encounter   Encounter @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@index([encounterId, createdAt])
 }
 
 model Message {

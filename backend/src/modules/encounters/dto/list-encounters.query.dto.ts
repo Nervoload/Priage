@@ -6,7 +6,7 @@
 // DTO for listing encounters with optional filters.
 
 import { EncounterStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEnum, IsInt, IsOptional } from 'class-validator';
 
 export class ListEncountersQueryDto {
   @IsOptional()
@@ -14,7 +14,6 @@ export class ListEncountersQueryDto {
   status?: EncounterStatus;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(160)
-  hospitalName?: string;
+  @IsInt()
+  hospitalId?: number;
 }

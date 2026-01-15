@@ -7,10 +7,12 @@
 
 import { Module } from '@nestjs/common';
 
+import { PrismaModule } from '../prisma/prisma.module';
 import { RealtimeGateway } from './realtime.gateway';
 
 @Module({
   providers: [RealtimeGateway],
+  imports: [PrismaModule],
   exports: [RealtimeGateway],
 })
 export class RealtimeModule {}

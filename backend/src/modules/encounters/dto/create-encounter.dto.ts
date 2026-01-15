@@ -5,26 +5,16 @@
 // Date Created: Dec 8 2025
 // Last Edited: Jan 6 2026
 
-// DTO for creating an encounter from the patient app intake.
-// For prototype: hospitalName is a string; later switch to hospitalId or hospitalSlug.
+// DTO for creating an encounter from staff tooling or intake confirmations.
 
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsInt, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class CreateEncounterDto {
-  @IsString()
-  @MinLength(1)
-  @MaxLength(120)
-  patientDisplayName!: string;
+  @IsInt()
+  patientId!: number;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(40)
-  patientPhone?: string;
-
-  @IsString()
-  @MinLength(1)
-  @MaxLength(160)
-  hospitalName!: string;
+  @IsInt()
+  hospitalId!: number;
 
   @IsString()
   @MinLength(1)
