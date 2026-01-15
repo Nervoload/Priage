@@ -8,12 +8,27 @@
 
 import { Module } from '@nestjs/common';
 
+import { AuthModule } from './modules/auth/auth.module';
+import { ConfigModule } from './modules/config/config.module';
 import { EncountersModule } from './modules/encounters/encounters.module';
 import { HealthModule } from './modules/health/health.module';
+import { ObservabilityModule } from './modules/observability/observability.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { TenantModule } from './modules/tenant/tenant.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
-  imports: [PrismaModule, RealtimeModule, EncountersModule, HealthModule],
+  imports: [
+    ConfigModule,
+    ObservabilityModule,
+    PrismaModule,
+    TenantModule,
+    UsersModule,
+    AuthModule,
+    RealtimeModule,
+    EncountersModule,
+    HealthModule,
+  ],
 })
 export class AppModule {}

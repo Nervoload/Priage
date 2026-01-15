@@ -1,9 +1,21 @@
-// backend/src/modules/auth/jwt.straegy.ts
-// John Surette
-// Dec 8, 2025
-// jwt.strategy.ts
-// implements NestJS's passport JWT strategy
-// used by guards/jwt/jwt-auth.guard.ts and roles/guard.ts 
-// JwtAuthGuard checks request jhas valid JWT, attaches req.user
-// RolesGuard cheks req.user.role is allowed at endpoint
-//
+import { Injectable } from '@nestjs/common';
+import { PassportStrategy } from '@nestjs/passport';
+import { ExtractJwt, Strategy } from 'passport-jwt';
+
+import { AppConfigService } from '../config/config.service';
+import { JwtPayload } from './auth.service';
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(configService: AppConfigService) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false,
+      secretOrKey: configService.getJwtAccessSecret(),
+    });
+  }
+
+  validate(payload: JwtPayload): JwtPayload {
+    return payload;
+  }
+}

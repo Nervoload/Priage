@@ -6,23 +6,16 @@
 // PrismaService: injectable PrismaClient with NestJS lifecycle hooks.
 // This is the standard NestJS+Prisma pattern so the client connects cleanly and closes on shutdown.
 
-import { INestApplication, Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 import { PrismaPg } from '@prisma/adapter-pg'; // might fix constructor issue
+import { AppConfigService } from '../config/config.service';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
-  constructor() {
-    
-    // check if DATABASE_URL is set (from npx prisma generate and cp .env.example .env)
-    const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) {
-       
-      throw new Error('DATABASE_URL is not set. Add it to your environment/.env for the backend process.');
-    }
-
-    //fixing constructor hooks
+  constructor(configService: AppConfigService) {
+    const connectionString = configService.getDatabaseUrl();
     const adapter = new PrismaPg({ connectionString });
     super({ adapter });
   }

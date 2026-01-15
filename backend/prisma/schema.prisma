@@ -141,7 +141,7 @@ model EncounterEvent {
 model User {
   id        Int      @id @default(autoincrement())
   email     String   @unique
-  password  String
+  passwordHash  String
   role      Role     @default(STAFF)
   createdAt DateTime @default(now())
 

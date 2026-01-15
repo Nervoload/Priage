@@ -8,13 +8,15 @@
 
 import 'reflect-metadata';
 import 'dotenv/config';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
+import { AppConfigService } from './modules/config/config.service';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
+  app.enableShutdownHooks();
 
   // Prototype-friendly CORS (lock down origins later).
   app.enableCors({
@@ -33,11 +35,12 @@ async function bootstrap(): Promise<void> {
     }),
   );
 
-  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+  const configService = app.get(AppConfigService);
+  const port = configService.getPort();
   await app.listen(port);
 
-  // eslint-disable-next-line no-console
-  console.log(`[priage-backend] listening on http://localhost:${port}`);
+  const logger = new Logger('Bootstrap');
+  logger.log(`[priage-backend] listening on http://localhost:${port}`);
 }
 
 void bootstrap();
