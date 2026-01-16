@@ -54,7 +54,7 @@ const TRANSITIONS: Record<string, EncounterTransition> = {
   startExam: {
     to: EncounterStatus.TRIAGE,
     allowedFrom: [EncounterStatus.ADMITTED, EncounterStatus.WAITING],
-    timestampField: 'seenAt',
+    timestampField: 'triagedAt',
   },
   discharge: {
     to: EncounterStatus.COMPLETE,
