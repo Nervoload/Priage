@@ -7,13 +7,14 @@
 
 import { Module } from '@nestjs/common';
 
-import { RealtimeModule } from '../realtime/realtime.module';
+import { EventsModule } from '../events/events.module';
+import { PrismaModule } from '../prisma/prisma.module';
 import { EncountersController } from './encounters.controller';
 import { EncountersService } from './encounters.service';
 
 @Module({
   controllers: [EncountersController],
   providers: [EncountersService],
-  imports: [RealtimeModule],
+  imports: [EventsModule, PrismaModule],
 })
 export class EncountersModule {}

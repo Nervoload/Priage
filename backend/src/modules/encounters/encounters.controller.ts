@@ -9,22 +9,22 @@
 
 // Prototype endpoints
 
-// - POST   /encounters                     create encounter (patient intake)
+// - POST   /encounters                     create encounter
 // - GET    /encounters                     list encounters (optional filters)
 // - GET    /encounters/:id                 get encounter + related objects
-// - PATCH  /encounters/:id/status          update status
-// - POST   /encounters/:id/triage-notes    add triage note
-// - POST   /encounters/:id/messages        post message
+// - POST   /encounters/:id/confirm          confirm encounter
+// - POST   /encounters/:id/arrived          mark arrived
+// - POST   /encounters/:id/waiting          mark waiting
+// - POST   /encounters/:id/start-exam       start exam/triage
+// - POST   /encounters/:id/discharge        discharge encounter
+// - POST   /encounters/:id/cancel           cancel encounter
 
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
-import { EncounterStatus } from '@prisma/client';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 
 import { EncountersService } from './encounters.service';
-import { AddTriageNoteDto } from './dto/add-triage-note.dto';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
-import { CreateMessageDto } from './dto/create-message.dto';
+import { EncounterActorDto } from './dto/encounter-actor.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
-import { UpdateEncounterStatusDto } from './dto/update-encounter-status.dto';
 
 @Controller('encounters')
 export class EncountersController {
@@ -45,27 +45,51 @@ export class EncountersController {
     return this.encountersService.getEncounter(id);
   }
 
-  @Patch(':id/status')
-  async updateStatus(
+  @Post(':id/confirm')
+  async confirm(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateEncounterStatusDto,
+    @Body() dto: EncounterActorDto,
   ) {
-    return this.encountersService.updateEncounterStatus(id, dto.status as EncounterStatus);
+    return this.encountersService.confirm(id, dto);
   }
 
-  @Post(':id/triage-notes')
-  async addTriageNote(
+  @Post(':id/arrived')
+  async markArrived(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: AddTriageNoteDto,
+    @Body() dto: EncounterActorDto,
   ) {
-    return this.encountersService.addTriageNote(id, dto.note);
+    return this.encountersService.markArrived(id, dto);
   }
 
-  @Post(':id/messages')
-  async addMessage(
+  @Post(':id/waiting')
+  async createWaiting(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: CreateMessageDto,
+    @Body() dto: EncounterActorDto,
   ) {
-    return this.encountersService.addMessage(id, dto.from, dto.content);
+    return this.encountersService.createWaiting(id, dto);
+  }
+
+  @Post(':id/start-exam')
+  async startExam(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: EncounterActorDto,
+  ) {
+    return this.encountersService.startExam(id, dto);
+  }
+
+  @Post(':id/discharge')
+  async discharge(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: EncounterActorDto,
+  ) {
+    return this.encountersService.discharge(id, dto);
+  }
+
+  @Post(':id/cancel')
+  async cancel(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: EncounterActorDto,
+  ) {
+    return this.encountersService.cancel(id, dto);
   }
 }
