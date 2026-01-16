@@ -2,102 +2,306 @@
 // Prisma schema file
 // John Surette
 // Date Created: Dec 8 2025
-// Last Modified: Jan 6 2026
+// Last Modified: Jan 14 2026
 generator client {
   provider = "prisma-client-js"
 }
 
-datasource db { // will update with actual db connection info later 
+datasource db {
   provider = "postgresql"
 }
 
+
 enum EncounterStatus {
-  PRE_TRIAGE      // patient initiated on app, not arrived yet
-  ARRIVED         // admittance confirmed arrival
-  TRIAGE          // currently in triage
-  WAITING         // in waiting room
-  COMPLETE        // left ED / visit done
-  CANCELLED       // patient cancelled
-}
+  // Patient-facing
+  EXPECTED                 // Patient registered but not yet arrived
+  ADMITTED                 // Patient has arrived and is admitted
+  // In Hospital
+  TRIAGE                   // Patient is in triage process  
+  WAITING                  // Patient is waiting to be examined by medical staff
+  
+  // Terminal Status
+  COMPLETE                 // Patient has been seen and treatment is complete  
+  UNRESOLVED               // Patient left before completion
+  CANCELLED                // Encounter was cancelled 
+} 
 
-model Hospital {
-  id          Int         @id @default(autoincrement())
-  name        String
-  slug        String      @unique
-  encounters  Encounter[]
-  users       User[]
-  // admittance form questions?
-}
-
-model User {
-  id          Int      @id @default(autoincrement())
-  email       String   @unique
-  password    String   // hashed
-  role        Role
-  hospital    Hospital @relation(fields: [hospitalId], references: [id])
-  hospitalId  Int
-  triageNotes TriageNote[]
-}
-
-enum Role {
+enum Role { 
   ADMIN
-  MEDICAL_STAFF
-  SUPPORT_STAFF
-}
-
-enum MessageAuthor {
-  PATIENT
+  NURSE
   STAFF
+  DOCTOR
 }
 
-model Patient {
-  id          Int         @id @default(autoincrement())
-  displayName String
-  phone       String?
-  encounters  Encounter[]
-  // Additional patient details to be considered:
-  // account info:like;y not necessary for this schema
-  // patient metris (like weight, etc)
-  // admittance form answers
+
+enum SenderType { # Needs more work...
+  PATIENT
+  USER
+  SYSTEM
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+enum EventType {
+  // Inbound patient events
+  ENCOUNTER_CREATED
+  ARRIVAL_TIMEOUT
+  STATUS_CHANGE
+
+  MESSAGE_CREATED
+  MESSAGE_READ
+  MESSAGE_TRANSLATED
+
+  // Triage events
+  TRIAGE_CREATED
+  TRIAGE_NOTE_ADDED
+  TRIAGE_NOTE_UPDATED
+  TRIAGE_COMPLETED
+
+  // Outbound patient events
+  ALERT_CREATED
+  ALERT_ACKNOWLEDGED
+  ALERT_RESOLVED
 }
 
 model Encounter {
-  id             Int             @id @default(autoincrement())
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  status         EncounterStatus @default(PRE_TRIAGE)
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  status    EncounterStatus @default(EXPECTED)
 
-  hospitalName   String
-  chiefComplaint String
-  details        String?
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id])
+  hospitalId Int?
+  patient   PatientProfile @relation(fields: [patientId], references: [id])
+  patientId Int
 
-  hospital       Hospital?       @relation(fields: [hospitalId], references: [id])
-  hospitalId     Int?
+  currentTriageId Int? @unique
+  currentTriage TriageAssessment? @relation("current_triage", fields: [currentTriageId], references: [id])
 
-  patient        Patient         @relation(fields: [patientId], references: [id])
-  patientId      Int
 
-  triageNotes    TriageNote[]
-  messages       Message[]
+  currentCtasLevel    Int? // 1 (highest acuity) ... 5 (lowest)
+  currentPriorityScore Int? // higher = sooner, your own scalar
+
+
+  // Pipeline timestamps (denormalized for fast UI queries)
+  expectedAt DateTime? @default(now())
+  arrivedAt   DateTime?
+  triagedAt   DateTime?
+  waitingAt   DateTime?
+  seenAt      DateTime?
+  departedAt  DateTime?
+  cancelledAt DateTime?
+
+  triageAssessments TriageAssessment[]
+  messages          Message[]
+  events            EncounterEvent[]
+  alerts            Alert[]
+  assets            Asset[]
+
+  // Tenant-hardening: enables compound FKs from child tables
+  @@unique([id, hospitalId])
+
+  // Indices for common views
+  @@index([hospitalId, status])
+  @@index([hospitalId, updatedAt])
+  @@index([hospitalId, currentPriorityScore, updatedAt])
+  @@index([patientId, createdAt])
+
 }
 
-model TriageNote {
-  id          Int       @id @default(autoincrement())
-  createdAt   DateTime  @default(now())
-  note        String
-  createdBy   User?     @relation(fields: [userId], references: [id])
-  userId      Int?
-  encounter   Encounter @relation(fields: [encounterId], references: [id])
+model EncounterEvent {
+  id        Int      @id @default(autoincrement())
+  type      EventType
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  actorUserId    Int?
+  actorPatientId Int?
+
+  // Optional “outbox processing” 
+  processedAt DateTime?
+
+  // Tenant-safe encounter link
   encounterId Int
+  hospitalId  Int
+  encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  @@index([encounterId, createdAt])
+  @@index([hospitalId, createdAt])
+  @@index([processedAt])
+}
+
+//---------------------------------------------------------------------//
+//                    HOSPITAL-SIDE SCHEMA 
+//---------------------------------------------------------------------//
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  role      Role     @default(STAFF)
+  createdAt DateTime @default(now())
+
+  hospital   Hospital @relation(fields: [hospitalId], references: [id])
+  hospitalId Int
+
+  triageAssessments TriageAssessment[]
+  messages          Message[]
+  acknowledgedAlerts Alert[] @relation("alert_ack_by")
+  resolvedAlerts     Alert[] @relation("alert_resolve_by")
+
+  @@unique([hospitalId, email])
+  @@index([hospitalId, role])
+}
+
+model Hospital {
+  id   Int    @id @default(autoincrement())
+  name String
+  slug String @unique
+
+  users      User[]
+  encounters Encounter[]
+  config     HospitalConfig?
+
+  @@index([slug])
+}
+
+model HospitalConfig {
+  hospitalId Int     @id
+  hospital   Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  // Keep it flexible early; later you can normalize specific fields.
+  config Json
+
+  updatedAt DateTime @updatedAt
+}
+
+model TriageAssessment {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now()) // assessedAt; name it however you like
+
+  // Versioned triage assessment
+  ctasLevel     Int // 1 highest ... 5 lowest
+  priorityScore Int
+  note          String?
+
+  createdByUserId Int
+  createdBy      User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // Tenant-safe encounter link (compound FK)
+  encounterId Int
+  hospitalId  Int
+  encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  
+  // Backlink for "current triage"
+  currentOf Encounter? @relation("current_triage")
+
+  @@index([encounterId, createdAt])
+  @@index([hospitalId, createdAt])
+}
+
+model Alert {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  type     String
+  severity AlertSeverity @default(MEDIUM)
+
+  acknowledgedAt DateTime?
+  acknowledgedByUserId Int?
+  acknowledgedByUser   User? @relation("alert_ack_by", fields: [acknowledgedByUserId], references: [id], onDelete: Restrict)
+
+  resolvedAt DateTime?
+  resolvedByUserId Int?
+  resolvedByUser   User? @relation("alert_resolve_by", fields: [resolvedByUserId], references: [id], onDelete: Restrict)
+
+  metadata Json?
+
+  // Tenant-safe encounter link
+  encounterId Int
+  hospitalId  Int
+  encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  @@index([hospitalId, createdAt])
+  @@index([encounterId, createdAt])
+  @@index([hospitalId, acknowledgedAt])
+  @@index([hospitalId, resolvedAt])
+}
+
+//---------------------------------------------------------------------//
+//                    PATIENT-SIDE SCHEMA 
+//---------------------------------------------------------------------//
+model PatientProfile {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+
+  // Profile details
+
+  firstName         String?
+  lastName          String?
+  age               Int?
+  gender            String?
+  heightCm          Int?
+  weightKg          Int?
+  allergies         String?
+  conditions        String?
+  preferredLanguage String  @default("en")
+
+  optionalHealthInfo Json?
+
+  encounters Encounter[]
+  messages   Message[]
+
 }
 
 model Message {
-  id          Int       @id @default(autoincrement())
-  createdAt   DateTime  @default(now())
-  from        MessageAuthor
-  content     String
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
 
-  encounter   Encounter @relation(fields: [encounterId], references: [id])
+  senderType SenderType
+
+  // Exactly one of these should be set for non-system messages (enforce in app logic)
+  createdByUserId    Int?
+  createdByUser      User? @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdByPatientId Int?
+  createdByPatient   PatientProfile? @relation(fields: [createdByPatientId], references: [id], onDelete: Restrict)
+
+  content  String
+  original String?
+  language String?
+
+  // Tenant-safe encounter link
   encounterId Int
+  hospitalId  Int
+  encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  // Optional future-proofing
+  isInternal Boolean @default(false)
+
+  @@index([encounterId, createdAt])
+  @@index([hospitalId, createdAt])
 }
 
+model Asset {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+
+  // Store pointers/metadata, not the binary.
+  storageKey String
+  mimeType   String?
+  sizeBytes  Int?
+  sha256     String?
+
+  // Tenant-safe encounter link
+  encounterId Int
+  hospitalId  Int
+  encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  @@index([encounterId, createdAt])
+  @@index([hospitalId, createdAt])
+}
