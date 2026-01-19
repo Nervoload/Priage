@@ -103,6 +103,8 @@ model Encounter {
   events            EncounterEvent[]
   alerts            Alert[]
   assets            Asset[]
+  patientSessions   PatientSession[]
+
 
   // Tenant-hardening: enables compound FKs from child tables
   @@unique([id, hospitalId])
@@ -258,6 +260,7 @@ model PatientProfile {
 
   encounters Encounter[]
   messages   Message[]
+  patientSessions PatientSession[]
 
 }
 

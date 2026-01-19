@@ -1,21 +1,33 @@
 // backend/src/modules/jobs/processors/events.processor.ts
 // BullMQ processor for encounter events.
 
-import { Process, Processor } from '@nestjs/bullmq';
+import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 
 import { EventsService } from '../../events/events.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Processor('events')
-export class EventsProcessor {
+export class EventsProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
-  ) {}
+  ) {
+    super();
+  }
 
-  @Process('poll-events')
-  async handlePoll(): Promise<void> {
+  async process(job: Job<any, any, string>): Promise<void> {
+    switch (job.name) {
+      case 'poll-events':
+        return this.handlePoll();
+      case 'dispatch-event':
+        return this.handleDispatch(job as Job<{ eventId: number }>);
+      default:
+        throw new Error(`Unknown job name: ${job.name}`);
+    }
+  }
+
+  private async handlePoll(): Promise<void> {
     const events = await this.prisma.encounterEvent.findMany({
       where: { processedAt: null },
       orderBy: { createdAt: 'asc' },
@@ -36,8 +48,7 @@ export class EventsProcessor {
     });
   }
 
-  @Process('dispatch-event')
-  async handleDispatch(job: Job<{ eventId: number }>): Promise<void> {
+  private async handleDispatch(job: Job<{ eventId: number }>): Promise<void> {
     const event = await this.prisma.encounterEvent.findUnique({
       where: { id: job.data.eventId },
     });

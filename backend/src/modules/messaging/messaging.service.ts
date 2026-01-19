@@ -31,6 +31,10 @@ export class MessagingService {
         select: { id: true, hospitalId: true },
       });
       if (!encounter) throw new NotFoundException(`Encounter ${encounterId} not found`);
+      if (encounter.hospitalId == null) {
+        throw new BadRequestException(`Encounter ${encounterId} missing hospitalId`);
+      }
+      const hospitalId = encounter.hospitalId;
 
       this.ensureSenderIdentity(dto);
 
@@ -42,13 +46,13 @@ export class MessagingService {
           content: dto.content,
           isInternal: dto.isInternal ?? false,
           encounterId: encounter.id,
-          hospitalId: encounter.hospitalId ?? undefined,
+          hospitalId: hospitalId,
         },
       });
 
       const createdEvent = await this.events.emitEncounterEventTx(tx, {
         encounterId: encounter.id,
-        hospitalId: encounter.hospitalId ?? undefined,
+        hospitalId,
         type: EventType.MESSAGE_CREATED,
         metadata: {
           messageId: created.id,
@@ -65,7 +69,7 @@ export class MessagingService {
       if (dto.isWorsening && dto.senderType === SenderType.PATIENT) {
         const createdAlert = await this.alerts.createAlertTx(tx, {
           encounterId: encounter.id,
-          hospitalId: encounter.hospitalId ?? undefined,
+          hospitalId,
           type: 'PATIENT_WORSENING',
           severity: 'HIGH',
           metadata: {

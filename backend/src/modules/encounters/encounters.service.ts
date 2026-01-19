@@ -35,6 +35,8 @@ const TERMINAL_STATUSES = new Set<EncounterStatus>([
   EncounterStatus.UNRESOLVED,
 ]);
 
+// TRANSTIONS --> changing Encounter.status throughout the lifecycle
+
 const TRANSITIONS: Record<string, EncounterTransition> = {
   confirm: {
     to: EncounterStatus.ADMITTED,

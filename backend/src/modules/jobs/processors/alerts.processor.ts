@@ -1,7 +1,8 @@
 // backend/src/modules/jobs/processors/alerts.processor.ts
 // BullMQ processor for alert rules.
 
-import { Process, Processor } from '@nestjs/bullmq';
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
 
 import { AlertsService } from '../../alerts/alerts.service';
 import { EventsService } from '../../events/events.service';
@@ -11,15 +12,25 @@ const DEFAULT_REASSESSMENT_MINUTES = 30;
 const ALERT_TYPE = 'TRIAGE_REASSESSMENT_OVERDUE';
 
 @Processor('alerts')
-export class AlertsProcessor {
+export class AlertsProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly alerts: AlertsService,
     private readonly events: EventsService,
-  ) {}
+  ) {
+    super();
+  }
 
-  @Process('triage-reassessment')
-  async handleTriageReassessment(): Promise<void> {
+  async process(job: Job<any, any, string>): Promise<void> {
+    switch (job.name) {
+      case 'triage-reassessment':
+        return this.handleTriageReassessment();
+      default:
+        throw new Error(`Unknown job name: ${job.name}`);
+    }
+  }
+
+  private async handleTriageReassessment(): Promise<void> {
     const thresholdMinutes = Number(
       process.env.TRIAGE_REASSESSMENT_MINUTES ?? DEFAULT_REASSESSMENT_MINUTES,
     );
@@ -55,7 +66,7 @@ export class AlertsProcessor {
       const { alert, event } = await this.prisma.$transaction(async (tx) => {
         return this.alerts.createAlertTx(tx, {
           encounterId: encounter.id,
-          hospitalId: encounter.hospitalId,
+          hospitalId: encounter.hospitalId ?? undefined,
           type: ALERT_TYPE,
           severity: 'MEDIUM',
           metadata: { thresholdMinutes },

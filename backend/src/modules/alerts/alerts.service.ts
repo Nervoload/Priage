@@ -42,7 +42,7 @@ export class AlertsService {
         hospitalId: dto.hospitalId,
         type: dto.type,
         severity: dto.severity,
-        metadata: dto.metadata,
+        // metadata: dto.metadata -- raised an error!
         actor: { actorUserId: dto.actorUserId },
       });
 
