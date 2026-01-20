@@ -24,7 +24,7 @@ const prisma = new PrismaClient({
   log: ['error', 'warn'],
 });
 
-const baseUrl = process.env.API_BASE_URL ?? 'http://localhost:3001';
+const baseUrl = process.env.API_BASE_URL ?? 'http://localhost:3000';
 
 // Test state
 const testState = {
@@ -32,16 +32,24 @@ const testState = {
   user: null,
   patient: null,
   encounter: null,
+  authToken: null,
   errors: [],
   warnings: [],
 };
 
 async function request(path, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers ?? {}),
+  };
+  
+  // Add auth token if available
+  if (testState.authToken) {
+    headers['Authorization'] = `Bearer ${testState.authToken}`;
+  }
+  
   const response = await fetch(`${baseUrl}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
+    headers,
     ...options,
   });
 
@@ -72,49 +80,105 @@ function logWarning(message) {
   testState.warnings.push(message);
 }
 
+async function setupAuthentication() {
+  console.log('\n=== Setting Up Authentication ===');
+  
+  try {
+    // Try to login with existing test user
+    const loginResponse = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'nurse@test.com',
+        password: 'password123',
+      }),
+    });
+    
+    if (loginResponse.ok) {
+      const loginData = await loginResponse.json();
+      testState.authToken = loginData.access_token;
+      logSuccess(`Authenticated as ${loginData.user.email}`);
+      logSuccess(`Role: ${loginData.user.role}, Hospital: ${loginData.user.hospital.name}`);
+      
+      // Use existing hospital and user info from login
+      testState.hospital = loginData.user.hospital;
+      testState.user = {
+        id: loginData.user.id,
+        email: loginData.user.email,
+        role: loginData.user.role,
+        hospitalId: loginData.user.hospitalId,
+      };
+      
+      return true;
+    } else {
+      logWarning('Test user not found - will create new test data');
+      return false;
+    }
+  } catch (error) {
+    logWarning(`Authentication failed: ${error.message} - will create new test data`);
+    return false;
+  }
+}
+
 async function setupTestData() {
   console.log('\n=== Setting Up Test Data ===');
   
   try {
-    // Create hospital (without config for now - it's optional)
+    const bcrypt = require('bcrypt');
+    const testPassword = 'test-password-123';
+    const hashedPassword = await bcrypt.hash(testPassword, 10);
+    
+    // Create hospital
     const hospitalSlug = `test-hospital-${randomUUID().slice(0, 8)}`;
     testState.hospital = await prisma.hospital.create({
       data: {
         name: 'Test Hospital',
         slug: hospitalSlug,
-      },
-    });
-    logSuccess(`Created hospital: ${testState.hospital.name} (ID: ${testState.hospital.id})`);
-
-    // Optionally create config if table exists (try-catch to handle missing table)
-    try {
-      await prisma.hospitalConfig.create({
-        data: {
-          hospitalId: testState.hospital.id,
-          config: {
-            triageReassessmentMinutes: 30,
-            features: {
-              messaging: true,
-              alerts: true,
+        config: {
+          create: {
+            config: {
+              triageReassessmentMinutes: 30,
+              features: {
+                messaging: true,
+                alerts: true,
+              },
             },
           },
         },
-      });
-      logSuccess('Created hospital config');
-    } catch (configError) {
-      logWarning('Hospital config table not available - skipping config creation');
-    }
+      },
+      include: { config: true },
+    });
+    logSuccess(`Created hospital: ${testState.hospital.name} (ID: ${testState.hospital.id})`);
 
-    // Create hospital user
+    // Create hospital user with hashed password
+    const userEmail = `test-user-${randomUUID()}@hospital.local`;
     testState.user = await prisma.user.create({
       data: {
-        email: `test-user-${randomUUID()}@hospital.local`,
-        password: 'test-password',
+        email: userEmail,
+        password: hashedPassword,
         role: 'NURSE',
         hospitalId: testState.hospital.id,
       },
     });
     logSuccess(`Created user: ${testState.user.email} (ID: ${testState.user.id})`);
+    
+    // Login with the new user to get auth token
+    const loginResponse = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: userEmail,
+        password: testPassword,
+      }),
+    });
+    
+    if (loginResponse.ok) {
+      const loginData = await loginResponse.json();
+      testState.authToken = loginData.access_token;
+      logSuccess(`Authenticated with new user`);
+    } else {
+      logWarning('Failed to authenticate with new user');
+    }
 
     // Create patient
     testState.patient = await prisma.patientProfile.create({
@@ -131,7 +195,7 @@ async function setupTestData() {
     logSuccess(`Created patient: ${testState.patient.firstName} ${testState.patient.lastName} (ID: ${testState.patient.id})`);
 
   } catch (error) {
-    logError('Failed to setup test data', error);
+    logError('❌ Failed to setup test data', error);
     throw error;
   }
 }
@@ -140,6 +204,22 @@ async function testEncounterCreation() {
   console.log('\n=== Testing Encounter Creation (API) ===');
   
   try {
+    // Create a test patient if not already exists
+    if (!testState.patient) {
+      testState.patient = await prisma.patientProfile.create({
+        data: {
+          email: `test-patient-${randomUUID()}@patient.local`,
+          password: 'test-password',
+          firstName: 'Test',
+          lastName: 'Patient',
+          age: 35,
+          gender: 'other',
+          preferredLanguage: 'en',
+        },
+      });
+      logSuccess(`Created test patient: ${testState.patient.firstName} ${testState.patient.lastName} (ID: ${testState.patient.id})`);
+    }
+    
     testState.encounter = await request('/encounters', {
       method: 'POST',
       body: JSON.stringify({
@@ -162,20 +242,26 @@ async function testEncounterCreation() {
       logSuccess(`Verified encounter in database`);
       logSuccess(`Found ${dbEncounter.events.length} initial events`);
     } else {
-      logError('Encounter not found in database', new Error('Database verification failed'));
+      logError('❌Encounter not found in database', new Error('Database verification failed'));
     }
     
   } catch (error) {
-    logError('Encounter creation failed', error);
+    logError('❌Encounter creation failed', error);
   }
 }
 
 async function testEncounterTransitions() {
   console.log('\n=== Testing Encounter State Transitions (API) ===');
-  
+
+
+  if (!testState.encounter) {
+    logWarning('Skipping transitions - no encounter created');
+    return;
+  }
+
   const transitions = [
     { path: `/encounters/${testState.encounter.id}/arrived`, label: 'arrived', expectedStatus: 'ADMITTED' },
-    { path: `/encounters/${testState.encounter.id}/start-triage`, label: 'start-triage', expectedStatus: 'TRIAGE' },
+    { path: `/encounters/${testState.encounter.id}/start-exam`, label: 'start-exam', expectedStatus: 'TRIAGE' },
     { path: `/encounters/${testState.encounter.id}/waiting`, label: 'waiting', expectedStatus: 'WAITING' },
   ];
 
@@ -194,7 +280,7 @@ async function testEncounterTransitions() {
       
       await sleep(100);
     } catch (error) {
-      logError(`Transition ${transition.label} failed`, error);
+      logError(`❌Transition ${transition.label} failed`, error);
     }
   }
   
@@ -208,12 +294,17 @@ async function testEncounterTransitions() {
     if (dbEncounter.triagedAt) logSuccess(`triagedAt timestamp set: ${dbEncounter.triagedAt.toISOString()}`);
     if (dbEncounter.waitingAt) logSuccess(`waitingAt timestamp set: ${dbEncounter.waitingAt.toISOString()}`);
   } catch (error) {
-    logError('Failed to verify timestamps', error);
+    logError('❌ Failed to verify timestamps', error);
   }
 }
 
 async function testTriageAssessment() {
   console.log('\n=== Testing Triage Assessment (Database) ===');
+  
+  if (!testState.encounter) {
+    logWarning('Skipping triage assessment - no encounter created');
+    return;
+  }
   
   try {
     const triage = await prisma.triageAssessment.create({
@@ -241,12 +332,17 @@ async function testTriageAssessment() {
     logSuccess('Linked triage to encounter as current assessment');
     
   } catch (error) {
-    logError('Triage assessment creation failed', error);
+    logError('❌ Triage assessment creation failed', error);
   }
 }
 
 async function testMessaging() {
   console.log('\n=== Testing Messaging System (Database) ===');
+  
+  if (!testState.encounter) {
+    logWarning('Skipping messaging test - no encounter created');
+    return;
+  }
   
   try {
     // Patient message
@@ -284,12 +380,17 @@ async function testMessaging() {
     logSuccess(`Total messages for encounter: ${messageCount}`);
     
   } catch (error) {
-    logError('Messaging test failed', error);
+    logError('❌ Messaging test failed', error);
   }
 }
 
 async function testEventProcessing() {
   console.log('\n=== Testing Event Processing (Database) ===');
+  
+  if (!testState.encounter) {
+    logWarning('Skipping event processing test - no encounter created');
+    return;
+  }
   
   try {
     await sleep(500);
@@ -321,7 +422,7 @@ async function testEventProcessing() {
     }
     
   } catch (error) {
-    logError('Event processing test failed', error);
+    logError('❌ Event processing test failed', error);
   }
 }
 
@@ -395,7 +496,7 @@ async function testAlertGeneration() {
     logSuccess(`Active alerts for hospital: ${activeAlerts}`);
     
   } catch (error) {
-    logError('Alert generation test failed', error);
+    logError('❌ Alert generation test failed', error);
   }
 }
 
@@ -437,7 +538,7 @@ async function testCompletePriagePipeline() {
     await sleep(200);
     
     // 3. TRIAGE -> Start triage
-    await request(`/encounters/${pipelineEncounter.id}/start-triage`, {
+    await request(`/encounters/${pipelineEncounter.id}/start-exam`, {
       method: 'POST',
       body: JSON.stringify({}),
     });
@@ -505,7 +606,7 @@ async function testCompletePriagePipeline() {
     console.log(`    Duration: ${Math.round((finalEncounter.departedAt - finalEncounter.expectedAt) / 1000 / 60)} minutes`);
     
   } catch (error) {
-    logError('Complete pipeline test failed', error);
+    logError('❌ Complete pipeline test failed', error);
   }
 }
 
@@ -549,7 +650,7 @@ async function verifyDatabaseState() {
     logSuccess(`Total events across all encounters: ${hospitalData.encounters.reduce((sum, e) => sum + e.events.length, 0)}`);
     
   } catch (error) {
-    logError('Database verification failed', error);
+    logError('❌ Database verification failed', error);
   }
 }
 
@@ -564,23 +665,26 @@ async function cleanupTestData() {
       await prisma.encounterEvent.deleteMany({ where: { hospitalId: testState.hospital.id } });
       await prisma.triageAssessment.deleteMany({ where: { hospitalId: testState.hospital.id } });
       await prisma.encounter.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.user.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.hospitalConfig.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.hospital.delete({ where: { id: testState.hospital.id } });
-      logSuccess('Deleted test hospital and related data');
+      
+      // Only delete hospital and users if we created them (not if using existing auth)
+      if (!testState.authToken) {
+        await prisma.user.deleteMany({ where: { hospitalId: testState.hospital.id } });
+        await prisma.hospitalConfig.deleteMany({ where: { hospitalId: testState.hospital.id } });
+        await prisma.hospital.delete({ where: { id: testState.hospital.id } });
+        logSuccess('Deleted test hospital and related data');
+      } else {
+        logSuccess('Deleted test encounters and related data (kept hospital and users)');
+      }
     }
     
-    // Delete test patients (encounters already deleted above)
-    const testPatientEmails = [testState.patient?.email].filter(Boolean);
-    if (testPatientEmails.length > 0) {
-      await prisma.patientProfile.deleteMany({
-        where: { email: { in: testPatientEmails } },
-      });
-      logSuccess('Deleted test patients');
+    // Delete test patients
+    if (testState.patient) {
+      await prisma.patientProfile.delete({ where: { id: testState.patient.id } }).catch(() => {});
+      logSuccess('Deleted test patient');
     }
     
   } catch (error) {
-    logError('Cleanup failed (you may need to manually clean the database)', error);
+    logError('❌ Cleanup failed (you may need to manually clean the database)', error);
   }
 }
 
@@ -620,7 +724,14 @@ async function main() {
   console.log('='.repeat(70));
 
   try {
-    await setupTestData();
+    // Try to authenticate with existing user first
+    const authenticated = await setupAuthentication();
+    
+    // If no existing user, create test data
+    if (!authenticated) {
+      await setupTestData();
+    }
+    
     await testEncounterCreation();
     await testEncounterTransitions();
     await testTriageAssessment();

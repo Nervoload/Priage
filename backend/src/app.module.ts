@@ -10,8 +10,10 @@ import { Module } from '@nestjs/common';
 
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { AssetsModule } from './modules/assets/assets.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { EncountersModule } from './modules/encounters/encounters.module';
 import { HealthModule } from './modules/health/health.module';
+import { HospitalsModule } from './modules/hospitals/hospitals.module';
 import { IntakeModule } from './modules/intake/intake.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
@@ -19,10 +21,14 @@ import { PatientsModule } from './modules/patients/patients.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { TriageModule } from './modules/triage/triage.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
     PrismaModule,
+    AuthModule,
+    UsersModule,
+    HospitalsModule,
     RealtimeModule,
     EncountersModule,
     MessagingModule,

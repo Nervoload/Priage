@@ -66,7 +66,7 @@ export class AlertsProcessor extends WorkerHost {
       const { alert, event } = await this.prisma.$transaction(async (tx) => {
         return this.alerts.createAlertTx(tx, {
           encounterId: encounter.id,
-          hospitalId: encounter.hospitalId ?? undefined,
+          hospitalId: encounter.hospitalId ?? undefined, // ** why is this disagreeing with the definition? If you remove ?? undefined, it says it's encounters.hospitalId is possibly undefined instead of null.
           type: ALERT_TYPE,
           severity: 'MEDIUM',
           metadata: { thresholdMinutes },
