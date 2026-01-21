@@ -8,11 +8,9 @@
 // Event name constants shared by server and clients.
 
 export const RealtimeEvents = {
-  EncounterCreated: 'encounter.created',
   EncounterUpdated: 'encounter.updated',
-  TriageNoteCreated: 'triageNote.created',
   MessageCreated: 'message.created',
-
-  JoinHospitalRoom: 'room.joinHospital',
-  JoinEncounterRoom: 'room.joinEncounter',
+  AlertCreated: 'alert.created',
+  AlertAcknowledged: 'alert.acknowledged',
+  AlertResolved: 'alert.resolved',
 } as const;

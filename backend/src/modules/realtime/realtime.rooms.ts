@@ -6,11 +6,9 @@
 // Last Edited: Jan 6 2026
 
 // Helpers for producing stable socketio room keys
-// Prototype uses hospitalName; later switch to hospitalId/slug.
 
-export function hospitalRoomKey(hospitalName: string): string {
-  // Avoid spaces/special chars breaking room naming conventions
-  return `hospital:${encodeURIComponent(hospitalName.trim())}`;
+export function hospitalRoomKey(hospitalId: number): string {
+  return `hospital:${hospitalId}`;
 }
 
 export function encounterRoomKey(encounterId: number): string {

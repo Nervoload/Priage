@@ -6,15 +6,18 @@
 // DTO for listing encounters with optional filters.
 
 import { EncounterStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsEnum, IsInt, IsOptional } from 'class-validator';
+import { Type } from 'class-transformer';
 
-export class ListEncountersQueryDto {
+import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
+
+export class ListEncountersQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(EncounterStatus)
   status?: EncounterStatus;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(160)
-  hospitalName?: string;
+  @Type(() => Number)
+  @IsInt()
+  hospitalId?: number;
 }
