@@ -3,8 +3,11 @@
 
 import { IsEmail, IsString, MinLength } from 'class-validator';
 
+import { SanitizeEmail } from '../../../common/decorators/sanitize.decorator';
+
 export class LoginDto {
   @IsEmail()
+  @SanitizeEmail()
   email!: string;
 
   @IsString()

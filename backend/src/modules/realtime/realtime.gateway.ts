@@ -7,9 +7,12 @@
 
 import {
   OnGatewayConnection,
+  OnGatewayDisconnect,
+  OnGatewayInit,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { Logger } from '@nestjs/common';
 import jwt from 'jsonwebtoken';
 import type { Server, Socket } from 'socket.io';
 
@@ -26,89 +29,303 @@ type StaffSocketClaims = {
 @WebSocketGateway({
   cors: { origin: true, credentials: true },
 })
-export class RealtimeGateway implements OnGatewayConnection {
+export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+  private readonly logger = new Logger(RealtimeGateway.name);
+
   @WebSocketServer()
   private readonly server!: Server;
 
+  private connectedClients = new Map<string, { userId: number; hospitalId: number; connectedAt: Date }>();
+
   constructor(private readonly prisma: PrismaService) {}
 
-  async handleConnection(client: Socket): Promise<void> {
-    const token = this.extractToken(client);
-    if (!token) {
-      client.disconnect();
-      return;
-    }
+  afterInit(server: Server) {
+    this.logger.log('WebSocket Gateway initialized');
+    this.logger.log(`CORS enabled for all origins`);
+    
+    // Set up server-level error handling
+    server.on('error', (error) => {
+      this.logger.error({
+        message: 'WebSocket server error',
+        error: error.message,
+        stack: error.stack,
+      });
+    });
+  }
 
-    const secret = process.env.JWT_SECRET ?? 'dev-secret';
+  async handleConnection(client: Socket): Promise<void> {
+    const clientId = client.id;
+    
+    this.logger.log({
+      message: 'New WebSocket connection attempt',
+      clientId,
+      remoteAddress: client.handshake.address,
+    });
 
     try {
-      const claims = jwt.verify(token, secret) as StaffSocketClaims;
+      const token = this.extractToken(client);
+      if (!token) {
+        this.logger.warn({
+          message: 'Connection rejected: No authentication token',
+          clientId,
+        });
+        client.disconnect();
+        return;
+      }
+
+      const secret = process.env.JWT_SECRET ?? 'dev-secret';
+
+      let claims: StaffSocketClaims;
+      try {
+        claims = jwt.verify(token, secret) as StaffSocketClaims;
+      } catch (jwtError) {
+        this.logger.warn({
+          message: 'Connection rejected: Invalid JWT token',
+          clientId,
+          error: jwtError instanceof Error ? jwtError.message : String(jwtError),
+        });
+        client.disconnect();
+        return;
+      }
 
       if (!claims?.userId || !claims?.hospitalId) {
+        this.logger.warn({
+          message: 'Connection rejected: Invalid token claims',
+          clientId,
+          claims,
+        });
         client.disconnect();
         return;
       }
 
       client.data.user = claims;
+      this.connectedClients.set(clientId, {
+        userId: claims.userId,
+        hospitalId: claims.hospitalId,
+        connectedAt: new Date(),
+      });
+
       await client.join(hospitalRoomKey(claims.hospitalId));
+      
+      this.logger.log({
+        message: 'Client joined hospital room',
+        clientId,
+        userId: claims.userId,
+        hospitalId: claims.hospitalId,
+        role: claims.role,
+      });
 
       const requestedEncounterIds = this.getEncounterIdsFromHandshake(client);
       if (requestedEncounterIds.length > 0) {
-        const encounters = await this.prisma.encounter.findMany({
-          where: {
-            id: { in: requestedEncounterIds },
-            hospitalId: claims.hospitalId,
-          },
-          select: { id: true },
-        });
+        try {
+          const encounters = await this.prisma.encounter.findMany({
+            where: {
+              id: { in: requestedEncounterIds },
+              hospitalId: claims.hospitalId,
+            },
+            select: { id: true },
+          });
 
-        for (const encounter of encounters) {
-          await client.join(encounterRoomKey(encounter.id));
+          for (const encounter of encounters) {
+            await client.join(encounterRoomKey(encounter.id));
+          }
+
+          this.logger.log({
+            message: 'Client subscribed to encounter rooms',
+            clientId,
+            userId: claims.userId,
+            requestedCount: requestedEncounterIds.length,
+            subscribedCount: encounters.length,
+            encounterIds: encounters.map(e => e.id),
+          });
+        } catch (dbError) {
+          this.logger.error({
+            message: 'Failed to subscribe to encounter rooms',
+            clientId,
+            userId: claims.userId,
+            requestedEncounterIds,
+            error: dbError instanceof Error ? dbError.message : String(dbError),
+            stack: dbError instanceof Error ? dbError.stack : undefined,
+          });
+          // Don't disconnect - hospital room subscription is still valid
         }
       }
+
+      this.logger.log({
+        message: 'WebSocket connection established successfully',
+        clientId,
+        userId: claims.userId,
+        hospitalId: claims.hospitalId,
+        totalConnections: this.connectedClients.size,
+      });
     } catch (error) {
+      this.logger.error({
+        message: 'Unexpected error during connection handling',
+        clientId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       client.disconnect();
     }
   }
 
-  emitEncounterUpdated(hospitalId: number, encounterId: number, payload: unknown): void {
-    const hospitalRoom = hospitalRoomKey(hospitalId);
-    const encounterRoom = encounterRoomKey(encounterId);
+  handleDisconnect(client: Socket): void {
+    const clientId = client.id;
+    const clientInfo = this.connectedClients.get(clientId);
+    
+    if (clientInfo) {
+      const connectionDuration = Date.now() - clientInfo.connectedAt.getTime();
+      
+      this.logger.log({
+        message: 'WebSocket client disconnected',
+        clientId,
+        userId: clientInfo.userId,
+        hospitalId: clientInfo.hospitalId,
+        connectionDurationMs: connectionDuration,
+        totalConnections: this.connectedClients.size - 1,
+      });
+      
+      this.connectedClients.delete(clientId);
+    } else {
+      this.logger.log({
+        message: 'Unknown client disconnected',
+        clientId,
+      });
+    }
+  }
 
-    this.server.to(hospitalRoom).emit(RealtimeEvents.EncounterUpdated, payload);
-    this.server.to(encounterRoom).emit(RealtimeEvents.EncounterUpdated, payload);
+  emitEncounterUpdated(hospitalId: number, encounterId: number, payload: unknown): void {
+    try {
+      const hospitalRoom = hospitalRoomKey(hospitalId);
+      const encounterRoom = encounterRoomKey(encounterId);
+
+      this.server.to(hospitalRoom).emit(RealtimeEvents.EncounterUpdated, payload);
+      this.server.to(encounterRoom).emit(RealtimeEvents.EncounterUpdated, payload);
+
+      this.logger.debug({
+        message: 'Encounter update emitted',
+        hospitalId,
+        encounterId,
+        event: RealtimeEvents.EncounterUpdated,
+      });
+    } catch (error) {
+      this.logger.error({
+        message: 'Failed to emit encounter update',
+        hospitalId,
+        encounterId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
   }
 
   emitMessageCreated(hospitalId: number, encounterId: number, payload: unknown): void {
-    const hospitalRoom = hospitalRoomKey(hospitalId);
-    const encounterRoom = encounterRoomKey(encounterId);
+    try {
+      const hospitalRoom = hospitalRoomKey(hospitalId);
+      const encounterRoom = encounterRoomKey(encounterId);
 
-    this.server.to(hospitalRoom).emit(RealtimeEvents.MessageCreated, payload);
-    this.server.to(encounterRoom).emit(RealtimeEvents.MessageCreated, payload);
+      this.server.to(hospitalRoom).emit(RealtimeEvents.MessageCreated, payload);
+      this.server.to(encounterRoom).emit(RealtimeEvents.MessageCreated, payload);
+
+      this.logger.debug({
+        message: 'Message created event emitted',
+        hospitalId,
+        encounterId,
+      });
+    } catch (error) {
+      this.logger.error({
+        message: 'Failed to emit message created',
+        hospitalId,
+        encounterId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   emitAlertCreated(hospitalId: number, encounterId: number, payload: unknown): void {
-    const hospitalRoom = hospitalRoomKey(hospitalId);
-    const encounterRoom = encounterRoomKey(encounterId);
+    try {
+      const hospitalRoom = hospitalRoomKey(hospitalId);
+      const encounterRoom = encounterRoomKey(encounterId);
 
-    this.server.to(hospitalRoom).emit(RealtimeEvents.AlertCreated, payload);
-    this.server.to(encounterRoom).emit(RealtimeEvents.AlertCreated, payload);
+      this.server.to(hospitalRoom).emit(RealtimeEvents.AlertCreated, payload);
+      this.server.to(encounterRoom).emit(RealtimeEvents.AlertCreated, payload);
+
+      this.logger.debug({
+        message: 'Alert created event emitted',
+        hospitalId,
+        encounterId,
+      });
+    } catch (error) {
+      this.logger.error({
+        message: 'Failed to emit alert created',
+        hospitalId,
+        encounterId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   emitAlertAcknowledged(hospitalId: number, encounterId: number, payload: unknown): void {
-    const hospitalRoom = hospitalRoomKey(hospitalId);
-    const encounterRoom = encounterRoomKey(encounterId);
+    try {
+      const hospitalRoom = hospitalRoomKey(hospitalId);
+      const encounterRoom = encounterRoomKey(encounterId);
 
-    this.server.to(hospitalRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
-    this.server.to(encounterRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
+      this.server.to(hospitalRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
+      this.server.to(encounterRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
+
+      this.logger.debug({
+        message: 'Alert acknowledged event emitted',
+        hospitalId,
+        encounterId,
+      });
+    } catch (error) {
+      this.logger.error({
+        message: 'Failed to emit alert acknowledged',
+        hospitalId,
+        encounterId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   emitAlertResolved(hospitalId: number, encounterId: number, payload: unknown): void {
-    const hospitalRoom = hospitalRoomKey(hospitalId);
-    const encounterRoom = encounterRoomKey(encounterId);
+    try {
+      const hospitalRoom = hospitalRoomKey(hospitalId);
+      const encounterRoom = encounterRoomKey(encounterId);
 
-    this.server.to(hospitalRoom).emit(RealtimeEvents.AlertResolved, payload);
-    this.server.to(encounterRoom).emit(RealtimeEvents.AlertResolved, payload);
+      this.server.to(hospitalRoom).emit(RealtimeEvents.AlertResolved, payload);
+      this.server.to(encounterRoom).emit(RealtimeEvents.AlertResolved, payload);
+
+      this.logger.debug({
+        message: 'Alert resolved event emitted',
+        hospitalId,
+        encounterId,
+      });
+    } catch (error) {
+      this.logger.error({
+        message: 'Failed to emit alert resolved',
+        hospitalId,
+        encounterId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Get connection statistics for monitoring
+   */
+  getConnectionStats() {
+    const stats = {
+      totalConnections: this.connectedClients.size,
+      connectionsByHospital: new Map<number, number>(),
+    };
+
+    for (const client of this.connectedClients.values()) {
+      const count = stats.connectionsByHospital.get(client.hospitalId) || 0;
+      stats.connectionsByHospital.set(client.hospitalId, count + 1);
+    }
+
+    return stats;
   }
 
   private extractToken(client: Socket): string | null {

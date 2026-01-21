@@ -4,6 +4,8 @@
 import { SenderType } from '@prisma/client';
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
+import { Sanitize } from '../../../common/decorators/sanitize.decorator';
+
 export class CreateMessageDto {
   @IsEnum(SenderType)
   senderType!: SenderType;
@@ -19,6 +21,7 @@ export class CreateMessageDto {
   @IsString()
   @MinLength(1)
   @MaxLength(2000)
+  @Sanitize()
   content!: string;
 
   @IsOptional()

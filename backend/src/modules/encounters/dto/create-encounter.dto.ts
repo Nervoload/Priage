@@ -9,6 +9,8 @@
 
 import { IsInt, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
+import { Sanitize } from '../../../common/decorators/sanitize.decorator';
+
 export class CreateEncounterDto {
   @IsInt()
   patientId!: number;
@@ -19,10 +21,12 @@ export class CreateEncounterDto {
   @IsString()
   @MinLength(1)
   @MaxLength(240)
+  @Sanitize()
   chiefComplaint!: string;
 
   @IsOptional()
   @IsString()
   @MaxLength(4000)
+  @Sanitize()
   details?: string;
 }

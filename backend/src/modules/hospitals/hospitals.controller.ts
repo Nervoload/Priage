@@ -1,7 +1,7 @@
 // backend/src/modules/hospitals/hospitals.controller.ts
 // Hospital information and dashboard endpoints
 
-import { Controller, Get, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -30,7 +30,7 @@ export class HospitalsController {
   ) {
     // Ensure user can only access their own hospital
     if (user.hospitalId !== id) {
-      throw new Error('Cannot access another hospital\'s dashboard');
+      throw new ForbiddenException('Cannot access another hospital\'s dashboard');
     }
     return this.hospitalsService.getDashboard(id);
   }
@@ -43,7 +43,7 @@ export class HospitalsController {
     @CurrentUser() user: any,
   ) {
     if (user.hospitalId !== id) {
-      throw new Error('Cannot access another hospital\'s queue');
+      throw new ForbiddenException('Cannot access another hospital\'s queue');
     }
     return this.hospitalsService.getQueueStatus(id);
   }

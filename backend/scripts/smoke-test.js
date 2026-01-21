@@ -120,7 +120,7 @@ async function setupAuthentication() {
   }
 }
 
-async function setupTestData() {
+      await prisma.alert.update({
   console.log('\n=== Setting Up Test Data ===');
   
   try {
@@ -129,7 +129,7 @@ async function setupTestData() {
     const hashedPassword = await bcrypt.hash(testPassword, 10);
     
     // Create hospital
-    const hospitalSlug = `test-hospital-${randomUUID().slice(0, 8)}`;
+      await prisma.alert.update({
     testState.hospital = await prisma.hospital.create({
       data: {
         name: 'Test Hospital',
@@ -467,7 +467,7 @@ async function testAlertGeneration() {
     logSuccess(`Created alert: ID ${alert.id}, Type: ${alert.type}, Severity: ${alert.severity}`);
     
     // Test alert acknowledgment
-    const acknowledged = await prisma.alert.update({
+    await prisma.alert.update({
       where: { id: alert.id },
       data: {
         acknowledgedAt: new Date(),
@@ -477,7 +477,7 @@ async function testAlertGeneration() {
     logSuccess(`Alert acknowledged by user ${testState.user.email}`);
     
     // Test alert resolution
-    const resolved = await prisma.alert.update({
+    await prisma.alert.update({
       where: { id: alert.id },
       data: {
         resolvedAt: new Date(),

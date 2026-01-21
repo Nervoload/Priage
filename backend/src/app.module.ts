@@ -7,6 +7,8 @@
 // Wires together Prisma, Encounters, Realtime, and Health modules.
 
 import { Module } from '@nestjs/common';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { AssetsModule } from './modules/assets/assets.module';
@@ -16,6 +18,7 @@ import { HealthModule } from './modules/health/health.module';
 import { HospitalsModule } from './modules/hospitals/hospitals.module';
 import { IntakeModule } from './modules/intake/intake.module';
 import { JobsModule } from './modules/jobs/jobs.module';
+import { LoggingModule } from './modules/logging/logging.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
@@ -25,7 +28,14 @@ import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000, // 60 seconds
+        limit: 1000, // 1000 requests per minute per IP (prevents abuse, allows legitimate use)
+      },
+    ]),
     PrismaModule,
+    LoggingModule, // Global logging with correlation support
     AuthModule,
     UsersModule,
     HospitalsModule,
@@ -39,6 +49,12 @@ import { UsersModule } from './modules/users/users.module';
     IntakeModule,
     JobsModule,
     HealthModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

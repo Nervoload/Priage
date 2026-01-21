@@ -1,13 +1,14 @@
 // backend/src/modules/messaging/messaging.controller.ts
 // Messaging endpoints.
 
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateMessageDto } from './dto/create-message.dto';
+import { ListMessagesQueryDto } from './dto/list-messages.query.dto';
 import { MarkMessageReadDto } from './dto/mark-message-read.dto';
 import { MessagingService } from './messaging.service';
 
@@ -18,8 +19,11 @@ export class MessagingController {
 
   @Get('encounters/:encounterId/messages')
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async listForEncounter(@Param('encounterId', ParseIntPipe) encounterId: number) {
-    return this.messagingService.listMessages(encounterId);
+  async listForEncounter(
+    @Param('encounterId', ParseIntPipe) encounterId: number,
+    @Query() query: ListMessagesQueryDto,
+  ) {
+    return this.messagingService.listMessages(encounterId, query);
   }
 
   @Post('encounters/:encounterId/messages')

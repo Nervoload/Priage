@@ -1,7 +1,7 @@
 // backend/src/modules/intake/intake.controller.ts
 // Patient intake endpoints.
 
-import { Body, Controller, Headers, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Headers, Patch, Post, UnauthorizedException } from '@nestjs/common';
 
 import { ConfirmIntentDto } from './dto/confirm-intent.dto';
 import { CreateIntentDto } from './dto/create-intent.dto';
@@ -23,6 +23,9 @@ export class IntakeController {
     @Headers('x-patient-token') token: string,
     @Body() dto: ConfirmIntentDto,
   ) {
+    if (!token) {
+      throw new UnauthorizedException('Patient token is required');
+    }
     return this.intakeService.confirmIntent(token, dto);
   }
 
@@ -31,6 +34,9 @@ export class IntakeController {
     @Headers('x-patient-token') token: string,
     @Body() dto: UpdateIntakeDetailsDto,
   ) {
+    if (!token) {
+      throw new UnauthorizedException('Patient token is required');
+    }
     return this.intakeService.updateDetails(token, dto);
   }
 
@@ -39,6 +45,9 @@ export class IntakeController {
     @Headers('x-patient-token') token: string,
     @Body() dto: LocationPingDto,
   ) {
+    if (!token) {
+      throw new UnauthorizedException('Patient token is required');
+    }
     return this.intakeService.recordLocation(token, dto);
   }
 }

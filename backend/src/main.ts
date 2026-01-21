@@ -12,14 +12,21 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
+import { CorrelationMiddleware } from './common/middleware/correlation.middleware';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
 
-  // Prototype-friendly CORS (lock down origins later).
+  // Apply correlation middleware for request tracing
+  app.use(new CorrelationMiddleware().use.bind(new CorrelationMiddleware()));
+
+  // CORS configuration - allow frontend origins
+  // In production, set CORS_ORIGINS env var to restrict to specific domains
   app.enableCors({
-    origin: true,
+    origin: process.env.CORS_ORIGINS?.split(',') || true,
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-patient-token', 'x-correlation-id', 'x-request-id'],
   });
 
   // Global DTO validation:
@@ -29,7 +36,10 @@ async function bootstrap(): Promise<void> {
     new ValidationPipe({
       whitelist: true,
       transform: true,
-      forbidNonWhitelisted: false, // set true later for stricter contracts
+      forbidNonWhitelisted: false, // Allow extra properties (more flexible for clients)
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
     }),
   );
 
