@@ -6,7 +6,7 @@
 // PrismaService: injectable PrismaClient with NestJS lifecycle hooks.
 // This is the standard NestJS+Prisma pattern so the client connects cleanly and closes on shutdown.
 
-import { INestApplication, Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 

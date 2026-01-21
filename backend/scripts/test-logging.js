@@ -987,8 +987,7 @@ async function testNewServicesLogging() {
       chiefComplaint: 'Test intake logging',
       details: 'Testing patient intent creation logging',
     });
-    
-    const correlationId = response.headers['x-correlation-id'];
+  
     
     if (response.statusCode === 200 || response.statusCode === 201) {
       sessionToken = response.data.sessionToken;

@@ -61,10 +61,6 @@ async function request(path, options = {}) {
   return response.json();
 }
 
-async function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function logSuccess(message) {
   console.log(`  ✓ ${message}`);
 }
@@ -444,7 +440,7 @@ async function testAlertGeneration() {
     logSuccess(`Created alert: ID ${alert.id}, Type: ${alert.type}, Severity: ${alert.severity}`);
     
     // Test alert acknowledgment
-    const acknowledged = await prisma.alert.update({
+    await prisma.alert.update({
       where: { id: alert.id },
       data: {
         acknowledgedAt: new Date(),
@@ -454,7 +450,7 @@ async function testAlertGeneration() {
     logSuccess(`Alert acknowledged by user ${testState.user.email}`);
     
     // Test alert resolution
-    const resolved = await prisma.alert.update({
+    await prisma.alert.update({
       where: { id: alert.id },
       data: {
         resolvedAt: new Date(),
@@ -477,8 +473,8 @@ async function testAlertGeneration() {
   }
 }
 
-async function testCompletePriagePipeline() {
-  console.log('\n=== Testing Complete Priage Pipeline ===');
+async function testCompleteTriagePipeline() {
+  console.log('\n=== Testing Complete Triage Pipeline ===');
   
   try {
     // Create a new patient for full pipeline
@@ -712,7 +708,7 @@ async function main() {
     await testMessaging();
     await testEventProcessing();
     await testAlertGeneration();
-    await testCompletePriagePipeline();
+    await testCompleteTriagePipeline();
     await verifyDatabaseState();
     
   } catch (error) {
