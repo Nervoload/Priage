@@ -11,6 +11,7 @@ import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 
 import { PrismaPg } from '@prisma/adapter-pg';
+import { LoggingService } from '../logging/logging.service';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -18,6 +19,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly pool: Pool;
   private connectionAttempts = 0;
   private readonly MAX_CONNECTION_ATTEMPTS = 3;
+  private loggingService?: LoggingService;
 
   constructor() {
     // check if DATABASE_URL is set (from npx prisma generate and cp .env.example .env)
@@ -67,24 +69,54 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     this.pool = pool; // Store pool reference for cleanup
 
     // Subscribe to Prisma's query events for performance monitoring
-    this.$on('warn' as never, (e: any) => {
-      this.logger.warn({
-        message: 'Prisma warning',
-        warning: e.message,
-      });
+    this.$on('warn' as never, async (e: any) => {
+      if (this.loggingService) {
+        await this.loggingService.warn(
+          'Prisma warning',
+          {
+            service: 'PrismaService',
+            operation: 'prismaWarning',
+            correlationId: undefined,
+          },
+          {
+            warning: e.message,
+          },
+        );
+      } else {
+        this.logger.warn({
+          message: 'Prisma warning',
+          warning: e.message,
+        });
+      }
     });
 
-    this.$on('error' as never, (e: any) => {
-      this.logger.error({
-        message: 'Prisma error',
-        error: e.message,
-      });
+    this.$on('error' as never, async (e: any) => {
+      if (this.loggingService) {
+        await this.loggingService.error(
+          'Prisma error',
+          {
+            service: 'PrismaService',
+            operation: 'prismaError',
+            correlationId: undefined,
+          },
+          new Error(e.message),
+        );
+      } else {
+        this.logger.error({
+          message: 'Prisma error',
+          error: e.message,
+        });
+      }
     });
 
     Logger.log('PrismaService pool configuration:', 'PrismaService');
     Logger.log(`  - Max connections: 20`, 'PrismaService');
     Logger.log(`  - Idle timeout: 30s`, 'PrismaService');
     Logger.log(`  - Connection timeout: 2s`, 'PrismaService');
+  }
+
+  setLoggingService(loggingService: LoggingService) {
+    this.loggingService = loggingService;
   }
 
   async onModuleInit(): Promise<void> {
@@ -98,23 +130,56 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         // Test the connection
         await this.$queryRaw`SELECT 1`;
         
-        this.logger.log({
-          message: 'Database connection established successfully',
-          attempt: this.connectionAttempts,
-          poolSize: this.pool.totalCount,
-          idleConnections: this.pool.idleCount,
-          waitingClients: this.pool.waitingCount,
-        });
+        if (this.loggingService) {
+          await this.loggingService.info(
+            'Database connection established successfully',
+            {
+              service: 'PrismaService',
+              operation: 'onModuleInit',
+              correlationId: undefined,
+            },
+            {
+              attempt: this.connectionAttempts,
+              poolSize: this.pool.totalCount,
+              idleConnections: this.pool.idleCount,
+              waitingClients: this.pool.waitingCount,
+            },
+          );
+        } else {
+          this.logger.log({
+            message: 'Database connection established successfully',
+            attempt: this.connectionAttempts,
+            poolSize: this.pool.totalCount,
+            idleConnections: this.pool.idleCount,
+            waitingClients: this.pool.waitingCount,
+          });
+        }
         
         return;
       } catch (error) {
-        this.logger.error({
-          message: 'Failed to connect to database',
-          attempt: this.connectionAttempts,
-          maxAttempts: this.MAX_CONNECTION_ATTEMPTS,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
+        if (this.loggingService) {
+          await this.loggingService.error(
+            'Failed to connect to database',
+            {
+              service: 'PrismaService',
+              operation: 'onModuleInit',
+              correlationId: undefined,
+            },
+            error instanceof Error ? error : new Error(String(error)),
+            {
+              attempt: this.connectionAttempts,
+              maxAttempts: this.MAX_CONNECTION_ATTEMPTS,
+            },
+          );
+        } else {
+          this.logger.error({
+            message: 'Failed to connect to database',
+            attempt: this.connectionAttempts,
+            maxAttempts: this.MAX_CONNECTION_ATTEMPTS,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+        }
 
         if (this.connectionAttempts >= this.MAX_CONNECTION_ATTEMPTS) {
           this.logger.error('Max connection attempts reached. Service will be unavailable.');
@@ -134,44 +199,105 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     
     try {
       await this.$disconnect();
-      this.logger.log('Prisma client disconnected');
+      if (this.loggingService) {
+        await this.loggingService.info(
+          'Prisma client disconnected',
+          {
+            service: 'PrismaService',
+            operation: 'onModuleDestroy',
+            correlationId: undefined,
+          },
+        );
+      } else {
+        this.logger.log('Prisma client disconnected');
+      }
     } catch (error) {
-      this.logger.error({
-        message: 'Error disconnecting Prisma client',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      if (this.loggingService) {
+        await this.loggingService.error(
+          'Error disconnecting Prisma client',
+          {
+            service: 'PrismaService',
+            operation: 'onModuleDestroy',
+            correlationId: undefined,
+          },
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      } else {
+        this.logger.error({
+          message: 'Error disconnecting Prisma client',
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
     }
 
     try {
       await this.pool.end();
-      this.logger.log({
-        message: 'Database connection pool closed',
-        finalPoolSize: this.pool.totalCount,
-      });
+      if (this.loggingService) {
+        await this.loggingService.info(
+          'Database connection pool closed',
+          {
+            service: 'PrismaService',
+            operation: 'onModuleDestroy',
+            correlationId: undefined,
+          },
+          {
+            finalPoolSize: this.pool.totalCount,
+          },
+        );
+      } else {
+        this.logger.log({
+          message: 'Database connection pool closed',
+          finalPoolSize: this.pool.totalCount,
+        });
+      }
     } catch (error) {
-      this.logger.error({
-        message: 'Error closing database pool',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      if (this.loggingService) {
+        await this.loggingService.error(
+          'Error closing database pool',
+          {
+            service: 'PrismaService',
+            operation: 'onModuleDestroy',
+            correlationId: undefined,
+          },
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      } else {
+        this.logger.error({
+          message: 'Error closing database pool',
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
     }
   }
 
   /**
    * Get current pool statistics for monitoring
    */
-  getPoolStats() {
+  async getPoolStats() {
     const stats = {
       totalCount: this.pool.totalCount,
       idleCount: this.pool.idleCount,
       waitingCount: this.pool.waitingCount,
     };
 
-    this.logger.debug({
-      message: 'Current pool statistics',
-      ...stats,
-    });
+    if (this.loggingService) {
+      await this.loggingService.debug(
+        'Current pool statistics',
+        {
+          service: 'PrismaService',
+          operation: 'getPoolStats',
+          correlationId: undefined,
+        },
+        stats,
+      );
+    } else {
+      this.logger.debug({
+        message: 'Current pool statistics',
+        ...stats,
+      });
+    }
 
     return stats;
   }

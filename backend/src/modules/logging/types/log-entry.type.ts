@@ -31,7 +31,6 @@ export interface LogEntry {
     stack?: string;
     code?: string;
   };
-  duration?: number;
 }
 
 export interface LogQuery {

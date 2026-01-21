@@ -1,7 +1,8 @@
 // backend/src/modules/messaging/messaging.controller.ts
 // Messaging endpoints.
 
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { Role } from '@prisma/client';
 
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -22,8 +23,9 @@ export class MessagingController {
   async listForEncounter(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Query() query: ListMessagesQueryDto,
+    @Req() req: Request,
   ) {
-    return this.messagingService.listMessages(encounterId, query);
+    return this.messagingService.listMessages(encounterId, query, req.correlationId);
   }
 
   @Post('encounters/:encounterId/messages')
@@ -31,8 +33,9 @@ export class MessagingController {
   async create(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Body() dto: CreateMessageDto,
+    @Req() req: Request,
   ) {
-    return this.messagingService.createMessage(encounterId, dto);
+    return this.messagingService.createMessage(encounterId, dto, req.correlationId);
   }
 
   @Post('messages/:messageId/read')
@@ -40,7 +43,8 @@ export class MessagingController {
   async markRead(
     @Param('messageId', ParseIntPipe) messageId: number,
     @Body() dto: MarkMessageReadDto,
+    @Req() req: Request,
   ) {
-    return this.messagingService.markMessageRead(messageId, dto.actorUserId);
+    return this.messagingService.markMessageRead(messageId, dto.actorUserId, req.correlationId);
   }
 }

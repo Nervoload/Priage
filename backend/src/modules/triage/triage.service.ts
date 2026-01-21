@@ -5,6 +5,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EventType } from '@prisma/client';
 
 import { EventsService } from '../events/events.service';
+import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTriageAssessmentDto } from './dto/create-triage-assessment.dto';
 
@@ -15,22 +16,26 @@ export class TriageService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
+    private readonly loggingService: LoggingService,
   ) {
     this.logger.log('TriageService initialized');
   }
 
-  async createAssessment(dto: CreateTriageAssessmentDto) {
-    const logContext = {
-      encounterId: dto.encounterId,
-      hospitalId: dto.hospitalId,
-      ctasLevel: dto.ctasLevel,
-      createdByUserId: dto.createdByUserId,
-    };
-
-    this.logger.log({
-      message: 'Creating triage assessment',
-      ...logContext,
-    });
+  async createAssessment(dto: CreateTriageAssessmentDto, correlationId?: string) {
+    await this.loggingService.info(
+      'Creating triage assessment',
+      {
+        service: 'TriageService',
+        operation: 'createAssessment',
+        correlationId,
+        encounterId: dto.encounterId,
+        hospitalId: dto.hospitalId,
+        userId: dto.createdByUserId,
+      },
+      {
+        ctasLevel: dto.ctasLevel,
+      },
+    );
 
     try {
       const priorityScore = this.computePriorityScore(dto.ctasLevel);
@@ -41,19 +46,32 @@ export class TriageService {
           select: { id: true, hospitalId: true },
         });
         if (!encounter) {
-          this.logger.warn({
-            message: 'Encounter not found for triage',
-            encounterId: dto.encounterId,
-          });
+          await this.loggingService.warn(
+            'Encounter not found for triage',
+            {
+              service: 'TriageService',
+              operation: 'createAssessment',
+              correlationId,
+              encounterId: dto.encounterId,
+            },
+          );
           throw new NotFoundException(`Encounter ${dto.encounterId} not found`);
         }
         if (encounter.hospitalId !== dto.hospitalId) {
-          this.logger.warn({
-            message: 'Encounter does not belong to hospital',
-            encounterId: dto.encounterId,
-            encounterHospitalId: encounter.hospitalId,
-            requestedHospitalId: dto.hospitalId,
-          });
+          await this.loggingService.warn(
+            'Encounter does not belong to hospital',
+            {
+              service: 'TriageService',
+              operation: 'createAssessment',
+              correlationId,
+              encounterId: dto.encounterId,
+              hospitalId: dto.hospitalId,
+            },
+            {
+              encounterHospitalId: encounter.hospitalId,
+              requestedHospitalId: dto.hospitalId,
+            },
+          );
           throw new NotFoundException('Encounter does not belong to hospital');
         }
 
@@ -93,15 +111,22 @@ export class TriageService {
         return { assessment: created, event: createdEvent };
       });
 
-      this.logger.log({
-        message: 'Triage assessment created successfully',
-        triageId: assessment.id,
-        priorityScore: assessment.priorityScore,
-        eventId: event?.id,
-        encounterId: dto.encounterId,
-        hospitalId: dto.hospitalId,
-        createdByUserId: dto.createdByUserId,
-      });
+      await this.loggingService.info(
+        'Triage assessment created successfully',
+        {
+          service: 'TriageService',
+          operation: 'createAssessment',
+          correlationId,
+          encounterId: dto.encounterId,
+          hospitalId: dto.hospitalId,
+          userId: dto.createdByUserId,
+        },
+        {
+          triageId: assessment.id,
+          priorityScore: assessment.priorityScore,
+          eventId: event?.id,
+        },
+      );
 
       if (event) {
         this.events.dispatchEncounterEvent(event);
@@ -112,21 +137,35 @@ export class TriageService {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      this.logger.error({
-        message: 'Failed to create triage assessment',
-        ...logContext,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to create triage assessment',
+        {
+          service: 'TriageService',
+          operation: 'createAssessment',
+          correlationId,
+          encounterId: dto.encounterId,
+          hospitalId: dto.hospitalId,
+          userId: dto.createdByUserId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          ctasLevel: dto.ctasLevel,
+        },
+      );
       throw error;
     }
   }
 
-  async listAssessments(encounterId: number) {
-    this.logger.debug({
-      message: 'Listing triage assessments',
-      encounterId,
-    });
+  async listAssessments(encounterId: number, correlationId?: string) {
+    await this.loggingService.debug(
+      'Listing triage assessments',
+      {
+        service: 'TriageService',
+        operation: 'listAssessments',
+        correlationId,
+        encounterId,
+      },
+    );
 
     try {
       const assessments = await this.prisma.triageAssessment.findMany({
@@ -134,20 +173,31 @@ export class TriageService {
         orderBy: { createdAt: 'asc' },
       });
 
-      this.logger.debug({
-        message: 'Triage assessments retrieved',
-        encounterId,
-        count: assessments.length,
-      });
+      await this.loggingService.debug(
+        'Triage assessments retrieved',
+        {
+          service: 'TriageService',
+          operation: 'listAssessments',
+          correlationId,
+          encounterId,
+        },
+        {
+          count: assessments.length,
+        },
+      );
 
       return assessments;
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to list triage assessments',
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to list triage assessments',
+        {
+          service: 'TriageService',
+          operation: 'listAssessments',
+          correlationId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
       throw error;
     }
   }

@@ -8,14 +8,29 @@
 
 import 'reflect-metadata';
 import 'dotenv/config';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, LogLevel } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
 import { CorrelationMiddleware } from './common/middleware/correlation.middleware';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // Configure log levels based on environment
+  // Default: 'log', 'error', 'warn' (clean)
+  // With LOG_LEVEL=debug: adds 'debug' and 'verbose'
+  const logLevel = process.env.LOG_LEVEL || 'log';
+  const logLevels: LogLevel[] = ['error', 'warn', 'log'];
+  
+  if (logLevel === 'debug' || logLevel === 'verbose') {
+    logLevels.push('debug');
+  }
+  if (logLevel === 'verbose') {
+    logLevels.push('verbose');
+  }
+
+  const app = await NestFactory.create(AppModule, {
+    logger: logLevels,
+  });
 
   // Apply correlation middleware for request tracing
   app.use(new CorrelationMiddleware().use.bind(new CorrelationMiddleware()));

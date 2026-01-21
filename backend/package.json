@@ -9,7 +9,9 @@
     "build": "nest build",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "test:logging": "node scripts/test-logging.js",
+    "test:logging:setup": "node scripts/setup-test-user.js"
   },
   "dependencies": {
     "@nestjs/bullmq": "11.0.4",

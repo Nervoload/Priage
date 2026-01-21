@@ -5,6 +5,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { AlertSeverity, EventType, Prisma } from '@prisma/client';
 
 import { EventsService } from '../events/events.service';
+import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAlertDto } from './dto/create-alert.dto';
 
@@ -27,23 +28,27 @@ export class AlertsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
+    private readonly loggingService: LoggingService,
   ) {
     this.logger.log('AlertsService initialized');
   }
 
-  async createAlert(dto: CreateAlertDto) {
-    const logContext = {
-      encounterId: dto.encounterId,
-      hospitalId: dto.hospitalId,
-      alertType: dto.type,
-      severity: dto.severity,
-      actorUserId: dto.actorUserId,
-    };
-
-    this.logger.log({
-      message: 'Creating alert',
-      ...logContext,
-    });
+  async createAlert(dto: CreateAlertDto, correlationId?: string) {
+    await this.loggingService.info(
+      'Creating alert',
+      {
+        service: 'AlertsService',
+        operation: 'createAlert',
+        correlationId,
+        encounterId: dto.encounterId,
+        hospitalId: dto.hospitalId,
+      },
+      {
+        alertType: dto.type,
+        severity: dto.severity,
+        actorUserId: dto.actorUserId,
+      },
+    );
 
     try {
       const { alert, event } = await this.prisma.$transaction(async (tx) => {
@@ -52,10 +57,21 @@ export class AlertsService {
           select: { hospitalId: true },
         });
         if (!encounter || encounter.hospitalId !== dto.hospitalId) {
-          this.logger.warn({
-            message: 'Alert creation rejected: Encounter not found or hospital mismatch',
-            ...logContext,
-          });
+          await this.loggingService.warn(
+            'Alert creation rejected: Encounter not found or hospital mismatch',
+            {
+              service: 'AlertsService',
+              operation: 'createAlert',
+              correlationId,
+              encounterId: dto.encounterId,
+              hospitalId: dto.hospitalId,
+            },
+            {
+              alertType: dto.type,
+              severity: dto.severity,
+              actorUserId: dto.actorUserId,
+            },
+          );
           throw new NotFoundException('Encounter does not belong to hospital');
         }
 
@@ -70,12 +86,23 @@ export class AlertsService {
         return { alert: created.alert, event: created.event };
       });
 
-      this.logger.log({
-        message: 'Alert created successfully',
-        alertId: alert.id,
-        eventId: event?.id,
-        ...logContext,
-      });
+      await this.loggingService.info(
+        'Alert created successfully',
+        {
+          service: 'AlertsService',
+          operation: 'createAlert',
+          correlationId,
+          encounterId: dto.encounterId,
+          hospitalId: dto.hospitalId,
+        },
+        {
+          alertId: alert.id,
+          eventId: event?.id,
+          alertType: dto.type,
+          severity: dto.severity,
+          actorUserId: dto.actorUserId,
+        },
+      );
 
       if (event) {
         this.events.dispatchEncounterEvent(event);
@@ -83,12 +110,22 @@ export class AlertsService {
 
       return alert;
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to create alert',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        ...logContext,
-      });
+      await this.loggingService.error(
+        'Failed to create alert',
+        {
+          service: 'AlertsService',
+          operation: 'createAlert',
+          correlationId,
+          encounterId: dto.encounterId,
+          hospitalId: dto.hospitalId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          alertType: dto.type,
+          severity: dto.severity,
+          actorUserId: dto.actorUserId,
+        },
+      );
       throw error;
     }
   }
@@ -123,29 +160,52 @@ export class AlertsService {
     return { alert: created, event: createdEvent };
   }
 
-  async acknowledgeAlert(alertId: number, actorUserId: number) {
-    this.logger.log({
-      message: 'Acknowledging alert',
-      alertId,
-      actorUserId,
-    });
+  async acknowledgeAlert(alertId: number, actorUserId: number, correlationId?: string) {
+    await this.loggingService.info(
+      'Acknowledging alert',
+      {
+        service: 'AlertsService',
+        operation: 'acknowledgeAlert',
+        correlationId,
+        userId: actorUserId,
+      },
+      {
+        alertId,
+      },
+    );
 
     try {
       const { alert, event } = await this.prisma.$transaction(async (tx) => {
         const existing = await tx.alert.findUnique({ where: { id: alertId } });
         if (!existing) {
-          this.logger.warn({
-            message: 'Alert not found for acknowledgement',
-            alertId,
-          });
+          await this.loggingService.warn(
+            'Alert not found for acknowledgement',
+            {
+              service: 'AlertsService',
+              operation: 'acknowledgeAlert',
+              correlationId,
+              userId: actorUserId,
+            },
+            {
+              alertId,
+            },
+          );
           throw new NotFoundException(`Alert ${alertId} not found`);
         }
         if (existing.acknowledgedAt) {
-          this.logger.warn({
-            message: 'Alert already acknowledged',
-            alertId,
-            acknowledgedAt: existing.acknowledgedAt,
-          });
+          await this.loggingService.warn(
+            'Alert already acknowledged',
+            {
+              service: 'AlertsService',
+              operation: 'acknowledgeAlert',
+              correlationId,
+              userId: actorUserId,
+            },
+            {
+              alertId,
+              acknowledgedAt: existing.acknowledgedAt,
+            },
+          );
           throw new BadRequestException(`Alert ${alertId} already acknowledged`);
         }
 
@@ -171,13 +231,20 @@ export class AlertsService {
         return { alert: updated, event: createdEvent };
       });
 
-      this.logger.log({
-        message: 'Alert acknowledged successfully',
-        alertId,
-        actorUserId,
-        encounterId: alert.encounterId,
-        eventId: event?.id,
-      });
+      await this.loggingService.info(
+        'Alert acknowledged successfully',
+        {
+          service: 'AlertsService',
+          operation: 'acknowledgeAlert',
+          correlationId,
+          encounterId: alert.encounterId,
+          userId: actorUserId,
+        },
+        {
+          alertId,
+          eventId: event?.id,
+        },
+      );
 
       if (event) {
         this.events.dispatchEncounterEvent(event);
@@ -188,40 +255,69 @@ export class AlertsService {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      this.logger.error({
-        message: 'Failed to acknowledge alert',
-        alertId,
-        actorUserId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to acknowledge alert',
+        {
+          service: 'AlertsService',
+          operation: 'acknowledgeAlert',
+          correlationId,
+          userId: actorUserId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          alertId,
+        },
+      );
       throw error;
     }
   }
 
-  async resolveAlert(alertId: number, actorUserId: number) {
-    this.logger.log({
-      message: 'Resolving alert',
-      alertId,
-      actorUserId,
-    });
+  async resolveAlert(alertId: number, actorUserId: number, correlationId?: string) {
+    await this.loggingService.info(
+      'Resolving alert',
+      {
+        service: 'AlertsService',
+        operation: 'resolveAlert',
+        correlationId,
+        userId: actorUserId,
+      },
+      {
+        alertId,
+      },
+    );
 
     try {
       const { alert, event } = await this.prisma.$transaction(async (tx) => {
         const existing = await tx.alert.findUnique({ where: { id: alertId } });
         if (!existing) {
-          this.logger.warn({
-            message: 'Alert not found for resolution',
-            alertId,
-          });
+          await this.loggingService.warn(
+            'Alert not found for resolution',
+            {
+              service: 'AlertsService',
+              operation: 'resolveAlert',
+              correlationId,
+              userId: actorUserId,
+            },
+            {
+              alertId,
+            },
+          );
           throw new NotFoundException(`Alert ${alertId} not found`);
         }
         if (existing.resolvedAt) {
-          this.logger.warn({
-            message: 'Alert already resolved',
-            alertId,
-            resolvedAt: existing.resolvedAt,
-          });
+          await this.loggingService.warn(
+            'Alert already resolved',
+            {
+              service: 'AlertsService',
+              operation: 'resolveAlert',
+              correlationId,
+              userId: actorUserId,
+            },
+            {
+              alertId,
+              resolvedAt: existing.resolvedAt,
+            },
+          );
           throw new BadRequestException(`Alert ${alertId} already resolved`);
         }
 
@@ -247,13 +343,20 @@ export class AlertsService {
         return { alert: updated, event: createdEvent };
       });
 
-      this.logger.log({
-        message: 'Alert resolved successfully',
-        alertId,
-        actorUserId,
-        encounterId: alert.encounterId,
-        eventId: event?.id,
-      });
+      await this.loggingService.info(
+        'Alert resolved successfully',
+        {
+          service: 'AlertsService',
+          operation: 'resolveAlert',
+          correlationId,
+          encounterId: alert.encounterId,
+          userId: actorUserId,
+        },
+        {
+          alertId,
+          eventId: event?.id,
+        },
+      );
 
       if (event) {
         this.events.dispatchEncounterEvent(event);
@@ -264,22 +367,33 @@ export class AlertsService {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      this.logger.error({
-        message: 'Failed to resolve alert',
-        alertId,
-        actorUserId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to resolve alert',
+        {
+          service: 'AlertsService',
+          operation: 'resolveAlert',
+          correlationId,
+          userId: actorUserId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          alertId,
+        },
+      );
       throw error;
     }
   }
 
-  async listUnacknowledgedAlerts(hospitalId: number) {
-    this.logger.debug({
-      message: 'Listing unacknowledged alerts',
-      hospitalId,
-    });
+  async listUnacknowledgedAlerts(hospitalId: number, correlationId?: string) {
+    await this.loggingService.debug(
+      'Listing unacknowledged alerts',
+      {
+        service: 'AlertsService',
+        operation: 'listUnacknowledgedAlerts',
+        correlationId,
+        hospitalId,
+      },
+    );
 
     try {
       const alerts = await this.prisma.alert.findMany({
@@ -287,29 +401,45 @@ export class AlertsService {
         orderBy: { createdAt: 'desc' },
       });
 
-      this.logger.debug({
-        message: 'Unacknowledged alerts retrieved',
-        hospitalId,
-        count: alerts.length,
-      });
+      await this.loggingService.debug(
+        'Unacknowledged alerts retrieved',
+        {
+          service: 'AlertsService',
+          operation: 'listUnacknowledgedAlerts',
+          correlationId,
+          hospitalId,
+        },
+        {
+          count: alerts.length,
+        },
+      );
 
       return alerts;
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to list unacknowledged alerts',
-        hospitalId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to list unacknowledged alerts',
+        {
+          service: 'AlertsService',
+          operation: 'listUnacknowledgedAlerts',
+          correlationId,
+          hospitalId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
       throw error;
     }
   }
 
-  async listAlertsForEncounter(encounterId: number) {
-    this.logger.debug({
-      message: 'Listing alerts for encounter',
-      encounterId,
-    });
+  async listAlertsForEncounter(encounterId: number, correlationId?: string) {
+    await this.loggingService.debug(
+      'Listing alerts for encounter',
+      {
+        service: 'AlertsService',
+        operation: 'listAlertsForEncounter',
+        correlationId,
+        encounterId,
+      },
+    );
 
     try {
       const alerts = await this.prisma.alert.findMany({
@@ -317,20 +447,31 @@ export class AlertsService {
         orderBy: { createdAt: 'desc' },
       });
 
-      this.logger.debug({
-        message: 'Encounter alerts retrieved',
-        encounterId,
-        count: alerts.length,
-      });
+      await this.loggingService.debug(
+        'Encounter alerts retrieved',
+        {
+          service: 'AlertsService',
+          operation: 'listAlertsForEncounter',
+          correlationId,
+          encounterId,
+        },
+        {
+          count: alerts.length,
+        },
+      );
 
       return alerts;
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to list alerts for encounter',
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to list alerts for encounter',
+        {
+          service: 'AlertsService',
+          operation: 'listAlertsForEncounter',
+          correlationId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
       throw error;
     }
   }

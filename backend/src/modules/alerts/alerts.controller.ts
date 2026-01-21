@@ -1,7 +1,8 @@
 // backend/src/modules/alerts/alerts.controller.ts
 // Alerts REST endpoints.
 
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { Role } from '@prisma/client';
 
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -19,8 +20,8 @@ export class AlertsController {
 
   @Post()
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async create(@Body() dto: CreateAlertDto) {
-    return this.alertsService.createAlert(dto);
+  async create(@Body() dto: CreateAlertDto, @Req() req: Request) {
+    return this.alertsService.createAlert(dto, req.correlationId);
   }
 
   @Post(':id/acknowledge')
@@ -28,8 +29,9 @@ export class AlertsController {
   async acknowledge(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AckAlertDto,
+    @Req() req: Request,
   ) {
-    return this.alertsService.acknowledgeAlert(id, dto.actorUserId);
+    return this.alertsService.acknowledgeAlert(id, dto.actorUserId, req.correlationId);
   }
 
   @Post(':id/resolve')
@@ -37,19 +39,20 @@ export class AlertsController {
   async resolve(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ResolveAlertDto,
+    @Req() req: Request,
   ) {
-    return this.alertsService.resolveAlert(id, dto.actorUserId);
+    return this.alertsService.resolveAlert(id, dto.actorUserId, req.correlationId);
   }
 
   @Get('hospitals/:hospitalId/unacknowledged')
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async listUnacknowledged(@Param('hospitalId', ParseIntPipe) hospitalId: number) {
-    return this.alertsService.listUnacknowledgedAlerts(hospitalId);
+  async listUnacknowledged(@Param('hospitalId', ParseIntPipe) hospitalId: number, @Req() req: Request) {
+    return this.alertsService.listUnacknowledgedAlerts(hospitalId, req.correlationId);
   }
 
   @Get('encounters/:encounterId')
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async listForEncounter(@Param('encounterId', ParseIntPipe) encounterId: number) {
-    return this.alertsService.listAlertsForEncounter(encounterId);
+  async listForEncounter(@Param('encounterId', ParseIntPipe) encounterId: number, @Req() req: Request) {
+    return this.alertsService.listAlertsForEncounter(encounterId, req.correlationId);
   }
 }

@@ -120,16 +120,12 @@ async function setupAuthentication() {
   }
 }
 
-      await prisma.alert.update({
+async function setupTestData() {
   console.log('\n=== Setting Up Test Data ===');
   
   try {
-    const bcrypt = require('bcrypt');
-    const testPassword = 'test-password-123';
-    const hashedPassword = await bcrypt.hash(testPassword, 10);
-    
     // Create hospital
-      await prisma.alert.update({
+    const hospitalSlug = `test-hospital-${randomUUID().slice(0, 8)}`;
     testState.hospital = await prisma.hospital.create({
       data: {
         name: 'Test Hospital',
@@ -150,35 +146,16 @@ async function setupAuthentication() {
     });
     logSuccess(`Created hospital: ${testState.hospital.name} (ID: ${testState.hospital.id})`);
 
-    // Create hospital user with hashed password
-    const userEmail = `test-user-${randomUUID()}@hospital.local`;
+    // Create hospital user
     testState.user = await prisma.user.create({
       data: {
-        email: userEmail,
-        password: hashedPassword,
+        email: `test-user-${randomUUID()}@hospital.local`,
+        password: 'test-password',
         role: 'NURSE',
         hospitalId: testState.hospital.id,
       },
     });
     logSuccess(`Created user: ${testState.user.email} (ID: ${testState.user.id})`);
-    
-    // Login with the new user to get auth token
-    const loginResponse = await fetch(`${baseUrl}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: userEmail,
-        password: testPassword,
-      }),
-    });
-    
-    if (loginResponse.ok) {
-      const loginData = await loginResponse.json();
-      testState.authToken = loginData.access_token;
-      logSuccess(`Authenticated with new user`);
-    } else {
-      logWarning('Failed to authenticate with new user');
-    }
 
     // Create patient
     testState.patient = await prisma.patientProfile.create({
@@ -467,7 +444,7 @@ async function testAlertGeneration() {
     logSuccess(`Created alert: ID ${alert.id}, Type: ${alert.type}, Severity: ${alert.severity}`);
     
     // Test alert acknowledgment
-    await prisma.alert.update({
+    const acknowledged = await prisma.alert.update({
       where: { id: alert.id },
       data: {
         acknowledgedAt: new Date(),
@@ -477,7 +454,7 @@ async function testAlertGeneration() {
     logSuccess(`Alert acknowledged by user ${testState.user.email}`);
     
     // Test alert resolution
-    await prisma.alert.update({
+    const resolved = await prisma.alert.update({
       where: { id: alert.id },
       data: {
         resolvedAt: new Date(),
@@ -665,22 +642,19 @@ async function cleanupTestData() {
       await prisma.encounterEvent.deleteMany({ where: { hospitalId: testState.hospital.id } });
       await prisma.triageAssessment.deleteMany({ where: { hospitalId: testState.hospital.id } });
       await prisma.encounter.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      
-      // Only delete hospital and users if we created them (not if using existing auth)
-      if (!testState.authToken) {
-        await prisma.user.deleteMany({ where: { hospitalId: testState.hospital.id } });
-        await prisma.hospitalConfig.deleteMany({ where: { hospitalId: testState.hospital.id } });
-        await prisma.hospital.delete({ where: { id: testState.hospital.id } });
-        logSuccess('Deleted test hospital and related data');
-      } else {
-        logSuccess('Deleted test encounters and related data (kept hospital and users)');
-      }
+      await prisma.user.deleteMany({ where: { hospitalId: testState.hospital.id } });
+      await prisma.hospitalConfig.deleteMany({ where: { hospitalId: testState.hospital.id } });
+      await prisma.hospital.delete({ where: { id: testState.hospital.id } });
+      logSuccess('Deleted test hospital and related data');
     }
     
-    // Delete test patients
-    if (testState.patient) {
-      await prisma.patientProfile.delete({ where: { id: testState.patient.id } }).catch(() => {});
-      logSuccess('Deleted test patient');
+    // Delete test patients (encounters already deleted above)
+    const testPatientEmails = [testState.patient?.email].filter(Boolean);
+    if (testPatientEmails.length > 0) {
+      await prisma.patientProfile.deleteMany({
+        where: { email: { in: testPatientEmails } },
+      });
+      logSuccess('Deleted test patients');
     }
     
   } catch (error) {

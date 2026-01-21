@@ -50,7 +50,8 @@ export class AlertsProcessor extends WorkerHost {
       }
 
       const duration = Date.now() - startTime;
-      this.logger.log({
+      // Only log completion in debug mode to reduce noise
+      this.logger.debug({
         message: 'Alert job completed successfully',
         jobId: job.id,
         jobName: job.name,
@@ -94,6 +95,8 @@ export class AlertsProcessor extends WorkerHost {
       });
 
       if (encounters.length === 0) {
+        // Silently return when no alerts needed - reduces log noise
+        // Set LOG_LEVEL=debug to see these messages
         this.logger.debug('No encounters requiring triage reassessment alerts');
         return;
       }

@@ -19,7 +19,8 @@
 // - POST   /encounters/:id/discharge        discharge encounter
 // - POST   /encounters/:id/cancel           cancel encounter
 
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { Role } from '@prisma/client';
 
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -37,20 +38,20 @@ export class EncountersController {
 
   @Post()
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async create(@Body() dto: CreateEncounterDto) {
-    return this.encountersService.createEncounter(dto);
+  async create(@Body() dto: CreateEncounterDto, @Req() req: Request) {
+    return this.encountersService.createEncounter(dto, undefined, req.correlationId);
   }
 
   @Get()
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async list(@Query() query: ListEncountersQueryDto) {
-    return this.encountersService.listEncounters(query);
+  async list(@Query() query: ListEncountersQueryDto, @Req() req: Request) {
+    return this.encountersService.listEncounters(query, req.correlationId);
   }
 
   @Get(':id')
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async getOne(@Param('id', ParseIntPipe) id: number) {
-    return this.encountersService.getEncounter(id);
+  async getOne(@Param('id', ParseIntPipe) id: number, @Req() req: Request) {
+    return this.encountersService.getEncounter(id, req.correlationId);
   }
 
   @Post(':id/confirm')
@@ -58,8 +59,9 @@ export class EncountersController {
   async confirm(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: EncounterActorDto,
+    @Req() req: Request,
   ) {
-    return this.encountersService.confirm(id, dto);
+    return this.encountersService.confirm(id, dto, req.correlationId);
   }
 
   @Post(':id/arrived')
@@ -67,8 +69,9 @@ export class EncountersController {
   async markArrived(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: EncounterActorDto,
+    @Req() req: Request,
   ) {
-    return this.encountersService.markArrived(id, dto);
+    return this.encountersService.markArrived(id, dto, req.correlationId);
   }
 
   @Post(':id/waiting')
@@ -76,8 +79,9 @@ export class EncountersController {
   async createWaiting(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: EncounterActorDto,
+    @Req() req: Request,
   ) {
-    return this.encountersService.createWaiting(id, dto);
+    return this.encountersService.createWaiting(id, dto, req.correlationId);
   }
 
   @Post(':id/start-exam')
@@ -85,8 +89,9 @@ export class EncountersController {
   async startExam(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: EncounterActorDto,
+    @Req() req: Request,
   ) {
-    return this.encountersService.startExam(id, dto);
+    return this.encountersService.startExam(id, dto, req.correlationId);
   }
 
   @Post(':id/discharge')
@@ -94,8 +99,9 @@ export class EncountersController {
   async discharge(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: EncounterActorDto,
+    @Req() req: Request,
   ) {
-    return this.encountersService.discharge(id, dto);
+    return this.encountersService.discharge(id, dto, req.correlationId);
   }
 
   @Post(':id/cancel')
@@ -103,7 +109,8 @@ export class EncountersController {
   async cancel(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: EncounterActorDto,
+    @Req() req: Request,
   ) {
-    return this.encountersService.cancel(id, dto);
+    return this.encountersService.cancel(id, dto, req.correlationId);
   }
 }

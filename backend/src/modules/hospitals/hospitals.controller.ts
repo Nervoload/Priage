@@ -1,8 +1,9 @@
 // backend/src/modules/hospitals/hospitals.controller.ts
 // Hospital information and dashboard endpoints
 
-import { Controller, ForbiddenException, Get, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Param, ParseIntPipe, Req, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import { Request } from 'express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -17,14 +18,15 @@ export class HospitalsController {
 
   // GET /hospitals/:id - Get hospital info (all authenticated users)
   @Get(':id')
-  async getHospital(@Param('id', ParseIntPipe) id: number) {
-    return this.hospitalsService.getHospital(id);
+  async getHospital(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
+    return this.hospitalsService.getHospital(id, req.correlationId);
   }
 
   // GET /hospitals/:id/dashboard - Dashboard analytics (ADMIN, NURSE, DOCTOR)
   @Get(':id/dashboard')
   @Roles(Role.ADMIN, Role.NURSE, Role.DOCTOR)
   async getDashboard(
+    @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
   ) {
@@ -32,19 +34,20 @@ export class HospitalsController {
     if (user.hospitalId !== id) {
       throw new ForbiddenException('Cannot access another hospital\'s dashboard');
     }
-    return this.hospitalsService.getDashboard(id);
+    return this.hospitalsService.getDashboard(id, req.correlationId);
   }
 
   // GET /hospitals/:id/queue - Queue status (ADMIN, NURSE, DOCTOR, STAFF)
   @Get(':id/queue')
   @Roles(Role.ADMIN, Role.NURSE, Role.DOCTOR, Role.STAFF)
   async getQueue(
+    @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
   ) {
     if (user.hospitalId !== id) {
       throw new ForbiddenException('Cannot access another hospital\'s queue');
     }
-    return this.hospitalsService.getQueueStatus(id);
+    return this.hospitalsService.getQueueStatus(id, req.correlationId);
   }
 }

@@ -30,7 +30,6 @@ export class LoggingService {
     context: LogContext,
     data?: any,
     error?: Error,
-    duration?: number,
   ): Promise<LogEntry | null> {
     try {
       const entry: LogEntry = {
@@ -40,7 +39,6 @@ export class LoggingService {
         message,
         context: { ...context },
         data: this.sanitizeData(data),
-        duration,
       };
 
       if (error) {

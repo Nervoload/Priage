@@ -14,6 +14,7 @@ import { EncounterStatus, EventType, Prisma } from '@prisma/client';
 
 import { PaginatedResponse } from '../../common/dto/pagination.dto';
 import { EventsService } from '../events/events.service';
+import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
@@ -83,22 +84,26 @@ export class EncountersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
+    private readonly loggingService: LoggingService,
   ) {
     this.logger.log('EncountersService initialized');
   }
 
-  async createEncounter(dto: CreateEncounterDto, actor?: EncounterActor) {
-    const logContext = {
-      hospitalId: dto.hospitalId,
-      patientId: dto.patientId,
-      actorUserId: actor?.actorUserId,
-      actorPatientId: actor?.actorPatientId,
-    };
-
-    this.logger.log({
-      message: 'Creating new encounter',
-      ...logContext,
-    });
+  async createEncounter(dto: CreateEncounterDto, actor?: EncounterActor, correlationId?: string) {
+    await this.loggingService.info(
+      'Creating new encounter',
+      {
+        service: 'EncountersService',
+        operation: 'createEncounter',
+        correlationId,
+        hospitalId: dto.hospitalId,
+        patientId: dto.patientId,
+      },
+      {
+        actorUserId: actor?.actorUserId,
+        actorPatientId: actor?.actorPatientId,
+      },
+    );
 
     try {
       const { encounter, event } = await this.prisma.$transaction(async (tx) => {
@@ -128,13 +133,23 @@ export class EncountersService {
         return { encounter: created, event: createdEvent };
       });
 
-      this.logger.log({
-        message: 'Encounter created successfully',
-        encounterId: encounter.id,
-        status: encounter.status,
-        eventId: event?.id,
-        ...logContext,
-      });
+      await this.loggingService.info(
+        'Encounter created successfully',
+        {
+          service: 'EncountersService',
+          operation: 'createEncounter',
+          correlationId,
+          hospitalId: dto.hospitalId,
+          patientId: dto.patientId,
+          encounterId: encounter.id,
+        },
+        {
+          status: encounter.status,
+          eventId: event?.id,
+          actorUserId: actor?.actorUserId,
+          actorPatientId: actor?.actorPatientId,
+        },
+      );
 
       if (event) {
         this.events.dispatchEncounterEvent(event);
@@ -142,24 +157,40 @@ export class EncountersService {
 
       return encounter;
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to create encounter',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        ...logContext,
-      });
+      await this.loggingService.error(
+        'Failed to create encounter',
+        {
+          service: 'EncountersService',
+          operation: 'createEncounter',
+          correlationId,
+          hospitalId: dto.hospitalId,
+          patientId: dto.patientId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          actorUserId: actor?.actorUserId,
+          actorPatientId: actor?.actorPatientId,
+        },
+      );
       throw error;
     }
   }
 
-  async listEncounters(query: ListEncountersQueryDto): Promise<PaginatedResponse<any>> {
-    this.logger.log({
-      message: 'Listing encounters',
-      status: query.status,
-      hospitalId: query.hospitalId,
-      page: query.page,
-      limit: query.limit,
-    });
+  async listEncounters(query: ListEncountersQueryDto, correlationId?: string): Promise<PaginatedResponse<any>> {
+    await this.loggingService.info(
+      'Listing encounters',
+      {
+        service: 'EncountersService',
+        operation: 'listEncounters',
+        correlationId,
+        hospitalId: query.hospitalId,
+      },
+      {
+        status: query.status,
+        page: query.page,
+        limit: query.limit,
+      },
+    );
 
     try {
       const where: Prisma.EncounterWhereInput = {};
@@ -193,13 +224,21 @@ export class EncountersService {
 
       const totalPages = Math.ceil(total / limit);
 
-      this.logger.log({
-        message: 'Encounters listed successfully',
-        count: encounters.length,
-        total,
-        page,
-        totalPages,
-      });
+      await this.loggingService.info(
+        'Encounters listed successfully',
+        {
+          service: 'EncountersService',
+          operation: 'listEncounters',
+          correlationId,
+          hospitalId: query.hospitalId,
+        },
+        {
+          count: encounters.length,
+          total,
+          page,
+          totalPages,
+        },
+      );
 
       return {
         data: encounters,
@@ -213,22 +252,33 @@ export class EncountersService {
         },
       };
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to list encounters',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        status: query.status,
-        hospitalId: query.hospitalId,
-      });
+      await this.loggingService.error(
+        'Failed to list encounters',
+        {
+          service: 'EncountersService',
+          operation: 'listEncounters',
+          correlationId,
+          hospitalId: query.hospitalId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          status: query.status,
+        },
+      );
       throw error;
     }
   }
 
-  async getEncounter(encounterId: number) {
-    this.logger.log({
-      message: 'Fetching encounter',
-      encounterId,
-    });
+  async getEncounter(encounterId: number, correlationId?: string) {
+    await this.loggingService.info(
+      'Fetching encounter',
+      {
+        service: 'EncountersService',
+        operation: 'getEncounter',
+        correlationId,
+        encounterId,
+      },
+    );
 
     try {
       const encounter = await this.prisma.encounter.findUnique({
@@ -243,86 +293,114 @@ export class EncountersService {
       });
 
       if (!encounter) {
-        this.logger.warn({
-          message: 'Encounter not found',
-          encounterId,
-        });
+        await this.loggingService.warn(
+          'Encounter not found',
+          {
+            service: 'EncountersService',
+            operation: 'getEncounter',
+            correlationId,
+            encounterId,
+          },
+        );
         throw new NotFoundException(`Encounter ${encounterId} not found`);
       }
 
-      this.logger.log({
-        message: 'Encounter fetched successfully',
-        encounterId,
-        status: encounter.status,
-        hospitalId: encounter.hospitalId,
-      });
+      await this.loggingService.info(
+        'Encounter fetched successfully',
+        {
+          service: 'EncountersService',
+          operation: 'getEncounter',
+          correlationId,
+          encounterId,
+          hospitalId: encounter.hospitalId ?? undefined,
+        },
+        {
+          status: encounter.status,
+        },
+      );
 
       return encounter;
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      this.logger.error({
-        message: 'Failed to fetch encounter',
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to fetch encounter',
+        {
+          service: 'EncountersService',
+          operation: 'getEncounter',
+          correlationId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
       throw error;
     }
   }
 
-  async confirm(encounterId: number, actor?: EncounterActor) {
-    return this.transition(encounterId, 'confirm', actor);
+  async confirm(encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(encounterId, 'confirm', actor, correlationId);
   }
 
-  async markArrived(encounterId: number, actor?: EncounterActor) {
-    return this.transition(encounterId, 'markArrived', actor);
+  async markArrived(encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(encounterId, 'markArrived', actor, correlationId);
   }
 
-  async createWaiting(encounterId: number, actor?: EncounterActor) {
-    return this.transition(encounterId, 'createWaiting', actor);
+  async createWaiting(encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(encounterId, 'createWaiting', actor, correlationId);
   }
 
-  async startExam(encounterId: number, actor?: EncounterActor) {
-    return this.transition(encounterId, 'startExam', actor);
+  async startExam(encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(encounterId, 'startExam', actor, correlationId);
   }
 
-  async discharge(encounterId: number, actor?: EncounterActor) {
-    return this.transition(encounterId, 'discharge', actor);
+  async discharge(encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(encounterId, 'discharge', actor, correlationId);
   }
 
-  async cancel(encounterId: number, actor?: EncounterActor) {
-    return this.transition(encounterId, 'cancel', actor);
+  async cancel(encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(encounterId, 'cancel', actor, correlationId);
   }
 
   private async transition(
     encounterId: number,
     transitionKey: keyof typeof TRANSITIONS,
     actor?: EncounterActor,
+    correlationId?: string,
   ) {
     const transition = TRANSITIONS[transitionKey];
     if (!transition) {
-      this.logger.error({
-        message: 'Unknown transition attempted',
-        encounterId,
-        transitionKey: String(transitionKey),
-      });
+      await this.loggingService.error(
+        'Unknown transition attempted',
+        {
+          service: 'EncountersService',
+          operation: 'transition',
+          correlationId,
+          encounterId,
+        },
+        new Error(`Unknown transition: ${String(transitionKey)}`),
+        {
+          transitionKey: String(transitionKey),
+        },
+      );
       throw new BadRequestException(`Unknown transition: ${String(transitionKey)}`);
     }
 
-    const logContext = {
-      encounterId,
-      transitionKey: String(transitionKey),
-      targetStatus: transition.to,
-      actorUserId: actor?.actorUserId,
-      actorPatientId: actor?.actorPatientId,
-    };
-
-    this.logger.log({
-      message: 'Starting encounter transition',
-      ...logContext,
-    });
+    await this.loggingService.info(
+      'Starting encounter transition',
+      {
+        service: 'EncountersService',
+        operation: 'transition',
+        correlationId,
+        encounterId,
+      },
+      {
+        transitionKey: String(transitionKey),
+        targetStatus: transition.to,
+        actorUserId: actor?.actorUserId,
+        actorPatientId: actor?.actorPatientId,
+      },
+    );
 
     const now = new Date();
     const startTime = Date.now();
@@ -331,32 +409,55 @@ export class EncountersService {
       const { encounter, event } = await this.prisma.$transaction(async (tx) => {
         const current = await tx.encounter.findUnique({ where: { id: encounterId } });
         if (!current) {
-          this.logger.warn({
-            message: 'Encounter not found during transition',
-            ...logContext,
-          });
+          await this.loggingService.warn(
+            'Encounter not found during transition',
+            {
+              service: 'EncountersService',
+              operation: 'transition',
+              correlationId,
+              encounterId,
+            },
+            {
+              transitionKey: String(transitionKey),
+              targetStatus: transition.to,
+            },
+          );
           throw new NotFoundException(`Encounter ${encounterId} not found`);
         }
 
         if (TERMINAL_STATUSES.has(current.status)) {
-          this.logger.warn({
-            message: 'Transition attempted on terminal status',
-            encounterId,
-            currentStatus: current.status,
-            transitionKey: String(transitionKey),
-          });
+          await this.loggingService.warn(
+            'Transition attempted on terminal status',
+            {
+              service: 'EncountersService',
+              operation: 'transition',
+              correlationId,
+              encounterId,
+            },
+            {
+              currentStatus: current.status,
+              transitionKey: String(transitionKey),
+            },
+          );
           throw new BadRequestException(`Encounter ${encounterId} is terminal (${current.status})`);
         }
 
         if (!transition.allowedFrom.includes(current.status)) {
-          this.logger.warn({
-            message: 'Invalid state transition attempted',
-            encounterId,
-            currentStatus: current.status,
-            targetStatus: transition.to,
-            transitionKey: String(transitionKey),
-            allowedFrom: transition.allowedFrom,
-          });
+          await this.loggingService.warn(
+            'Invalid state transition attempted',
+            {
+              service: 'EncountersService',
+              operation: 'transition',
+              correlationId,
+              encounterId,
+            },
+            {
+              currentStatus: current.status,
+              targetStatus: transition.to,
+              transitionKey: String(transitionKey),
+              allowedFrom: transition.allowedFrom,
+            },
+          );
           throw new BadRequestException(
             `Invalid transition ${transitionKey} from ${current.status} to ${transition.to}`,
           );
@@ -403,17 +504,24 @@ export class EncountersService {
 
       const duration = Date.now() - startTime;
 
-      this.logger.log({
-        message: 'Encounter transition completed successfully',
-        encounterId: encounter.id,
-        fromStatus: event?.metadata && typeof event.metadata === 'object' && 'fromStatus' in event.metadata ? event.metadata.fromStatus : undefined,
-        toStatus: encounter.status,
-        transitionKey: String(transitionKey),
-        eventId: event?.id,
-        durationMs: duration,
-        actorUserId: actor?.actorUserId,
-        actorPatientId: actor?.actorPatientId,
-      });
+      await this.loggingService.info(
+        'Encounter transition completed successfully',
+        {
+          service: 'EncountersService',
+          operation: 'transition',
+          correlationId,
+          encounterId: encounter.id,
+        },
+        {
+          fromStatus: event?.metadata && typeof event.metadata === 'object' && 'fromStatus' in event.metadata ? event.metadata.fromStatus : undefined,
+          toStatus: encounter.status,
+          transitionKey: String(transitionKey),
+          eventId: event?.id,
+          durationMs: duration,
+          actorUserId: actor?.actorUserId,
+          actorPatientId: actor?.actorPatientId,
+        },
+      );
 
       if (event) {
         this.events.dispatchEncounterEvent(event);
@@ -428,13 +536,23 @@ export class EncountersService {
         throw error;
       }
 
-      this.logger.error({
-        message: 'Encounter transition failed',
-        ...logContext,
-        durationMs: duration,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Encounter transition failed',
+        {
+          service: 'EncountersService',
+          operation: 'transition',
+          correlationId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          transitionKey: String(transitionKey),
+          targetStatus: transition.to,
+          durationMs: duration,
+          actorUserId: actor?.actorUserId,
+          actorPatientId: actor?.actorPatientId,
+        },
+      );
       throw error;
     }
   }

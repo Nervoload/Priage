@@ -16,6 +16,7 @@ import { Logger } from '@nestjs/common';
 import jwt from 'jsonwebtoken';
 import type { Server, Socket } from 'socket.io';
 
+import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeEvents } from './realtime.events';
 import { encounterRoomKey, hospitalRoomKey } from './realtime.rooms';
@@ -37,11 +38,21 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   private connectedClients = new Map<string, { userId: number; hospitalId: number; connectedAt: Date }>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly loggingService: LoggingService,
+  ) {}
 
   afterInit(server: Server) {
     this.logger.log('WebSocket Gateway initialized');
     this.logger.log(`CORS enabled for all origins`);
+    
+    this.loggingService.info('WebSocket Gateway initialized', {
+      service: 'RealtimeGateway',
+      operation: 'afterInit',
+    }, {
+      corsEnabled: true,
+    });
     
     // Set up server-level error handling
     server.on('error', (error) => {
@@ -50,6 +61,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         error: error.message,
         stack: error.stack,
       });
+      
+      this.loggingService.error('WebSocket server error', {
+        service: 'RealtimeGateway',
+        operation: 'serverError',
+      }, error);
     });
   }
 
@@ -61,6 +77,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       clientId,
       remoteAddress: client.handshake.address,
     });
+    
+    await this.loggingService.info('New WebSocket connection attempt', {
+      service: 'RealtimeGateway',
+      operation: 'handleConnection',
+    }, {
+      clientId,
+      remoteAddress: client.handshake.address,
+    });
 
     try {
       const token = this.extractToken(client);
@@ -69,6 +93,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           message: 'Connection rejected: No authentication token',
           clientId,
         });
+        
+        await this.loggingService.warn('Connection rejected - no authentication token', {
+          service: 'RealtimeGateway',
+          operation: 'handleConnection',
+        }, {
+          clientId,
+        });
+        
         client.disconnect();
         return;
       }
@@ -84,6 +116,15 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           clientId,
           error: jwtError instanceof Error ? jwtError.message : String(jwtError),
         });
+        
+        await this.loggingService.warn('Connection rejected - invalid JWT token', {
+          service: 'RealtimeGateway',
+          operation: 'handleConnection',
+        }, {
+          clientId,
+          error: jwtError instanceof Error ? jwtError.message : String(jwtError),
+        });
+        
         client.disconnect();
         return;
       }
@@ -94,6 +135,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           clientId,
           claims,
         });
+        
+        await this.loggingService.warn('Connection rejected - invalid token claims', {
+          service: 'RealtimeGateway',
+          operation: 'handleConnection',
+        }, {
+          clientId,
+          hasClaims: !!claims,
+          hasUserId: !!claims?.userId,
+          hasHospitalId: !!claims?.hospitalId,
+        });
+        
         client.disconnect();
         return;
       }
@@ -112,6 +164,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         clientId,
         userId: claims.userId,
         hospitalId: claims.hospitalId,
+        role: claims.role,
+      });
+      
+      await this.loggingService.info('Client joined hospital room', {
+        service: 'RealtimeGateway',
+        operation: 'handleConnection',
+        userId: claims.userId,
+        hospitalId: claims.hospitalId,
+      }, {
+        clientId,
         role: claims.role,
       });
 
@@ -138,6 +200,18 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
             subscribedCount: encounters.length,
             encounterIds: encounters.map(e => e.id),
           });
+          
+          await this.loggingService.info('Client subscribed to encounter rooms', {
+            service: 'RealtimeGateway',
+            operation: 'handleConnection',
+            userId: claims.userId,
+            hospitalId: claims.hospitalId,
+          }, {
+            clientId,
+            requestedCount: requestedEncounterIds.length,
+            subscribedCount: encounters.length,
+            encounterIds: encounters.map(e => e.id),
+          });
         } catch (dbError) {
           this.logger.error({
             message: 'Failed to subscribe to encounter rooms',
@@ -146,6 +220,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
             requestedEncounterIds,
             error: dbError instanceof Error ? dbError.message : String(dbError),
             stack: dbError instanceof Error ? dbError.stack : undefined,
+          });
+          
+          await this.loggingService.error('Failed to subscribe to encounter rooms', {
+            service: 'RealtimeGateway',
+            operation: 'handleConnection',
+            userId: claims.userId,
+            hospitalId: claims.hospitalId,
+          }, dbError instanceof Error ? dbError : undefined, {
+            clientId,
+            requestedEncounterIds,
           });
           // Don't disconnect - hospital room subscription is still valid
         }
@@ -158,6 +242,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         hospitalId: claims.hospitalId,
         totalConnections: this.connectedClients.size,
       });
+      
+      await this.loggingService.info('WebSocket connection established successfully', {
+        service: 'RealtimeGateway',
+        operation: 'handleConnection',
+        userId: claims.userId,
+        hospitalId: claims.hospitalId,
+      }, {
+        clientId,
+        totalConnections: this.connectedClients.size,
+      });
     } catch (error) {
       this.logger.error({
         message: 'Unexpected error during connection handling',
@@ -165,6 +259,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
+      
+      await this.loggingService.error('Unexpected error during WebSocket connection', {
+        service: 'RealtimeGateway',
+        operation: 'handleConnection',
+      }, error instanceof Error ? error : undefined, {
+        clientId,
+      });
+      
       client.disconnect();
     }
   }
@@ -185,10 +287,28 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         totalConnections: this.connectedClients.size - 1,
       });
       
+      this.loggingService.info('WebSocket client disconnected', {
+        service: 'RealtimeGateway',
+        operation: 'handleDisconnect',
+        userId: clientInfo.userId,
+        hospitalId: clientInfo.hospitalId,
+      }, {
+        clientId,
+        connectionDurationMs: connectionDuration,
+        totalConnections: this.connectedClients.size - 1,
+      });
+      
       this.connectedClients.delete(clientId);
     } else {
       this.logger.log({
         message: 'Unknown client disconnected',
+        clientId,
+      });
+      
+      this.loggingService.debug('Unknown client disconnected', {
+        service: 'RealtimeGateway',
+        operation: 'handleDisconnect',
+      }, {
         clientId,
       });
     }
@@ -208,6 +328,15 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         encounterId,
         event: RealtimeEvents.EncounterUpdated,
       });
+      
+      this.loggingService.debug('Encounter update emitted', {
+        service: 'RealtimeGateway',
+        operation: 'emitEncounterUpdated',
+        hospitalId,
+        encounterId,
+      }, {
+        event: RealtimeEvents.EncounterUpdated,
+      });
     } catch (error) {
       this.logger.error({
         message: 'Failed to emit encounter update',
@@ -216,6 +345,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
+      
+      this.loggingService.error('Failed to emit encounter update', {
+        service: 'RealtimeGateway',
+        operation: 'emitEncounterUpdated',
+        hospitalId,
+        encounterId,
+      }, error instanceof Error ? error : undefined);
     }
   }
 

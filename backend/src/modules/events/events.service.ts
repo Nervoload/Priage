@@ -4,6 +4,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EncounterEvent, EventType, Prisma } from '@prisma/client';
 
+import { LoggingService } from '../logging/logging.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 export type EncounterEventActor = {
@@ -23,7 +24,10 @@ export type EmitEncounterEventArgs = {
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
 
-  constructor(private readonly realtime: RealtimeGateway) {
+  constructor(
+    private readonly realtime: RealtimeGateway,
+    private readonly loggingService: LoggingService,
+  ) {
     this.logger.log('EventsService initialized');
   }
 
@@ -40,18 +44,39 @@ export class EventsService {
     };
 
     if (!args.hospitalId) {
-      this.logger.warn({
-        message: 'Skipping encounter event without hospitalId',
-        ...logContext,
-      });
+      await this.loggingService.warn(
+        'Skipping encounter event without hospitalId',
+        {
+          service: 'EventsService',
+          operation: 'emitEncounterEventTx',
+          correlationId: undefined,
+          encounterId: args.encounterId,
+        },
+        {
+          eventType: args.type,
+          actorUserId: args.actor?.actorUserId,
+          actorPatientId: args.actor?.actorPatientId,
+        },
+      );
       return null;
     }
 
     try {
-      this.logger.debug({
-        message: 'Creating encounter event in transaction',
-        ...logContext,
-      });
+      await this.loggingService.debug(
+        'Creating encounter event in transaction',
+        {
+          service: 'EventsService',
+          operation: 'emitEncounterEventTx',
+          correlationId: undefined,
+          encounterId: args.encounterId,
+          hospitalId: args.hospitalId,
+        },
+        {
+          eventType: args.type,
+          actorUserId: args.actor?.actorUserId,
+          actorPatientId: args.actor?.actorPatientId,
+        },
+      );
 
       const event = await tx.encounterEvent.create({
         data: {
@@ -64,36 +89,60 @@ export class EventsService {
         },
       });
 
-      this.logger.log({
-        message: 'Encounter event created',
-        eventId: event.id,
-        ...logContext,
-      });
+      await this.loggingService.info(
+        'Encounter event created',
+        {
+          service: 'EventsService',
+          operation: 'emitEncounterEventTx',
+          correlationId: undefined,
+          encounterId: args.encounterId,
+          hospitalId: args.hospitalId,
+        },
+        {
+          eventId: event.id,
+          eventType: args.type,
+          actorUserId: args.actor?.actorUserId,
+          actorPatientId: args.actor?.actorPatientId,
+        },
+      );
 
       return event;
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to create encounter event in transaction',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        ...logContext,
-      });
+      await this.loggingService.error(
+        'Failed to create encounter event in transaction',
+        {
+          service: 'EventsService',
+          operation: 'emitEncounterEventTx',
+          correlationId: undefined,
+          encounterId: args.encounterId,
+          hospitalId: args.hospitalId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          eventType: args.type,
+          actorUserId: args.actor?.actorUserId,
+          actorPatientId: args.actor?.actorPatientId,
+        },
+      );
       throw error;
     }
   }
 
   dispatchEncounterEvent(event: EncounterEvent): void {
-    const logContext = {
-      eventId: event.id,
-      eventType: event.type,
-      encounterId: event.encounterId,
-      hospitalId: event.hospitalId,
-    };
-
-    this.logger.debug({
-      message: 'Dispatching encounter event',
-      ...logContext,
-    });
+    this.loggingService.debug(
+      'Dispatching encounter event',
+      {
+        service: 'EventsService',
+        operation: 'dispatchEncounterEvent',
+        correlationId: undefined,
+        eventId: event.id,
+        encounterId: event.encounterId,
+        hospitalId: event.hospitalId,
+      },
+      {
+        eventType: event.type,
+      },
+    ).catch(() => {}); // Fire and forget
 
     try {
       const payloadBase = {
@@ -124,26 +173,55 @@ export class EventsService {
           this.realtime.emitAlertResolved(event.hospitalId, event.encounterId, payloadBase);
           break;
         default:
-          this.logger.debug({
-            message: 'Unhandled event type for realtime dispatch',
-            ...logContext,
-          });
+          this.loggingService.debug(
+            'Unhandled event type for realtime dispatch',
+            {
+              service: 'EventsService',
+              operation: 'dispatchEncounterEvent',
+              correlationId: undefined,
+              eventId: event.id,
+              encounterId: event.encounterId,
+              hospitalId: event.hospitalId,
+            },
+            {
+              eventType: event.type,
+            },
+          ).catch(() => {}); // Fire and forget
       }
 
-      this.logger.log({
-        message: 'Event dispatched successfully',
-        ...logContext,
-      });
+      this.loggingService.info(
+        'Event dispatched successfully',
+        {
+          service: 'EventsService',
+          operation: 'dispatchEncounterEvent',
+          correlationId: undefined,
+          eventId: event.id,
+          encounterId: event.encounterId,
+          hospitalId: event.hospitalId,
+        },
+        {
+          eventType: event.type,
+        },
+      ).catch(() => {}); // Fire and forget
     } catch (error) {
       // CRITICAL: Event dispatch failures should not break the transaction
       // Log error but don't throw - this allows database changes to complete
       // even if WebSocket notification fails
-      this.logger.error({
-        message: 'Failed to dispatch encounter event to realtime',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        ...logContext,
-      });
+      this.loggingService.error(
+        'Failed to dispatch encounter event to realtime',
+        {
+          service: 'EventsService',
+          operation: 'dispatchEncounterEvent',
+          correlationId: undefined,
+          eventId: event.id,
+          encounterId: event.encounterId,
+          hospitalId: event.hospitalId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          eventType: event.type,
+        },
+      ).catch(() => {}); // Fire and forget
       // TODO: Implement dead letter queue or retry mechanism for failed dispatches
     }
   }

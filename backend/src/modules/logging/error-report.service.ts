@@ -202,7 +202,7 @@ export class ErrorReportService {
     };
     
     try {
-      const poolStats = this.prisma.getPoolStats();
+      const poolStats = await this.prisma.getPoolStats();
       dbMetrics.connected = true;
       dbMetrics.poolSize = poolStats.totalCount;
       dbMetrics.idleConnections = poolStats.idleCount;

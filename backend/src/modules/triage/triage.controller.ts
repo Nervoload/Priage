@@ -1,7 +1,8 @@
 // backend/src/modules/triage/triage.controller.ts
 // Triage endpoints.
 
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Req, UseGuards } from '@nestjs/common';
+import { Request } from 'express';
 import { Role } from '@prisma/client';
 
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -17,13 +18,13 @@ export class TriageController {
 
   @Post('assessments')
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async createAssessment(@Body() dto: CreateTriageAssessmentDto) {
-    return this.triageService.createAssessment(dto);
+  async createAssessment(@Body() dto: CreateTriageAssessmentDto, @Req() req: Request) {
+    return this.triageService.createAssessment(dto, req.correlationId);
   }
 
   @Get('encounters/:encounterId/assessments')
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async listAssessments(@Param('encounterId', ParseIntPipe) encounterId: number) {
-    return this.triageService.listAssessments(encounterId);
+  async listAssessments(@Param('encounterId', ParseIntPipe) encounterId: number, @Req() req: Request) {
+    return this.triageService.listAssessments(encounterId, req.correlationId);
   }
 }

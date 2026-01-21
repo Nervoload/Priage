@@ -5,6 +5,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 
+import { LoggingService } from '../logging/logging.service';
+
 @Injectable()
 export class JobsService implements OnModuleInit {
   private readonly logger = new Logger(JobsService.name);
@@ -12,6 +14,7 @@ export class JobsService implements OnModuleInit {
   constructor(
     @InjectQueue('events') private readonly eventsQueue: Queue,
     @InjectQueue('alerts') private readonly alertsQueue: Queue,
+    private readonly loggingService: LoggingService,
   ) {
     this.logger.log('JobsService initialized');
   }
@@ -31,11 +34,18 @@ export class JobsService implements OnModuleInit {
         },
       );
 
-      this.logger.log({
-        message: 'Event polling job configured',
-        interval: '5000ms',
-        queue: 'events',
-      });
+      await this.loggingService.info(
+        'Event polling job configured',
+        {
+          service: 'JobsService',
+          operation: 'onModuleInit',
+          correlationId: undefined,
+        },
+        {
+          interval: '5000ms',
+          queue: 'events',
+        },
+      );
 
       // Set up triage reassessment job
       await this.alertsQueue.add(
@@ -48,43 +58,81 @@ export class JobsService implements OnModuleInit {
         },
       );
 
-      this.logger.log({
-        message: 'Triage reassessment job configured',
-        interval: '60000ms',
-        queue: 'alerts',
-      });
+      await this.loggingService.info(
+        'Triage reassessment job configured',
+        {
+          service: 'JobsService',
+          operation: 'onModuleInit',
+          correlationId: undefined,
+        },
+        {
+          interval: '60000ms',
+          queue: 'alerts',
+        },
+      );
 
-      this.logger.log('All recurring jobs configured successfully');
+      await this.loggingService.info(
+        'All recurring jobs configured successfully',
+        {
+          service: 'JobsService',
+          operation: 'onModuleInit',
+          correlationId: undefined,
+        },
+      );
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to configure recurring jobs',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to configure recurring jobs',
+        {
+          service: 'JobsService',
+          operation: 'onModuleInit',
+          correlationId: undefined,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
       throw error;
     }
   }
 
   async enqueueEventProcessing(eventId: number) {
-    this.logger.log({
-      message: 'Enqueuing event for processing',
-      eventId,
-    });
+    await this.loggingService.info(
+      'Enqueuing event for processing',
+      {
+        service: 'JobsService',
+        operation: 'enqueueEventProcessing',
+        correlationId: undefined,
+      },
+      {
+        eventId,
+      },
+    );
 
     try {
       await this.eventsQueue.add('dispatch-event', { eventId });
       
-      this.logger.log({
-        message: 'Event enqueued successfully',
-        eventId,
-      });
+      await this.loggingService.info(
+        'Event enqueued successfully',
+        {
+          service: 'JobsService',
+          operation: 'enqueueEventProcessing',
+          correlationId: undefined,
+        },
+        {
+          eventId,
+        },
+      );
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to enqueue event processing',
-        eventId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Failed to enqueue event processing',
+        {
+          service: 'JobsService',
+          operation: 'enqueueEventProcessing',
+          correlationId: undefined,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          eventId,
+        },
+      );
       throw error;
     }
   }
