@@ -580,4 +580,4 @@ Test 8 adds **9 comprehensive tests** covering **5 new services** with **40+ log
 **Total new log verifications**: 18 expected log messages  
 **Total test time**: ~8-12 seconds  
 
-This brings total logging coverage to **87%** (13/15 modules) and **189+ log statements** system-wide.
+This brings total logging coverage to **87%** (13/15 modules) and **132 log statements** system-wide.

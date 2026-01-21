@@ -10,6 +10,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
+    "test:smoke": "node scripts/smoke-test-v2.js",
+    "test:smoke:verbose": "node scripts/smoke-test-v2.js --verbose",
     "test:logging": "node scripts/test-logging.js",
     "test:logging:setup": "node scripts/setup-test-user.js"
   },
