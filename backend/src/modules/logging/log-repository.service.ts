@@ -247,7 +247,22 @@ export class LogRepositoryService {
     }
   }
 
-  private mapToLogEntry(dbLog: any): LogEntry {
+  private mapToLogEntry(dbLog: {
+    id: string;
+    timestamp: Date;
+    level: string;
+    message: string;
+    correlationId: string | null;
+    service: string;
+    operation: string;
+    userId: number | null;
+    patientId: number | null;
+    hospitalId: number | null;
+    encounterId: number | null;
+    context: any;
+    data: any;
+    error: any;
+  }): LogEntry {
     return {
       id: dbLog.id,
       timestamp: dbLog.timestamp,

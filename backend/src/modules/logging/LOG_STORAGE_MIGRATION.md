@@ -12,14 +12,14 @@ This implementation adds persistent log storage using Prisma and PostgreSQL. The
 Set the `LOG_STORAGE` environment variable to control which storage mode is used:
 
 ```bash
-# Development (in-memory storage)
-LOG_STORAGE=memory
+# Development (in-memory storage) - default if not set
+# LOG_STORAGE not set, or set to any value other than "database"
 
 # Production (database storage)
 LOG_STORAGE=database
 ```
 
-If `LOG_STORAGE` is not set, the system defaults to in-memory storage.
+If `LOG_STORAGE` is not set or set to any value other than `database`, the system defaults to in-memory storage.
 
 ## Database Migration
 

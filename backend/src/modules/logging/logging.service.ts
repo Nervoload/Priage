@@ -63,7 +63,14 @@ export class LoggingService {
       // Store based on configured storage mode
       if (this.useDatabaseStorage && this.logRepository) {
         // Database storage for production
-        await this.logRepository.saveLog(entry);
+        // Fire-and-forget to prevent blocking - logging should never slow down the app
+        this.logRepository.saveLog(entry).catch((err) => {
+          // Log error to console as fallback, but don't throw
+          console.error('[LoggingService] Failed to save log to database', {
+            error: err instanceof Error ? err.message : String(err),
+            logEntry: entry,
+          });
+        });
       } else {
         // In-memory storage for development
         const correlationId = context.correlationId || 'uncorrelated';
