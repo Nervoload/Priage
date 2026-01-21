@@ -1,9 +1,10 @@
 // backend/src/modules/logging/logging.service.ts
 // Centralized logging service with correlation support
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { LogContext, LogEntry, LogLevel, LogQuery } from './types/log-entry.type';
+import { LogRepositoryService } from './log-repository.service';
 
 @Injectable()
 export class LoggingService {
@@ -12,9 +13,19 @@ export class LoggingService {
   private readonly maxLogsPerCorrelation = 1000;
   private readonly maxTotalLogs = 10000;
   private readonly retentionMs = 24 * 60 * 60 * 1000; // 24 hours
+  private readonly useDatabaseStorage: boolean;
 
-  constructor() {
-    this.logger.log('LoggingService initialized');
+  constructor(
+    @Optional() @Inject('LOG_REPOSITORY') private readonly logRepository?: LogRepositoryService,
+  ) {
+    // Use database storage if LOG_STORAGE env var is set to 'database'
+    // Otherwise use in-memory storage for development
+    this.useDatabaseStorage = process.env.LOG_STORAGE === 'database';
+    
+    this.logger.log({
+      message: 'LoggingService initialized',
+      storageMode: this.useDatabaseStorage ? 'database' : 'in-memory',
+    });
     
     // Cleanup old logs periodically
     setInterval(() => this.cleanupOldLogs(), 60 * 60 * 1000); // Every hour
@@ -49,27 +60,33 @@ export class LoggingService {
         };
       }
 
-      // Store by correlation ID for quick lookup
-      const correlationId = context.correlationId || 'uncorrelated';
-      if (!this.logs.has(correlationId)) {
-        this.logs.set(correlationId, []);
-      }
+      // Store based on configured storage mode
+      if (this.useDatabaseStorage && this.logRepository) {
+        // Database storage for production
+        await this.logRepository.saveLog(entry);
+      } else {
+        // In-memory storage for development
+        const correlationId = context.correlationId || 'uncorrelated';
+        if (!this.logs.has(correlationId)) {
+          this.logs.set(correlationId, []);
+        }
 
-      const correlationLogs = this.logs.get(correlationId)!;
-      correlationLogs.push(entry);
+        const correlationLogs = this.logs.get(correlationId)!;
+        correlationLogs.push(entry);
 
-      // Limit logs per correlation to prevent memory issues
-      if (correlationLogs.length > this.maxLogsPerCorrelation) {
-        correlationLogs.shift();
+        // Limit logs per correlation to prevent memory issues
+        if (correlationLogs.length > this.maxLogsPerCorrelation) {
+          correlationLogs.shift();
+        }
+
+        // Cleanup if total logs exceed limit
+        if (this.getTotalLogCount() > this.maxTotalLogs) {
+          this.cleanupOldestCorrelation();
+        }
       }
 
       // Also log to NestJS logger for console output
       this.logToConsole(level, message, context, error);
-
-      // Cleanup if total logs exceed limit
-      if (this.getTotalLogCount() > this.maxTotalLogs) {
-        this.cleanupOldestCorrelation();
-      }
 
       return entry;
     } catch (loggingError) {
@@ -117,6 +134,9 @@ export class LoggingService {
    * Get all logs for a specific correlation ID
    */
   async getLogsByCorrelationId(correlationId: string): Promise<LogEntry[]> {
+    if (this.useDatabaseStorage && this.logRepository) {
+      return this.logRepository.getLogsByCorrelationId(correlationId);
+    }
     return this.logs.get(correlationId) || [];
   }
 
@@ -124,6 +144,10 @@ export class LoggingService {
    * Query logs with filters
    */
   async queryLogs(query: LogQuery): Promise<LogEntry[]> {
+    if (this.useDatabaseStorage && this.logRepository) {
+      return this.logRepository.queryLogs(query);
+    }
+
     let results: LogEntry[] = [];
 
     // If correlation ID provided, only search that
@@ -153,6 +177,9 @@ export class LoggingService {
    * Get error logs for a correlation ID
    */
   async getErrorLogs(correlationId: string): Promise<LogEntry[]> {
+    if (this.useDatabaseStorage && this.logRepository) {
+      return this.logRepository.getErrorLogs(correlationId);
+    }
     const logs = await this.getLogsByCorrelationId(correlationId);
     return logs.filter((log) => log.level === LogLevel.ERROR);
   }
@@ -161,6 +188,9 @@ export class LoggingService {
    * Check if a correlation ID has errors
    */
   async hasErrors(correlationId: string): Promise<boolean> {
+    if (this.useDatabaseStorage && this.logRepository) {
+      return this.logRepository.hasErrors(correlationId);
+    }
     const errors = await this.getErrorLogs(correlationId);
     return errors.length > 0;
   }
@@ -168,11 +198,21 @@ export class LoggingService {
   /**
    * Get statistics about stored logs
    */
-  getStats() {
+  async getStats() {
+    if (this.useDatabaseStorage && this.logRepository) {
+      const dbStats = await this.logRepository.getStats();
+      return {
+        ...dbStats,
+        storageMode: 'database',
+        memoryUsage: process.memoryUsage(),
+      };
+    }
+
     return {
       totalCorrelations: this.logs.size,
       totalLogs: this.getTotalLogCount(),
       oldestLog: this.getOldestLogTimestamp(),
+      storageMode: 'in-memory',
       memoryUsage: process.memoryUsage(),
     };
   }
@@ -180,16 +220,24 @@ export class LoggingService {
   /**
    * Clear all logs (for testing or manual cleanup)
    */
-  clearAll() {
-    this.logs.clear();
+  async clearAll() {
+    if (this.useDatabaseStorage && this.logRepository) {
+      await this.logRepository.clearAll();
+    } else {
+      this.logs.clear();
+    }
     this.logger.warn('All logs cleared');
   }
 
   /**
    * Clear logs for a specific correlation ID
    */
-  clearCorrelation(correlationId: string) {
-    this.logs.delete(correlationId);
+  async clearCorrelation(correlationId: string) {
+    if (this.useDatabaseStorage && this.logRepository) {
+      await this.logRepository.clearCorrelation(correlationId);
+    } else {
+      this.logs.delete(correlationId);
+    }
   }
 
   // Private helper methods
@@ -282,7 +330,18 @@ export class LoggingService {
     return oldest;
   }
 
-  private cleanupOldLogs() {
+  private async cleanupOldLogs() {
+    if (this.useDatabaseStorage && this.logRepository) {
+      const removed = await this.logRepository.cleanupOldLogs(this.retentionMs);
+      if (removed > 0) {
+        this.logger.log({
+          message: 'Cleaned up old logs from database',
+          removed,
+        });
+      }
+      return;
+    }
+
     const cutoff = new Date(Date.now() - this.retentionMs);
     let removed = 0;
 

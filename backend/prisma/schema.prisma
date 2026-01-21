@@ -326,3 +326,41 @@ model Asset {
   @@index([encounterId, createdAt])
   @@index([hospitalId, createdAt])
 }
+
+//---------------------------------------------------------------------//
+//                    LOGGING & AUDIT SCHEMA
+//---------------------------------------------------------------------//
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+model Log {
+  id        String   @id @default(uuid())
+  timestamp DateTime @default(now())
+  level     LogLevel
+  message   String
+  
+  // Context fields for filtering and correlation
+  correlationId String?
+  service       String
+  operation     String
+  userId        Int?
+  patientId     Int?
+  hospitalId    Int?
+  encounterId   Int?
+  
+  // JSON fields for flexible data storage
+  context Json?
+  data    Json?
+  error   Json?
+  
+  // Indices for common query patterns
+  @@index([correlationId, timestamp])
+  @@index([level, timestamp])
+  @@index([hospitalId, timestamp])
+  @@index([userId, timestamp])
+  @@index([timestamp])
+}
