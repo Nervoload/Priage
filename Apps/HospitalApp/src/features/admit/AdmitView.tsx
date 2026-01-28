@@ -57,9 +57,10 @@ const mockEncounters: Encounter[] = [
 
 interface AdmitViewProps {
   onBack?: () => void;
+  onNavigate?: (view: 'admit' | 'triage' | 'waiting') => void;
 }
 
-export function AdmitView({ onBack }: AdmitViewProps) {
+export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All Stages');
 
@@ -186,6 +187,7 @@ export function AdmitView({ onBack }: AdmitViewProps) {
         </div>
         <div style={{ display: 'flex', gap: '1rem' }}>
           <button
+            onClick={() => onNavigate?.('admit')}
             style={{
               padding: '0.75rem 1.5rem',
               backgroundColor: '#7c3aed',
@@ -199,9 +201,14 @@ export function AdmitView({ onBack }: AdmitViewProps) {
               fontWeight: '500',
             }}
           >
-            <span>👤</span> Admittance
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
+              <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+              <path d="M3 14c0-2.5 2.5-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+            </svg>
+            Admittance
           </button>
           <button
+            onClick={() => onNavigate?.('triage')}
             style={{
               padding: '0.75rem 1.5rem',
               backgroundColor: 'transparent',
@@ -214,9 +221,14 @@ export function AdmitView({ onBack }: AdmitViewProps) {
               gap: '0.5rem',
             }}
           >
-            <span>📄</span> Triage
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
+              <rect x="3" y="2" width="10" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+              <path d="M6 6h4M6 9h4M6 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            Triage
           </button>
           <button
+            onClick={() => onNavigate?.('waiting')}
             style={{
               padding: '0.75rem 1.5rem',
               backgroundColor: 'transparent',
@@ -229,7 +241,11 @@ export function AdmitView({ onBack }: AdmitViewProps) {
               gap: '0.5rem',
             }}
           >
-            <span>🕐</span> Waiting Room
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            Waiting Room
           </button>
         </div>
       </div>
@@ -274,7 +290,17 @@ export function AdmitView({ onBack }: AdmitViewProps) {
               color: '#000000',
             }}
           />
-          <span style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', fontSize: '1.125rem' }}>🔍</span>
+          <svg 
+            width="18" 
+            height="18" 
+            viewBox="0 0 18 18" 
+            fill="none" 
+            xmlns="http://www.w3.org/2000/svg"
+            style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)' }}
+          >
+            <circle cx="8" cy="8" r="6" stroke="#6b7280" strokeWidth="1.5" fill="none"/>
+            <path d="m13 13 3 3" stroke="#6b7280" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
         </div>
         <select
           value={statusFilter}
@@ -382,8 +408,12 @@ export function AdmitView({ onBack }: AdmitViewProps) {
                   </div>
                 </div>
 
-                <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <span>🕐</span> Arrived: {formatTime(encounter.createdAt)}
+                <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+                    <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                  Arrived: {formatTime(encounter.createdAt)}
                 </div>
 
                 <button
