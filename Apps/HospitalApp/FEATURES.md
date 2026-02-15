@@ -40,3 +40,17 @@
 3. Triage view shows patients with status `TRIAGE`.
 4. Clicking **"Admit"** in the triage popup changes the patient's status to `TRIAGE` → they disappear from admittance and appear in triage.
 5. The shared `Encounter` type is exported from `HospitalApp.tsx` and imported everywhere.
+
+---
+
+## 3. Triage Page — Get Details Popup
+
+**Files:**
+- `src/features/triage/TriageView.tsx` — wires "Get Details" button to open the popup
+- `src/features/admit/TriagePopup.tsx` — reused from admittance (same component)
+
+**How it works:**
+1. On the Triage page, each patient row has a **"Get Details"** button.
+2. Clicking it opens the same **TriagePopup** modal used on the admittance page, showing that patient's triage data (placeholder for now).
+3. Since the patient is already in triage, the **Admit** button still appears but no `onAdmit` is passed — so it does nothing. *(Will be replaced with backend logic later.)*
+4. Close the popup via ✕ or clicking the backdrop.

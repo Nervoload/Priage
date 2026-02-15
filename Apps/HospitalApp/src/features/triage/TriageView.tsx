@@ -1,7 +1,9 @@
 // HospitalApp/src/features/triage/TriageView.tsx
 // Triage view with horizontal rows
 
+import { useState } from 'react';
 import type { Encounter } from '../../app/HospitalApp';
+import { TriagePopup } from '../admit/TriagePopup';
 
 interface TriageViewProps {
   onBack?: () => void;
@@ -10,6 +12,7 @@ interface TriageViewProps {
 }
 
 export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) {
+  const [selectedEncounter, setSelectedEncounter] = useState<Encounter | null>(null);
   const getInitials = (name: string): string => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
@@ -188,10 +191,7 @@ export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) 
                       </div>
                     </div>
                     <button
-                      onClick={() => {
-                        // TODO: Navigate to patient triage details
-                        console.log('View triage details for', encounter.id);
-                      }}
+                      onClick={() => setSelectedEncounter(encounter)}
                       style={{
                         padding: '0.5rem 1.25rem',
                         backgroundColor: '#7c3aed',
@@ -238,6 +238,14 @@ export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) 
           </div>
         </div>
       </div>
+
+      {/* Triage Popup (no Admit button since patient is already in triage) */}
+      {selectedEncounter && (
+        <TriagePopup
+          encounter={selectedEncounter}
+          onClose={() => setSelectedEncounter(null)}
+        />
+      )}
 
       {/* Footer */}
       <div style={{
