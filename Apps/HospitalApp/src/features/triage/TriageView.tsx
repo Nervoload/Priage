@@ -76,12 +76,12 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
 
   const getPriority = (encounter: Encounter): { label: string; color: string } => {
     const complaint = encounter.chiefComplaint.toLowerCase();
-    if (complaint.includes('critical') || complaint.includes('chest pain') || 
-        complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
+    if (complaint.includes('critical') || complaint.includes('chest pain') ||
+      complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
       return { label: 'CRITICAL', color: '#ef4444' };
     }
-    if (complaint.includes('severe') || complaint.includes('high fever') || 
-        complaint.includes('high')) {
+    if (complaint.includes('severe') || complaint.includes('high fever') ||
+      complaint.includes('high')) {
       return { label: 'HIGH', color: '#f97316' };
     }
     return { label: 'MEDIUM', color: '#eab308' };
@@ -125,8 +125,8 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M3 14c0-2.5 2.5-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+              <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M3 14c0-2.5 2.5-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" fill="none" />
             </svg>
             Admittance
           </button>
@@ -146,8 +146,8 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <rect x="3" y="2" width="10" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M6 6h4M6 9h4M6 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <rect x="3" y="2" width="10" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M6 6h4M6 9h4M6 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             Triage
           </button>
@@ -166,8 +166,8 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             Waiting Room
           </button>
@@ -179,7 +179,7 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
         {/* Patient List */}
         <div style={{ flex: 1 }}>
           <h2 style={{ marginBottom: '1.5rem', fontSize: '1.75rem', color: '#1f2937' }}>Triage Patients</h2>
-          
+
           {mockEncounters.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', backgroundColor: 'white', borderRadius: '12px' }}>
               No patients in triage
@@ -189,7 +189,7 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
               {mockEncounters.map(encounter => {
                 const priority = getPriority(encounter);
                 const initials = getInitials(encounter.patient.displayName);
-                
+
                 return (
                   <div
                     key={encounter.id}
