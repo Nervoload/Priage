@@ -9,9 +9,62 @@ import { WaitingRoomView } from '../features/waitingroom/WaitingRoomView';
 
 type View = 'admit' | 'triage' | 'waiting';
 
+// Shared encounter type
+export interface Patient {
+  id: number;
+  displayName: string;
+  phone: string | null;
+}
+
+export interface Encounter {
+  id: number;
+  createdAt: string;
+  updatedAt: string;
+  status: 'PRE_TRIAGE' | 'ARRIVED' | 'TRIAGE' | 'WAITING' | 'COMPLETE' | 'CANCELLED';
+  hospitalName: string;
+  chiefComplaint: string;
+  details: string | null;
+  patient: Patient;
+}
+
+// Initial mock data (lives here so both views share it)
+const initialEncounters: Encounter[] = [
+  {
+    id: 1,
+    createdAt: new Date(Date.now() - 30 * 60000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: 'PRE_TRIAGE',
+    hospitalName: 'General Hospital',
+    chiefComplaint: 'Severe abdominal pain',
+    details: null,
+    patient: { id: 1, displayName: 'Sarah Johnson', phone: '555-0101' },
+  },
+  {
+    id: 2,
+    createdAt: new Date(Date.now() - 90 * 60000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: 'ARRIVED',
+    hospitalName: 'General Hospital',
+    chiefComplaint: 'Chest pain and shortness of breath',
+    details: null,
+    patient: { id: 2, displayName: 'Michael Chen', phone: '555-0102' },
+  },
+  {
+    id: 3,
+    createdAt: new Date(Date.now() - 120 * 60000).toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: 'PRE_TRIAGE',
+    hospitalName: 'General Hospital',
+    chiefComplaint: 'Severe headache and dizziness',
+    details: null,
+    patient: { id: 3, displayName: 'Emily Rodriguez', phone: '555-0103' },
+  },
+];
+
 export function HospitalApp() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentView, setCurrentView] = useState<View>('admit');
+  const [encounters, setEncounters] = useState<Encounter[]>(initialEncounters);
 
   if (!isLoggedIn) {
     return <LoginPage onLogin={() => setIsLoggedIn(true)} />;
@@ -25,13 +78,41 @@ export function HospitalApp() {
     setIsLoggedIn(false);
   };
 
+  // Move a patient to triage (change status to TRIAGE)
+  const handleAdmit = (encounter: Encounter) => {
+    setEncounters(prev =>
+      prev.map(e =>
+        e.id === encounter.id
+          ? { ...e, status: 'TRIAGE' as const, updatedAt: new Date().toISOString() }
+          : e
+      )
+    );
+  };
+
+  // Admittance shows PRE_TRIAGE and ARRIVED patients
+  const admitEncounters = encounters.filter(
+    e => e.status === 'PRE_TRIAGE' || e.status === 'ARRIVED'
+  );
+
+  // Triage shows TRIAGE patients
+  const triageEncounters = encounters.filter(e => e.status === 'TRIAGE');
+
   return (
     <>
       {currentView === 'admit' && (
-        <AdmitView onBack={handleBack} onNavigate={handleNavigate} />
+        <AdmitView
+          onBack={handleBack}
+          onNavigate={handleNavigate}
+          encounters={admitEncounters}
+          onAdmit={handleAdmit}
+        />
       )}
       {currentView === 'triage' && (
-        <TriageView onBack={handleBack} onNavigate={handleNavigate} />
+        <TriageView
+          onBack={handleBack}
+          onNavigate={handleNavigate}
+          encounters={triageEncounters}
+        />
       )}
       {currentView === 'waiting' && (
         <WaitingRoomView onBack={handleBack} onNavigate={handleNavigate} />

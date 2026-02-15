@@ -2,71 +2,24 @@
 // Admittance dashboard view with mock data
 
 import { useState, useMemo } from 'react';
-
-// Mock data types
-interface Patient {
-  id: number;
-  displayName: string;
-  phone: string | null;
-}
-
-interface Encounter {
-  id: number;
-  createdAt: string;
-  updatedAt: string;
-  status: 'PRE_TRIAGE' | 'ARRIVED' | 'TRIAGE' | 'WAITING' | 'COMPLETE' | 'CANCELLED';
-  hospitalName: string;
-  chiefComplaint: string;
-  details: string | null;
-  patient: Patient;
-}
-
-// Mock data
-const mockEncounters: Encounter[] = [
-  {
-    id: 1,
-    createdAt: new Date(Date.now() - 30 * 60000).toISOString(), // 30 min ago
-    updatedAt: new Date().toISOString(),
-    status: 'PRE_TRIAGE',
-    hospitalName: 'General Hospital',
-    chiefComplaint: 'Severe abdominal pain',
-    details: null,
-    patient: { id: 1, displayName: 'Sarah Johnson', phone: '555-0101' },
-  },
-  {
-    id: 2,
-    createdAt: new Date(Date.now() - 90 * 60000).toISOString(), // 90 min ago
-    updatedAt: new Date().toISOString(),
-    status: 'ARRIVED',
-    hospitalName: 'General Hospital',
-    chiefComplaint: 'Chest pain and shortness of breath',
-    details: null,
-    patient: { id: 2, displayName: 'Michael Chen', phone: '555-0102' },
-  },
-  {
-    id: 3,
-    createdAt: new Date(Date.now() - 120 * 60000).toISOString(), // 2 hours ago
-    updatedAt: new Date().toISOString(),
-    status: 'TRIAGE',
-    hospitalName: 'General Hospital',
-    chiefComplaint: 'Severe headache and dizziness',
-    details: null,
-    patient: { id: 3, displayName: 'Emily Rodriguez', phone: '555-0103' },
-  },
-];
+import { TriagePopup } from './TriagePopup';
+import type { Encounter } from '../../app/HospitalApp';
 
 interface AdmitViewProps {
   onBack?: () => void;
   onNavigate?: (view: 'admit' | 'triage' | 'waiting') => void;
+  encounters: Encounter[];
+  onAdmit: (encounter: Encounter) => void;
 }
 
-export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
+export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All Stages');
+  const [selectedEncounter, setSelectedEncounter] = useState<Encounter | null>(null);
 
   // Filter logic (ready for backend integration)
   const filteredEncounters = useMemo(() => {
-    let filtered = mockEncounters;
+    let filtered = encounters;
 
     // Apply status filter
     if (statusFilter !== 'All Stages') {
@@ -84,7 +37,7 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
 
     // Apply search filter
     if (searchQuery) {
-      filtered = filtered.filter(e => 
+      filtered = filtered.filter(e =>
         e.patient.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
         e.chiefComplaint.toLowerCase().includes(searchQuery.toLowerCase()) ||
         `P-${String(e.id).padStart(3, '0')}`.toLowerCase().includes(searchQuery.toLowerCase())
@@ -92,7 +45,7 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
     }
 
     return filtered;
-  }, [searchQuery, statusFilter]);
+  }, [searchQuery, statusFilter, encounters]);
 
   const getStatusLabel = (status: Encounter['status']): string => {
     const labels: Record<Encounter['status'], string> = {
@@ -121,12 +74,12 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
   const getPriority = (encounter: Encounter): { label: string; color: string } => {
     // Priority logic based on keywords in chief complaint
     const complaint = encounter.chiefComplaint.toLowerCase();
-    if (complaint.includes('critical') || complaint.includes('chest pain') || 
-        complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
+    if (complaint.includes('critical') || complaint.includes('chest pain') ||
+      complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
       return { label: 'CRITICAL', color: '#ef4444' };
     }
-    if (complaint.includes('severe') || complaint.includes('high fever') || 
-        complaint.includes('high')) {
+    if (complaint.includes('severe') || complaint.includes('high fever') ||
+      complaint.includes('high')) {
       return { label: 'HIGH', color: '#f97316' };
     }
     return { label: 'MEDIUM', color: '#eab308' };
@@ -146,21 +99,21 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
   };
 
   // Calculate summary stats
-  const expecting = mockEncounters.filter(e => e.status === 'PRE_TRIAGE').length;
-  const inAdmittance = mockEncounters.filter(e => e.status === 'ARRIVED').length;
-  const totalActive = mockEncounters.filter(e => 
+  const expecting = encounters.filter(e => e.status === 'PRE_TRIAGE').length;
+  const inAdmittance = encounters.filter(e => e.status === 'ARRIVED').length;
+  const totalActive = encounters.filter(e =>
     e.status !== 'COMPLETE' && e.status !== 'CANCELLED'
   ).length;
-  
+
   // Calculate average wait time for waiting patients
-  const waitingPatients = mockEncounters.filter(e => e.status === 'WAITING');
+  const waitingPatients = encounters.filter(e => e.status === 'WAITING');
   const avgWaitTime = waitingPatients.length > 0
     ? Math.round(
-        waitingPatients.reduce((acc, e) => {
-          const waitMs = Date.now() - new Date(e.createdAt).getTime();
-          return acc + waitMs;
-        }, 0) / waitingPatients.length / 60000
-      )
+      waitingPatients.reduce((acc, e) => {
+        const waitMs = Date.now() - new Date(e.createdAt).getTime();
+        return acc + waitMs;
+      }, 0) / waitingPatients.length / 60000
+    )
     : 32; // Default to 32m if no waiting patients
 
   return (
@@ -202,8 +155,8 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M3 14c0-2.5 2.5-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+              <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M3 14c0-2.5 2.5-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" fill="none" />
             </svg>
             Admittance
           </button>
@@ -222,8 +175,8 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <rect x="3" y="2" width="10" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M6 6h4M6 9h4M6 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <rect x="3" y="2" width="10" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M6 6h4M6 9h4M6 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             Triage
           </button>
@@ -242,8 +195,8 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             Waiting Room
           </button>
@@ -290,16 +243,16 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
               color: '#000000',
             }}
           />
-          <svg 
-            width="18" 
-            height="18" 
-            viewBox="0 0 18 18" 
-            fill="none" 
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 18 18"
+            fill="none"
             xmlns="http://www.w3.org/2000/svg"
             style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)' }}
           >
-            <circle cx="8" cy="8" r="6" stroke="#6b7280" strokeWidth="1.5" fill="none"/>
-            <path d="m13 13 3 3" stroke="#6b7280" strokeWidth="1.5" strokeLinecap="round"/>
+            <circle cx="8" cy="8" r="6" stroke="#6b7280" strokeWidth="1.5" fill="none" />
+            <path d="m13 13 3 3" stroke="#6b7280" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </div>
         <select
@@ -331,16 +284,16 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
           No patients found
         </div>
       ) : (
-        <div style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(3, 1fr)', 
-          gap: '1.5rem' 
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '1.5rem'
         }}>
           {filteredEncounters.map(encounter => {
             const priority = getPriority(encounter);
             const statusColor = getStatusColor(encounter.status);
             const initials = getInitials(encounter.patient.displayName);
-            
+
             return (
               <div
                 key={encounter.id}
@@ -410,8 +363,8 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
 
                 <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-                    <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                    <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                   </svg>
                   Arrived: {formatTime(encounter.createdAt)}
                 </div>
@@ -434,10 +387,7 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
                   onMouseOut={(e) => {
                     e.currentTarget.style.backgroundColor = '#7c3aed';
                   }}
-                  onClick={() => {
-                    // TODO: Navigate to patient details
-                    console.log('View details for', encounter.id);
-                  }}
+                  onClick={() => setSelectedEncounter(encounter)}
                 >
                   View Details
                 </button>
@@ -445,6 +395,17 @@ export function AdmitView({ onBack, onNavigate }: AdmitViewProps) {
             );
           })}
         </div>
+      )}
+
+      {selectedEncounter && (
+        <TriagePopup
+          encounter={selectedEncounter}
+          onClose={() => setSelectedEncounter(null)}
+          onAdmit={(enc) => {
+            onAdmit(enc);
+            setSelectedEncounter(null);
+          }}
+        />
       )}
 
       {/* Footer */}

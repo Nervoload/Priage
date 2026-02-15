@@ -1,66 +1,15 @@
 // HospitalApp/src/features/triage/TriageView.tsx
 // Triage view with horizontal rows
 
-import { useState } from 'react';
-
-// Mock data types (same as AdmitView)
-interface Patient {
-  id: number;
-  displayName: string;
-  phone: string | null;
-}
-
-interface Encounter {
-  id: number;
-  createdAt: string;
-  updatedAt: string;
-  status: 'PRE_TRIAGE' | 'ARRIVED' | 'TRIAGE' | 'WAITING' | 'COMPLETE' | 'CANCELLED';
-  hospitalName: string;
-  chiefComplaint: string;
-  details: string | null;
-  patient: Patient;
-}
-
-// Mock data - using same patients from admittance
-const mockEncounters: Encounter[] = [
-  {
-    id: 1,
-    createdAt: new Date(Date.now() - 30 * 60000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    status: 'TRIAGE',
-    hospitalName: 'General Hospital',
-    chiefComplaint: 'Severe abdominal pain',
-    details: null,
-    patient: { id: 1, displayName: 'Sarah Johnson', phone: '555-0101' },
-  },
-  {
-    id: 2,
-    createdAt: new Date(Date.now() - 90 * 60000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    status: 'TRIAGE',
-    hospitalName: 'General Hospital',
-    chiefComplaint: 'Chest pain and shortness of breath',
-    details: null,
-    patient: { id: 2, displayName: 'Michael Chen', phone: '555-0102' },
-  },
-  {
-    id: 3,
-    createdAt: new Date(Date.now() - 120 * 60000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    status: 'TRIAGE',
-    hospitalName: 'General Hospital',
-    chiefComplaint: 'Severe headache and dizziness',
-    details: null,
-    patient: { id: 3, displayName: 'Emily Rodriguez', phone: '555-0103' },
-  },
-];
+import type { Encounter } from '../../app/HospitalApp';
 
 interface TriageViewProps {
   onBack?: () => void;
   onNavigate?: (view: 'admit' | 'triage' | 'waiting') => void;
+  encounters: Encounter[];
 }
 
-export function TriageView({ onBack, onNavigate }: TriageViewProps) {
+export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) {
   const getInitials = (name: string): string => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
@@ -69,19 +18,14 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
     return `P-${String(id).padStart(3, '0')}`;
   };
 
-  const formatTime = (dateString: string): string => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  };
-
   const getPriority = (encounter: Encounter): { label: string; color: string } => {
     const complaint = encounter.chiefComplaint.toLowerCase();
-    if (complaint.includes('critical') || complaint.includes('chest pain') || 
-        complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
+    if (complaint.includes('critical') || complaint.includes('chest pain') ||
+      complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
       return { label: 'CRITICAL', color: '#ef4444' };
     }
-    if (complaint.includes('severe') || complaint.includes('high fever') || 
-        complaint.includes('high')) {
+    if (complaint.includes('severe') || complaint.includes('high fever') ||
+      complaint.includes('high')) {
       return { label: 'HIGH', color: '#f97316' };
     }
     return { label: 'MEDIUM', color: '#eab308' };
@@ -125,8 +69,8 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M3 14c0-2.5 2.5-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+              <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M3 14c0-2.5 2.5-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" fill="none" />
             </svg>
             Admittance
           </button>
@@ -146,8 +90,8 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <rect x="3" y="2" width="10" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M6 6h4M6 9h4M6 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <rect x="3" y="2" width="10" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M6 6h4M6 9h4M6 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             Triage
           </button>
@@ -166,8 +110,8 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '0.25rem' }}>
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" fill="none" />
+              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             Waiting Room
           </button>
@@ -179,17 +123,17 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
         {/* Patient List */}
         <div style={{ flex: 1 }}>
           <h2 style={{ marginBottom: '1.5rem', fontSize: '1.75rem', color: '#1f2937' }}>Triage Patients</h2>
-          
-          {mockEncounters.length === 0 ? (
+
+          {encounters.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', backgroundColor: 'white', borderRadius: '12px' }}>
               No patients in triage
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {mockEncounters.map(encounter => {
+              {encounters.map(encounter => {
                 const priority = getPriority(encounter);
                 const initials = getInitials(encounter.patient.displayName);
-                
+
                 return (
                   <div
                     key={encounter.id}
@@ -289,7 +233,7 @@ export function TriageView({ onBack, onNavigate }: TriageViewProps) {
               Patients in Triage
             </div>
             <div style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#1f2937' }}>
-              {mockEncounters.length}
+              {encounters.length}
             </div>
           </div>
         </div>
