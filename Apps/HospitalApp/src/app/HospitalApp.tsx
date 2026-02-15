@@ -27,6 +27,14 @@ export interface Encounter {
   patient: Patient;
 }
 
+export interface ChatMessage {
+  id: string;
+  encounterId: number;
+  sender: 'admin' | 'patient';
+  text: string;
+  timestamp: string;
+}
+
 // Initial mock data (lives here so both views share it)
 const initialEncounters: Encounter[] = [
   {
@@ -65,6 +73,7 @@ export function HospitalApp() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentView, setCurrentView] = useState<View>('admit');
   const [encounters, setEncounters] = useState<Encounter[]>(initialEncounters);
+  const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
 
   if (!isLoggedIn) {
     return <LoginPage onLogin={() => setIsLoggedIn(true)} />;
@@ -89,6 +98,22 @@ export function HospitalApp() {
     );
   };
 
+  // Send a chat message from admin to a patient (local state only)
+  // TODO: Replace with WebSocket emit / REST POST when backend is connected
+  const handleSendMessage = (encounterId: number, text: string) => {
+    const message: ChatMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      encounterId,
+      sender: 'admin',
+      text,
+      timestamp: new Date().toISOString(),
+    };
+    setChatMessages(prev => ({
+      ...prev,
+      [encounterId]: [...(prev[encounterId] || []), message],
+    }));
+  };
+
   // Admittance shows PRE_TRIAGE and ARRIVED patients
   const admitEncounters = encounters.filter(
     e => e.status === 'PRE_TRIAGE' || e.status === 'ARRIVED'
@@ -96,6 +121,11 @@ export function HospitalApp() {
 
   // Triage shows TRIAGE patients
   const triageEncounters = encounters.filter(e => e.status === 'TRIAGE');
+
+  // Waiting room shows all patients that have been admitted (TRIAGE, WAITING, COMPLETE)
+  const waitingEncounters = encounters.filter(
+    e => e.status === 'TRIAGE' || e.status === 'WAITING' || e.status === 'COMPLETE'
+  );
 
   return (
     <>
@@ -115,7 +145,13 @@ export function HospitalApp() {
         />
       )}
       {currentView === 'waiting' && (
-        <WaitingRoomView onBack={handleBack} onNavigate={handleNavigate} />
+        <WaitingRoomView
+          onBack={handleBack}
+          onNavigate={handleNavigate}
+          encounters={waitingEncounters}
+          chatMessages={chatMessages}
+          onSendMessage={handleSendMessage}
+        />
       )}
     </>
   );
