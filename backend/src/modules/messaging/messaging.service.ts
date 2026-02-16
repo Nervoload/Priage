@@ -1,7 +1,7 @@
 // backend/src/modules/messaging/messaging.service.ts
 // Messaging service for encounter-linked chat.
 
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EventType, SenderType } from '@prisma/client';
 
 import { PaginatedResponse } from '../../common/dto/pagination.dto';
@@ -10,6 +10,7 @@ import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMessageDto } from './dto/create-message.dto';
+import { CreatePatientMessageDto } from './dto/create-patient-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages.query.dto';
 
 @Injectable()
@@ -27,6 +28,7 @@ export class MessagingService {
 
   async listMessages(
     encounterId: number,
+    hospitalId: number,
     query?: ListMessagesQueryDto,
     correlationId?: string,
   ): Promise<PaginatedResponse<any>> {
@@ -34,13 +36,14 @@ export class MessagingService {
     const limit = query?.limit || 20;
     const skip = (page - 1) * limit;
 
-    await this.loggingService.debug(
+    this.loggingService.debug(
       'Listing messages',
       {
         service: 'MessagingService',
         operation: 'listMessages',
         correlationId,
         encounterId,
+        hospitalId,
       },
       {
         page,
@@ -51,23 +54,24 @@ export class MessagingService {
     try {
       const [messages, total] = await Promise.all([
         this.prisma.message.findMany({
-          where: { encounterId },
+          where: { encounterId, hospitalId },
           orderBy: { createdAt: 'asc' },
           skip,
           take: limit,
         }),
-        this.prisma.message.count({ where: { encounterId } }),
+        this.prisma.message.count({ where: { encounterId, hospitalId } }),
       ]);
 
       const totalPages = Math.ceil(total / limit);
 
-      await this.loggingService.debug(
+      this.loggingService.debug(
         'Messages retrieved',
         {
           service: 'MessagingService',
           operation: 'listMessages',
           correlationId,
           encounterId,
+          hospitalId,
         },
         {
           count: messages.length,
@@ -89,13 +93,14 @@ export class MessagingService {
         },
       };
     } catch (error) {
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to list messages',
         {
           service: 'MessagingService',
           operation: 'listMessages',
           correlationId,
           encounterId,
+          hospitalId,
         },
         error instanceof Error ? error : new Error(String(error)),
       );
@@ -103,16 +108,22 @@ export class MessagingService {
     }
   }
 
-  async createMessage(encounterId: number, dto: CreateMessageDto, correlationId?: string) {
-    await this.loggingService.info(
+  async createMessage(
+    encounterId: number,
+    hospitalId: number,
+    actorUserId: number,
+    dto: CreateMessageDto,
+    correlationId?: string,
+  ) {
+    this.loggingService.info(
       'Creating message',
       {
         service: 'MessagingService',
         operation: 'createMessage',
         correlationId,
         encounterId,
-        userId: dto.createdByUserId,
-        patientId: dto.createdByPatientId,
+        hospitalId,
+        userId: actorUserId,
       },
       {
         senderType: dto.senderType,
@@ -124,47 +135,40 @@ export class MessagingService {
     try {
       const { message, event, alertEvent } = await this.prisma.$transaction(async (tx) => {
         const encounter = await tx.encounter.findUnique({
-          where: { id: encounterId },
+          where: {
+            id_hospitalId: {
+              id: encounterId,
+              hospitalId,
+            },
+          },
           select: { id: true, hospitalId: true },
         });
         if (!encounter) {
-          await this.loggingService.warn(
+          this.loggingService.warn(
             'Encounter not found for message',
             {
               service: 'MessagingService',
               operation: 'createMessage',
               correlationId,
               encounterId,
+              hospitalId,
             },
           );
-          throw new NotFoundException(`Encounter ${encounterId} not found`);
+          throw new NotFoundException(`Encounter ${encounterId} not found for hospital`);
         }
-        if (encounter.hospitalId == null) {
-          await this.loggingService.warn(
-            'Encounter missing hospitalId',
-            {
-              service: 'MessagingService',
-              operation: 'createMessage',
-              correlationId,
-              encounterId,
-            },
-          );
-          throw new BadRequestException(`Encounter ${encounterId} missing hospitalId`);
-        }
-        const hospitalId = encounter.hospitalId;
 
         try {
           this.ensureSenderIdentity(dto);
         } catch (validationError) {
-          await this.loggingService.warn(
+          this.loggingService.warn(
             'Message sender validation failed',
             {
               service: 'MessagingService',
               operation: 'createMessage',
               correlationId,
               encounterId,
-              userId: dto.createdByUserId,
-              patientId: dto.createdByPatientId,
+              hospitalId,
+              userId: actorUserId,
             },
             {
               senderType: dto.senderType,
@@ -177,8 +181,7 @@ export class MessagingService {
         const created = await tx.message.create({
           data: {
             senderType: dto.senderType,
-            createdByUserId: dto.createdByUserId,
-            createdByPatientId: dto.createdByPatientId,
+            createdByUserId: actorUserId,
             content: dto.content,
             isInternal: dto.isInternal ?? false,
             encounterId: encounter.id,
@@ -196,14 +199,13 @@ export class MessagingService {
             isInternal: created.isInternal,
           },
           actor: {
-            actorUserId: dto.createdByUserId,
-            actorPatientId: dto.createdByPatientId,
+            actorUserId,
           },
         });
 
         let createdAlertEvent = null;
         if (dto.isWorsening && dto.senderType === SenderType.PATIENT) {
-          await this.loggingService.info(
+          this.loggingService.info(
             'Creating worsening alert from patient message',
             {
               service: 'MessagingService',
@@ -211,7 +213,7 @@ export class MessagingService {
               correlationId,
               encounterId: encounter.id,
               hospitalId,
-              patientId: dto.createdByPatientId,
+              userId: actorUserId,
             },
             {
               messageId: created.id,
@@ -227,7 +229,7 @@ export class MessagingService {
               messageId: created.id,
             },
             actor: {
-              actorPatientId: dto.createdByPatientId,
+              actorUserId,
             },
           });
           createdAlertEvent = createdAlert.event;
@@ -236,19 +238,19 @@ export class MessagingService {
         return { message: created, event: createdEvent, alertEvent: createdAlertEvent };
       });
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Message created successfully',
         {
           service: 'MessagingService',
           operation: 'createMessage',
           correlationId,
           encounterId,
-          userId: dto.createdByUserId,
-          patientId: dto.createdByPatientId,
+          hospitalId,
+          userId: actorUserId,
         },
         {
           messageId: message.id,
-          eventId: event?.id,
+          eventId: event.id,
           alertEventId: alertEvent?.id,
           alertCreated: !!alertEvent,
           senderType: dto.senderType,
@@ -257,11 +259,9 @@ export class MessagingService {
         },
       );
 
-      if (event) {
-        this.events.dispatchEncounterEvent(event);
-      }
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
       if (alertEvent) {
-        this.events.dispatchEncounterEvent(alertEvent);
+        void this.events.dispatchEncounterEventAndMarkProcessed(alertEvent);
       }
 
       return message;
@@ -269,15 +269,15 @@ export class MessagingService {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to create message',
         {
           service: 'MessagingService',
           operation: 'createMessage',
           correlationId,
           encounterId,
-          userId: dto.createdByUserId,
-          patientId: dto.createdByPatientId,
+          hospitalId,
+          userId: actorUserId,
         },
         error instanceof Error ? error : new Error(String(error)),
         {
@@ -290,14 +290,20 @@ export class MessagingService {
     }
   }
 
-  async markMessageRead(messageId: number, actorUserId: number, correlationId?: string) {
-    await this.loggingService.info(
+  async markMessageRead(
+    messageId: number,
+    hospitalId: number,
+    actorUserId: number,
+    correlationId?: string,
+  ) {
+    this.loggingService.info(
       'Marking message as read',
       {
         service: 'MessagingService',
         operation: 'markMessageRead',
         correlationId,
         userId: actorUserId,
+        hospitalId,
       },
       {
         messageId,
@@ -310,7 +316,7 @@ export class MessagingService {
         select: { id: true, encounterId: true, hospitalId: true },
       });
       if (!message) {
-        await this.loggingService.warn(
+        this.loggingService.warn(
           'Message not found for marking as read',
           {
             service: 'MessagingService',
@@ -324,46 +330,49 @@ export class MessagingService {
         );
         throw new NotFoundException(`Message ${messageId} not found`);
       }
+      if (message.hospitalId !== hospitalId) {
+        throw new NotFoundException(`Message ${messageId} not found`);
+      }
 
       const event = await this.events.emitEncounterEventTx(this.prisma, {
         encounterId: message.encounterId,
-        hospitalId: message.hospitalId ?? undefined,
+        hospitalId: message.hospitalId,
         type: EventType.MESSAGE_READ,
         metadata: { messageId: message.id },
         actor: { actorUserId },
       });
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Message marked as read',
         {
           service: 'MessagingService',
           operation: 'markMessageRead',
           correlationId,
           encounterId: message.encounterId,
+          hospitalId,
           userId: actorUserId,
         },
         {
           messageId,
-          eventId: event?.id,
+          eventId: event.id,
         },
       );
 
-      if (event) {
-        this.events.dispatchEncounterEvent(event);
-      }
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
 
       return { ok: true };
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to mark message as read',
         {
           service: 'MessagingService',
           operation: 'markMessageRead',
           correlationId,
           userId: actorUserId,
+          hospitalId,
         },
         error instanceof Error ? error : new Error(String(error)),
         {
@@ -375,23 +384,142 @@ export class MessagingService {
   }
 
   private ensureSenderIdentity(dto: CreateMessageDto) {
-    if (dto.senderType === SenderType.USER && !dto.createdByUserId) {
-      throw new BadRequestException('createdByUserId is required for USER messages');
+    if (dto.senderType === SenderType.PATIENT) {
+      throw new BadRequestException('PATIENT senderType is not allowed on staff messaging endpoints');
     }
-    if (dto.senderType === SenderType.PATIENT && !dto.createdByPatientId) {
-      throw new BadRequestException('createdByPatientId is required for PATIENT messages');
+  }
+
+  // ─── Patient-scoped messaging methods ─────────────────────────────────────
+
+  /**
+   * List messages for an encounter from the patient’s perspective.
+   * Excludes internal staff messages.
+   */
+  async listMessagesForPatient(
+    encounterId: number,
+    patientId: number,
+    correlationId?: string,
+  ) {
+    this.loggingService.debug(
+      'Patient listing messages',
+      {
+        service: 'MessagingService',
+        operation: 'listMessagesForPatient',
+        correlationId,
+        encounterId,
+        patientId,
+      },
+    );
+
+    // Verify patient owns this encounter
+    const encounter = await this.prisma.encounter.findUnique({
+      where: { id: encounterId },
+      select: { patientId: true, hospitalId: true },
+    });
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
     }
-    if (
-      dto.senderType === SenderType.USER &&
-      dto.createdByPatientId !== undefined
-    ) {
-      throw new BadRequestException('createdByPatientId must be empty for USER messages');
+    if (encounter.patientId !== patientId) {
+      throw new ForbiddenException('You can only view messages on your own encounters');
     }
-    if (
-      dto.senderType === SenderType.PATIENT &&
-      dto.createdByUserId !== undefined
-    ) {
-      throw new BadRequestException('createdByUserId must be empty for PATIENT messages');
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        encounterId,
+        hospitalId: encounter.hospitalId,
+        isInternal: false,
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        createdAt: true,
+        senderType: true,
+        content: true,
+        createdByPatientId: true,
+      },
+    });
+
+    return messages;
+  }
+
+  /**
+   * Create a message from the patient on their own encounter.
+   */
+  async createPatientMessage(
+    encounterId: number,
+    patientId: number,
+    dto: CreatePatientMessageDto,
+    correlationId?: string,
+  ) {
+    this.loggingService.info(
+      'Patient creating message',
+      {
+        service: 'MessagingService',
+        operation: 'createPatientMessage',
+        correlationId,
+        encounterId,
+        patientId,
+      },
+      { isWorsening: dto.isWorsening },
+    );
+
+    // Verify patient owns this encounter
+    const encounter = await this.prisma.encounter.findUnique({
+      where: { id: encounterId },
+      select: { id: true, patientId: true, hospitalId: true },
+    });
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
     }
+    if (encounter.patientId !== patientId) {
+      throw new ForbiddenException('You can only send messages on your own encounters');
+    }
+
+    const { message, event, alertEvent } = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.message.create({
+        data: {
+          senderType: SenderType.PATIENT,
+          createdByPatientId: patientId,
+          content: dto.content,
+          isInternal: false,
+          encounterId: encounter.id,
+          hospitalId: encounter.hospitalId,
+        },
+      });
+
+      const createdEvent = await this.events.emitEncounterEventTx(tx, {
+        encounterId: encounter.id,
+        hospitalId: encounter.hospitalId,
+        type: EventType.MESSAGE_CREATED,
+        metadata: {
+          messageId: created.id,
+          senderType: SenderType.PATIENT,
+          isInternal: false,
+        },
+        actor: { actorPatientId: patientId },
+      });
+
+      let createdAlertEvent = null;
+      if (dto.isWorsening) {
+        const createdAlert = await this.alerts.createAlertTx(tx, {
+          encounterId: encounter.id,
+          hospitalId: encounter.hospitalId,
+          type: 'PATIENT_WORSENING',
+          severity: 'HIGH',
+          metadata: { messageId: created.id },
+          actor: { actorPatientId: patientId },
+        });
+        createdAlertEvent = createdAlert.event;
+      }
+
+      return { message: created, event: createdEvent, alertEvent: createdAlertEvent };
+    });
+
+    void this.events.dispatchEncounterEventAndMarkProcessed(event);
+    if (alertEvent) {
+      void this.events.dispatchEncounterEventAndMarkProcessed(alertEvent);
+    }
+
+    return message;
   }
 }

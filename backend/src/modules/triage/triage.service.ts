@@ -2,7 +2,7 @@
 // Triage assessments service.
 
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { EventType } from '@prisma/client';
+import { EventType, Prisma } from '@prisma/client';
 
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
@@ -21,73 +21,78 @@ export class TriageService {
     this.logger.log('TriageService initialized');
   }
 
-  async createAssessment(dto: CreateTriageAssessmentDto, correlationId?: string) {
-    await this.loggingService.info(
+  async createAssessment(
+    dto: CreateTriageAssessmentDto,
+    hospitalId: number,
+    createdByUserId: number,
+    correlationId?: string,
+  ) {
+    this.loggingService.info(
       'Creating triage assessment',
       {
         service: 'TriageService',
         operation: 'createAssessment',
         correlationId,
         encounterId: dto.encounterId,
-        hospitalId: dto.hospitalId,
-        userId: dto.createdByUserId,
+        hospitalId,
+        userId: createdByUserId,
       },
       {
         ctasLevel: dto.ctasLevel,
+        painLevel: dto.painLevel,
       },
     );
 
     try {
-      const priorityScore = this.computePriorityScore(dto.ctasLevel);
+      const priorityScore = this.computePriorityScore(dto.ctasLevel, dto.painLevel);
 
       const { assessment, event } = await this.prisma.$transaction(async (tx) => {
         const encounter = await tx.encounter.findUnique({
-          where: { id: dto.encounterId },
+          where: {
+            id_hospitalId: {
+              id: dto.encounterId,
+              hospitalId,
+            },
+          },
           select: { id: true, hospitalId: true },
         });
         if (!encounter) {
-          await this.loggingService.warn(
+          this.loggingService.warn(
             'Encounter not found for triage',
             {
               service: 'TriageService',
               operation: 'createAssessment',
               correlationId,
               encounterId: dto.encounterId,
+              hospitalId,
             },
           );
-          throw new NotFoundException(`Encounter ${dto.encounterId} not found`);
-        }
-        if (encounter.hospitalId !== dto.hospitalId) {
-          await this.loggingService.warn(
-            'Encounter does not belong to hospital',
-            {
-              service: 'TriageService',
-              operation: 'createAssessment',
-              correlationId,
-              encounterId: dto.encounterId,
-              hospitalId: dto.hospitalId,
-            },
-            {
-              encounterHospitalId: encounter.hospitalId,
-              requestedHospitalId: dto.hospitalId,
-            },
-          );
-          throw new NotFoundException('Encounter does not belong to hospital');
+          throw new NotFoundException(`Encounter ${dto.encounterId} not found for hospital`);
         }
 
         const created = await tx.triageAssessment.create({
           data: {
             encounterId: dto.encounterId,
-            hospitalId: dto.hospitalId,
+            hospitalId,
             ctasLevel: dto.ctasLevel,
             priorityScore,
+            chiefComplaint: dto.chiefComplaint,
+            painLevel: dto.painLevel,
+            vitalSigns: dto.vitalSigns
+              ? (dto.vitalSigns as unknown as Prisma.InputJsonValue)
+              : undefined,
             note: dto.note,
-            createdByUserId: dto.createdByUserId,
+            createdByUserId,
           },
         });
 
         await tx.encounter.update({
-          where: { id: dto.encounterId },
+          where: {
+            id_hospitalId: {
+              id: dto.encounterId,
+              hospitalId,
+            },
+          },
           data: {
             currentTriageId: created.id,
             currentCtasLevel: created.ctasLevel,
@@ -98,54 +103,52 @@ export class TriageService {
 
         const createdEvent = await this.events.emitEncounterEventTx(tx, {
           encounterId: dto.encounterId,
-          hospitalId: dto.hospitalId,
+          hospitalId,
           type: EventType.TRIAGE_CREATED,
           metadata: {
             triageId: created.id,
             ctasLevel: created.ctasLevel,
             priorityScore: created.priorityScore,
           },
-          actor: { actorUserId: dto.createdByUserId },
+          actor: { actorUserId: createdByUserId },
         });
 
         return { assessment: created, event: createdEvent };
       });
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Triage assessment created successfully',
         {
           service: 'TriageService',
           operation: 'createAssessment',
           correlationId,
           encounterId: dto.encounterId,
-          hospitalId: dto.hospitalId,
-          userId: dto.createdByUserId,
+          hospitalId,
+          userId: createdByUserId,
         },
         {
           triageId: assessment.id,
           priorityScore: assessment.priorityScore,
-          eventId: event?.id,
+          eventId: event.id,
         },
       );
 
-      if (event) {
-        this.events.dispatchEncounterEvent(event);
-      }
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
 
       return assessment;
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to create triage assessment',
         {
           service: 'TriageService',
           operation: 'createAssessment',
           correlationId,
           encounterId: dto.encounterId,
-          hospitalId: dto.hospitalId,
-          userId: dto.createdByUserId,
+          hospitalId,
+          userId: createdByUserId,
         },
         error instanceof Error ? error : new Error(String(error)),
         {
@@ -156,30 +159,32 @@ export class TriageService {
     }
   }
 
-  async listAssessments(encounterId: number, correlationId?: string) {
-    await this.loggingService.debug(
+  async listAssessments(encounterId: number, hospitalId: number, correlationId?: string) {
+    this.loggingService.debug(
       'Listing triage assessments',
       {
         service: 'TriageService',
         operation: 'listAssessments',
         correlationId,
         encounterId,
+        hospitalId,
       },
     );
 
     try {
       const assessments = await this.prisma.triageAssessment.findMany({
-        where: { encounterId },
+        where: { encounterId, hospitalId },
         orderBy: { createdAt: 'asc' },
       });
 
-      await this.loggingService.debug(
+      this.loggingService.debug(
         'Triage assessments retrieved',
         {
           service: 'TriageService',
           operation: 'listAssessments',
           correlationId,
           encounterId,
+          hospitalId,
         },
         {
           count: assessments.length,
@@ -188,13 +193,14 @@ export class TriageService {
 
       return assessments;
     } catch (error) {
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to list triage assessments',
         {
           service: 'TriageService',
           operation: 'listAssessments',
           correlationId,
           encounterId,
+          hospitalId,
         },
         error instanceof Error ? error : new Error(String(error)),
       );
@@ -202,7 +208,49 @@ export class TriageService {
     }
   }
 
-  private computePriorityScore(ctasLevel: number): number {
+  async getAssessment(assessmentId: number, hospitalId: number, correlationId?: string) {
+    this.loggingService.debug(
+      'Fetching triage assessment',
+      {
+        service: 'TriageService',
+        operation: 'getAssessment',
+        correlationId,
+        assessmentId,
+        hospitalId,
+      },
+    );
+
+    const assessment = await this.prisma.triageAssessment.findFirst({
+      where: { id: assessmentId, hospitalId },
+    });
+
+    if (!assessment) {
+      throw new NotFoundException(`Triage assessment ${assessmentId} not found`);
+    }
+
+    return assessment;
+  }
+
+  // Phase 6.5: Add an AI suggestion method here, e.g.:
+  //   async suggestTriageLevel(encounterId: number, hospitalId: number): Promise<{
+  //     suggestedCtasLevel: number;
+  //     suggestedPainLevel: number;
+  //     reasoning: string;
+  //     confidence: number;
+  //   }>
+  // This would fetch the encounter's chief complaint and vital signs, then call
+  // an LLM or ML model to analyze the data and return a recommended CTAS level.
+  // It sits alongside computePriorityScore() below, which handles deterministic
+  // scoring after the triage level has been decided.
+
+  /**
+   * Compute a sortable priority score from CTAS level and optional pain level.
+   * Higher score = more urgent = sorted first.
+   *
+   * Base: CTAS 1 → 100, CTAS 5 → 20
+   * Pain bonus: up to +10 for pain level 10
+   */
+  private computePriorityScore(ctasLevel: number, painLevel?: number): number {
     const baseScores: Record<number, number> = {
       1: 100,
       2: 80,
@@ -211,6 +259,8 @@ export class TriageService {
       5: 20,
     };
 
-    return baseScores[ctasLevel] ?? 0;
+    const base = baseScores[ctasLevel] ?? 0;
+    const painBonus = painLevel != null ? Math.round(painLevel) : 0;
+    return base + painBonus;
   }
 }

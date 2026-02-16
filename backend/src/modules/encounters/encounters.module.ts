@@ -10,11 +10,13 @@ import { Module } from '@nestjs/common';
 import { EventsModule } from '../events/events.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { EncountersController } from './encounters.controller';
+import { PatientEncountersController } from './patient-encounters.controller';
 import { EncountersService } from './encounters.service';
 
 @Module({
-  controllers: [EncountersController],
+  controllers: [EncountersController, PatientEncountersController],
   providers: [EncountersService],
   imports: [EventsModule, PrismaModule],
+  exports: [EncountersService],
 })
 export class EncountersModule {}

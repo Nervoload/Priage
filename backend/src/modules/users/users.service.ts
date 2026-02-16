@@ -15,7 +15,7 @@ export class UsersService {
   ) {}
 
   async getUsers(hospitalId: number, role?: Role, correlationId?: string) {
-    await this.loggingService.debug('Fetching hospital users', {
+    this.loggingService.debug('Fetching hospital users', {
       service: 'UsersService',
       operation: 'getUsers',
       correlationId,
@@ -42,7 +42,7 @@ export class UsersService {
       orderBy: { createdAt: 'desc' },
     });
 
-    await this.loggingService.debug('Hospital users fetched', {
+    this.loggingService.debug('Hospital users fetched', {
       service: 'UsersService',
       operation: 'getUsers',
       correlationId,
@@ -56,7 +56,7 @@ export class UsersService {
   }
 
   async getUser(id: number, correlationId?: string) {
-    await this.loggingService.debug('Fetching user by ID', {
+    this.loggingService.debug('Fetching user by ID', {
       service: 'UsersService',
       operation: 'getUser',
       correlationId,
@@ -81,7 +81,7 @@ export class UsersService {
     });
 
     if (!user) {
-      await this.loggingService.warn('User not found', {
+      this.loggingService.warn('User not found', {
         service: 'UsersService',
         operation: 'getUser',
         correlationId,
@@ -90,7 +90,7 @@ export class UsersService {
       throw new NotFoundException(`User ${id} not found`);
     }
 
-    await this.loggingService.debug('User fetched successfully', {
+    this.loggingService.debug('User fetched successfully', {
       service: 'UsersService',
       operation: 'getUser',
       correlationId,
@@ -103,8 +103,15 @@ export class UsersService {
     return user;
   }
 
+  // Phase 6.4: Add an updateProfile method here:
+  //   async updateProfile(userId: number, dto: { displayName?, avatarUrl?, phone?, department?, specialization? })
+  // The current getUser select list (id, email, role, createdAt, hospitalId) will
+  // need to expand to include new profile fields once the Prisma schema is updated.
+  // Consider a DynamoDB table for unstructured profile data (avatar, preferences)
+  // or adding columns to the existing User model for structured fields.
+
   async getUsersByHospital(hospitalId: number, correlationId?: string) {
-    await this.loggingService.debug('Fetching users by hospital', {
+    this.loggingService.debug('Fetching users by hospital', {
       service: 'UsersService',
       operation: 'getUsersByHospital',
       correlationId,
@@ -122,7 +129,7 @@ export class UsersService {
       orderBy: { role: 'asc' },
     });
 
-    await this.loggingService.debug('Users by hospital fetched', {
+    this.loggingService.debug('Users by hospital fetched', {
       service: 'UsersService',
       operation: 'getUsersByHospital',
       correlationId,

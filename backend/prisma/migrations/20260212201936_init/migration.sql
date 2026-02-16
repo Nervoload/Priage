@@ -21,7 +21,7 @@ CREATE TABLE "Encounter" (
     "status" "EncounterStatus" NOT NULL DEFAULT 'EXPECTED',
     "chiefComplaint" TEXT,
     "details" TEXT,
-    "hospitalId" INTEGER,
+    "hospitalId" INTEGER NOT NULL,
     "patientId" INTEGER NOT NULL,
     "currentTriageId" INTEGER,
     "currentCtasLevel" INTEGER,
@@ -139,8 +139,10 @@ CREATE TABLE "PatientSession" (
     "token" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "expiresAt" TIMESTAMP(3),
+    "pendingChiefComplaint" TEXT,
+    "pendingDetails" TEXT,
     "patientId" INTEGER NOT NULL,
-    "encounterId" INTEGER NOT NULL,
+    "encounterId" INTEGER,
 
     CONSTRAINT "PatientSession_pkey" PRIMARY KEY ("id")
 );
@@ -261,7 +263,7 @@ CREATE INDEX "Asset_encounterId_createdAt_idx" ON "Asset"("encounterId", "create
 CREATE INDEX "Asset_hospitalId_createdAt_idx" ON "Asset"("hospitalId", "createdAt");
 
 -- AddForeignKey
-ALTER TABLE "Encounter" ADD CONSTRAINT "Encounter_hospitalId_fkey" FOREIGN KEY ("hospitalId") REFERENCES "Hospital"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Encounter" ADD CONSTRAINT "Encounter_hospitalId_fkey" FOREIGN KEY ("hospitalId") REFERENCES "Hospital"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Encounter" ADD CONSTRAINT "Encounter_patientId_fkey" FOREIGN KEY ("patientId") REFERENCES "PatientProfile"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

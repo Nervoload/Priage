@@ -76,8 +76,8 @@ model Encounter {
   chiefComplaint String?
   details        String?
 
-  hospital   Hospital? @relation(fields: [hospitalId], references: [id])
-  hospitalId Int?
+  hospital   Hospital @relation(fields: [hospitalId], references: [id])
+  hospitalId Int
   patient   PatientProfile @relation(fields: [patientId], references: [id])
   patientId Int
 
@@ -190,6 +190,9 @@ model TriageAssessment {
   // Versioned triage assessment
   ctasLevel     Int // 1 highest ... 5 lowest
   priorityScore Int
+  chiefComplaint String?
+  painLevel     Int?       // 0–10 scale
+  vitalSigns    Json?      // { bloodPressure, heartRate, temperature, respiratoryRate, oxygenSaturation }
   note          String?
 
   createdByUserId Int
@@ -248,6 +251,7 @@ model PatientProfile {
 
   firstName         String?
   lastName          String?
+  phone             String?
   age               Int?
   gender            String?
   heightCm          Int?
@@ -269,12 +273,14 @@ model PatientSession {
   token     String   @unique
   createdAt DateTime @default(now())
   expiresAt DateTime?
+  pendingChiefComplaint String?
+  pendingDetails        String?
 
   patientId Int
   patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
-  encounterId Int
-  encounter   Encounter @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  encounterId Int?
+  encounter   Encounter? @relation(fields: [encounterId], references: [id], onDelete: Cascade)
 
   @@index([patientId, createdAt])
   @@index([encounterId, createdAt])

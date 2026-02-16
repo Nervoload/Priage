@@ -18,7 +18,14 @@ export class HospitalsController {
 
   // GET /hospitals/:id - Get hospital info (all authenticated users)
   @Get(':id')
-  async getHospital(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
+  async getHospital(
+    @Req() req: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: { userId: number; hospitalId: number },
+  ) {
+    if (user.hospitalId !== id) {
+      throw new ForbiddenException('Cannot access another hospital');
+    }
     return this.hospitalsService.getHospital(id, req.correlationId);
   }
 

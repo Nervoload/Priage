@@ -56,7 +56,7 @@ export class LoggingController {
    */
   @Get('correlation/:correlationId')
   async getLogsByCorrelation(@Param('correlationId') correlationId: string) {
-    const logs = await this.loggingService.getLogsByCorrelationId(correlationId);
+    const logs = this.loggingService.getLogsByCorrelationId(correlationId);
     
     return {
       correlationId,
@@ -78,7 +78,7 @@ export class LoggingController {
     @Query('hospitalId') hospitalId?: string,
     @Query('encounterId') encounterId?: string,
   ) {
-    const logs = await this.loggingService.queryLogs({
+    const logs = this.loggingService.queryLogs({
       correlationId,
       level,
       service,

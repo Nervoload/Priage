@@ -6,9 +6,6 @@ export class CreateAssetDto {
   @IsInt()
   encounterId!: number;
 
-  @IsInt()
-  hospitalId!: number;
-
   @IsOptional()
   @IsString()
   @MaxLength(200)

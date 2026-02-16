@@ -413,7 +413,7 @@ async function testEncounterWorkflowLogging() {
   logInfo('Test 2B: Listing encounters...');
   try {
     const options = buildRequestOptions(
-      `/encounters?hospitalId=${testState.hospitalId}`,
+      `/encounters`,
       'GET',
       true
     );
@@ -422,7 +422,7 @@ async function testEncounterWorkflowLogging() {
     const correlationId = response.headers['x-correlation-id'];
     
     if (response.statusCode === 200) {
-      logSuccess(`Test 2B: Listed ${response.data.length} encounters`);
+      logSuccess(`Test 2B: Listed ${response.data?.data?.length ?? response.data?.length ?? 0} encounters`);
       
       // Verify logs
       await verifyLogsExist(
@@ -987,10 +987,12 @@ async function testNewServicesLogging() {
       chiefComplaint: 'Test intake logging',
       details: 'Testing patient intent creation logging',
     });
-  
-    
+
+    const correlationId = response.headers['x-correlation-id'];
+
     if (response.statusCode === 200 || response.statusCode === 201) {
       sessionToken = response.data.sessionToken;
+      testState.intakePatientId = response.data.patientId;
       logSuccess('Test 8A: Patient intent created');
       
       // Verify logs
@@ -1028,10 +1030,10 @@ async function testNewServicesLogging() {
       if (response.statusCode === 200 || response.statusCode === 201) {
         logSuccess('Test 8B: Patient intent confirmed');
         
-        // Verify logs
-        const logsValid = await verifyLogsExist(
-          correlationId,
-          ['Confirming patient intent', 'Patient intent confirmed successfully'],
+// Verify logs (IntakeService only logs after the transaction, no "start" log)
+      const logsValid = await verifyLogsExist(
+        correlationId,
+        ['Patient intent confirmed successfully'],
           'Test 8B'
         );
         
@@ -1311,9 +1313,9 @@ function printTestSummary() {
   
   console.log('');
   logInfo(`Total Tests: ${total}`);
-  logSuccess(`Passed: ${testState.testsPassed}`);
-  logError(`Failed: ${testState.testsFailed}`);
-  logWarning(`Skipped: ${testState.testsSkipped}`);
+  log(`✅ Passed: ${testState.testsPassed}`, CONFIG.colors.green);
+  log(`❌ Failed: ${testState.testsFailed}`, CONFIG.colors.red);
+  log(`⚠️  Skipped: ${testState.testsSkipped}`, CONFIG.colors.yellow);
   logInfo(`Pass Rate: ${passRate}%`);
   console.log('');
   
@@ -1416,7 +1418,14 @@ async function cleanupTestData() {
       await prisma.patientProfile.delete({ where: { id: testState.patient.id } }).catch(() => {});
       logSuccess('Deleted test patient');
     }
-    
+
+    // Clean up patient created by intake intent test (Test 8A)
+    if (testState.intakePatientId && testState.intakePatientId !== testState.patientId) {
+      await prisma.patientSession.deleteMany({ where: { patientId: testState.intakePatientId } }).catch(() => {});
+      await prisma.patientProfile.delete({ where: { id: testState.intakePatientId } }).catch(() => {});
+      logSuccess('Deleted intake test patient');
+    }
+
     await prisma.$disconnect();
     await pool.end();
     logInfo('✓ Cleanup complete\n');

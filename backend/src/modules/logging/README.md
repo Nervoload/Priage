@@ -56,7 +56,7 @@ export class MyService {
     
     try {
       // Log operation start
-      await this.loggingService.info('Starting operation', {
+      this.loggingService.info('Starting operation', {
         correlationId,
         service: 'MyService',
         operation: 'myMethod',
@@ -67,7 +67,7 @@ export class MyService {
       const result = await this.doSomething(dto);
 
       // Log success
-      await this.loggingService.info('Operation completed', {
+      this.loggingService.info('Operation completed', {
         correlationId,
         service: 'MyService',
         operation: 'myMethod',
@@ -77,7 +77,7 @@ export class MyService {
       return result;
     } catch (error) {
       // Log error with full context
-      await this.loggingService.error(
+      this.loggingService.error(
         'Operation failed',
         {
           correlationId,
@@ -139,7 +139,7 @@ export class MyGateway {
     // Generate correlation ID for WebSocket events
     const correlationId = randomUUID();
 
-    await this.loggingService.info('WebSocket event received', {
+    this.loggingService.info('WebSocket event received', {
       correlationId,
       service: 'MyGateway',
       operation: 'handleEvent',
@@ -327,7 +327,7 @@ Your existing service-level logging continues to work! The new system runs along
 this.logger.log({ message: 'Creating encounter', encounterId });
 
 // New logging (ADD THIS for correlation)
-await this.loggingService.info('Creating encounter', {
+this.loggingService.info('Creating encounter', {
   correlationId: req.correlationId,
   service: 'EncountersService',
   operation: 'createEncounter',

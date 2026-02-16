@@ -32,4 +32,13 @@ export class UsersController {
   ) {
     return this.usersService.getUsers(user.hospitalId, role, req.correlationId);
   }
+
+  // Phase 6.4: Add profile endpoints here:
+  //   @Patch('me') async updateProfile(@Body() dto: UpdateProfileDto, @CurrentUser() user)
+  //     → update display name, avatar URL, phone, department, specialization
+  //   @Get(':id') async getStaffProfile(@Param('id') id: number)
+  //     → public staff profile for viewing colleagues
+  // The Prisma schema will need new columns on the User model (or a separate
+  // StaffProfile table). The frontend user info pill in HospitalApp.tsx would
+  // link to a profile page/modal for editing.
 }

@@ -24,13 +24,13 @@ export class LoggingService {
    * Log an operation with full context and correlation
    * CRITICAL: This method MUST NOT throw - logging failures should never crash the app
    */
-  async logOperation(
+  logOperation(
     level: LogLevel,
     message: string,
     context: LogContext,
     data?: any,
     error?: Error,
-  ): Promise<LogEntry | null> {
+  ): LogEntry | null {
     try {
       const entry: LogEntry = {
         id: randomUUID(),
@@ -92,38 +92,38 @@ export class LoggingService {
    * Convenience methods for different log levels
    * These wrap logOperation with error handling
    */
-  async debug(message: string, context: LogContext, data?: any): Promise<LogEntry | null> {
+  debug(message: string, context: LogContext, data?: any): LogEntry | null {
     return this.logOperation(LogLevel.DEBUG, message, context, data);
   }
 
-  async info(message: string, context: LogContext, data?: any): Promise<LogEntry | null> {
+  info(message: string, context: LogContext, data?: any): LogEntry | null {
     return this.logOperation(LogLevel.INFO, message, context, data);
   }
 
-  async warn(message: string, context: LogContext, data?: any): Promise<LogEntry | null> {
+  warn(message: string, context: LogContext, data?: any): LogEntry | null {
     return this.logOperation(LogLevel.WARN, message, context, data);
   }
 
-  async error(
+  error(
     message: string,
     context: LogContext,
     error?: Error,
     data?: any,
-  ): Promise<LogEntry | null> {
+  ): LogEntry | null {
     return this.logOperation(LogLevel.ERROR, message, context, data, error);
   }
 
   /**
    * Get all logs for a specific correlation ID
    */
-  async getLogsByCorrelationId(correlationId: string): Promise<LogEntry[]> {
+  getLogsByCorrelationId(correlationId: string): LogEntry[] {
     return this.logs.get(correlationId) || [];
   }
 
   /**
    * Query logs with filters
    */
-  async queryLogs(query: LogQuery): Promise<LogEntry[]> {
+  queryLogs(query: LogQuery): LogEntry[] {
     let results: LogEntry[] = [];
 
     // If correlation ID provided, only search that
@@ -152,16 +152,16 @@ export class LoggingService {
   /**
    * Get error logs for a correlation ID
    */
-  async getErrorLogs(correlationId: string): Promise<LogEntry[]> {
-    const logs = await this.getLogsByCorrelationId(correlationId);
+  getErrorLogs(correlationId: string): LogEntry[] {
+    const logs = this.getLogsByCorrelationId(correlationId);
     return logs.filter((log) => log.level === LogLevel.ERROR);
   }
 
   /**
    * Check if a correlation ID has errors
    */
-  async hasErrors(correlationId: string): Promise<boolean> {
-    const errors = await this.getErrorLogs(correlationId);
+  hasErrors(correlationId: string): boolean {
+    const errors = this.getErrorLogs(correlationId);
     return errors.length > 0;
   }
 

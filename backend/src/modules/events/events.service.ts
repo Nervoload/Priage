@@ -5,7 +5,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import { EncounterEvent, EventType, Prisma } from '@prisma/client';
 
 import { LoggingService } from '../logging/logging.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
+import {
+  EncounterUpdatedPayload,
+  MessageCreatedPayload,
+  AlertCreatedPayload,
+  AlertAcknowledgedPayload,
+  AlertResolvedPayload,
+} from '../realtime/realtime.events';
 
 export type EncounterEventActor = {
   actorUserId?: number;
@@ -14,7 +22,7 @@ export type EncounterEventActor = {
 
 export type EmitEncounterEventArgs = {
   encounterId: number;
-  hospitalId?: number;
+  hospitalId: number;
   type: EventType;
   metadata?: Prisma.InputJsonValue;
   actor?: EncounterEventActor;
@@ -27,6 +35,7 @@ export class EventsService {
   constructor(
     private readonly realtime: RealtimeGateway,
     private readonly loggingService: LoggingService,
+    private readonly prisma: PrismaService,
   ) {
     this.logger.log('EventsService initialized');
   }
@@ -34,35 +43,9 @@ export class EventsService {
   async emitEncounterEventTx(
     tx: Prisma.TransactionClient,
     args: EmitEncounterEventArgs,
-  ): Promise<EncounterEvent | null> {
-    const logContext = {
-      encounterId: args.encounterId,
-      hospitalId: args.hospitalId,
-      eventType: args.type,
-      actorUserId: args.actor?.actorUserId,
-      actorPatientId: args.actor?.actorPatientId,
-    };
-
-    if (!args.hospitalId) {
-      await this.loggingService.warn(
-        'Skipping encounter event without hospitalId',
-        {
-          service: 'EventsService',
-          operation: 'emitEncounterEventTx',
-          correlationId: undefined,
-          encounterId: args.encounterId,
-        },
-        {
-          eventType: args.type,
-          actorUserId: args.actor?.actorUserId,
-          actorPatientId: args.actor?.actorPatientId,
-        },
-      );
-      return null;
-    }
-
+  ): Promise<EncounterEvent> {
     try {
-      await this.loggingService.debug(
+      this.loggingService.debug(
         'Creating encounter event in transaction',
         {
           service: 'EventsService',
@@ -89,7 +72,7 @@ export class EventsService {
         },
       });
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Encounter event created',
         {
           service: 'EventsService',
@@ -108,7 +91,7 @@ export class EventsService {
 
       return event;
     } catch (error) {
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to create encounter event in transaction',
         {
           service: 'EventsService',
@@ -128,23 +111,23 @@ export class EventsService {
     }
   }
 
-  dispatchEncounterEvent(event: EncounterEvent): void {
-    this.loggingService.debug(
-      'Dispatching encounter event',
-      {
-        service: 'EventsService',
-        operation: 'dispatchEncounterEvent',
-        correlationId: undefined,
-        eventId: event.id,
-        encounterId: event.encounterId,
-        hospitalId: event.hospitalId,
-      },
-      {
-        eventType: event.type,
-      },
-    ).catch(() => {}); // Fire and forget
-
+  async dispatchEncounterEvent(event: EncounterEvent): Promise<boolean> {
     try {
+      this.loggingService.debug(
+        'Dispatching encounter event',
+        {
+          service: 'EventsService',
+          operation: 'dispatchEncounterEvent',
+          correlationId: undefined,
+          eventId: event.id,
+          encounterId: event.encounterId,
+          hospitalId: event.hospitalId,
+        },
+        {
+          eventType: event.type,
+        },
+      );
+
       const payloadBase = {
         eventId: event.id,
         encounterId: event.encounterId,
@@ -158,19 +141,19 @@ export class EventsService {
         case EventType.STATUS_CHANGE:
         case EventType.TRIAGE_CREATED:
         case EventType.TRIAGE_COMPLETED:
-          this.realtime.emitEncounterUpdated(event.hospitalId, event.encounterId, payloadBase);
+          this.realtime.emitEncounterUpdated(event.hospitalId, event.encounterId, payloadBase as EncounterUpdatedPayload);
           break;
         case EventType.MESSAGE_CREATED:
-          this.realtime.emitMessageCreated(event.hospitalId, event.encounterId, payloadBase);
+          this.realtime.emitMessageCreated(event.hospitalId, event.encounterId, payloadBase as MessageCreatedPayload);
           break;
         case EventType.ALERT_CREATED:
-          this.realtime.emitAlertCreated(event.hospitalId, event.encounterId, payloadBase);
+          this.realtime.emitAlertCreated(event.hospitalId, event.encounterId, payloadBase as AlertCreatedPayload);
           break;
         case EventType.ALERT_ACKNOWLEDGED:
-          this.realtime.emitAlertAcknowledged(event.hospitalId, event.encounterId, payloadBase);
+          this.realtime.emitAlertAcknowledged(event.hospitalId, event.encounterId, payloadBase as unknown as AlertAcknowledgedPayload);
           break;
         case EventType.ALERT_RESOLVED:
-          this.realtime.emitAlertResolved(event.hospitalId, event.encounterId, payloadBase);
+          this.realtime.emitAlertResolved(event.hospitalId, event.encounterId, payloadBase as unknown as AlertResolvedPayload);
           break;
         default:
           this.loggingService.debug(
@@ -186,7 +169,7 @@ export class EventsService {
             {
               eventType: event.type,
             },
-          ).catch(() => {}); // Fire and forget
+          );
       }
 
       this.loggingService.info(
@@ -202,11 +185,9 @@ export class EventsService {
         {
           eventType: event.type,
         },
-      ).catch(() => {}); // Fire and forget
+      );
+      return true;
     } catch (error) {
-      // CRITICAL: Event dispatch failures should not break the transaction
-      // Log error but don't throw - this allows database changes to complete
-      // even if WebSocket notification fails
       this.loggingService.error(
         'Failed to dispatch encounter event to realtime',
         {
@@ -221,8 +202,47 @@ export class EventsService {
         {
           eventType: event.type,
         },
-      ).catch(() => {}); // Fire and forget
-      // TODO: Implement dead letter queue or retry mechanism for failed dispatches
+      );
+      return false;
     }
   }
+
+  async dispatchEncounterEventAndMarkProcessed(event: EncounterEvent): Promise<boolean> {
+    if (event.processedAt) {
+      return true;
+    }
+
+    const dispatched = await this.dispatchEncounterEvent(event);
+    if (!dispatched) {
+      return false;
+    }
+
+    await this.prisma.encounterEvent.updateMany({
+      where: { id: event.id, processedAt: null },
+      data: { processedAt: new Date() },
+    });
+
+    return true;
+  }
+
+  async dispatchEncounterEventById(eventId: number): Promise<boolean> {
+    const event = await this.prisma.encounterEvent.findUnique({
+      where: { id: eventId },
+    });
+    if (!event) {
+      return true;
+    }
+    if (event.processedAt) {
+      return true;
+    }
+
+    return this.dispatchEncounterEventAndMarkProcessed(event);
+  }
+
+  // Phase 6.1: Add an SSE stream method here, e.g.:
+  //   subscribeToHospitalStream(hospitalId: number): Observable<MessageEvent>
+  // This would use an RxJS Subject per hospital to push encounter events,
+  // alerts, and triage updates to connected EventSource clients on the frontend.
+  // The frontend useAlerts hook would replace its setInterval polling with
+  // new EventSource('/events/stream') for instant, low-overhead updates.
 }

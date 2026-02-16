@@ -23,7 +23,7 @@ export class YourService {
   constructor(private readonly loggingService: LoggingService) {}
   
   async yourMethod(data: any, req?: Express.Request) {
-    await this.loggingService.info('Operation started', {
+    this.loggingService.info('Operation started', {
       correlationId: req?.correlationId,
       service: 'YourService',
       operation: 'yourMethod',
@@ -93,7 +93,7 @@ async create(@Body() dto: CreateDto, @Req() req: Request) {
 ```typescript
 async processData(data: any, correlationId?: string) {
   try {
-    await this.loggingService.info('Processing started', {
+    this.loggingService.info('Processing started', {
       correlationId,
       service: 'MyService',
       operation: 'processData',
@@ -101,7 +101,7 @@ async processData(data: any, correlationId?: string) {
 
     const result = await this.doWork(data);
 
-    await this.loggingService.info('Processing completed', {
+    this.loggingService.info('Processing completed', {
       correlationId,
       service: 'MyService',
       operation: 'processData',
@@ -109,7 +109,7 @@ async processData(data: any, correlationId?: string) {
 
     return result;
   } catch (error) {
-    await this.loggingService.error('Processing failed', {
+    this.loggingService.error('Processing failed', {
       correlationId,
       service: 'MyService',
       operation: 'processData',
@@ -160,7 +160,7 @@ You can add correlation logging to existing services gradually:
 this.logger.log({ message: 'Creating encounter', encounterId });
 
 // Add correlation logging alongside it
-await this.loggingService.info('Creating encounter', {
+this.loggingService.info('Creating encounter', {
   correlationId,
   service: 'EncountersService',
   operation: 'createEncounter',

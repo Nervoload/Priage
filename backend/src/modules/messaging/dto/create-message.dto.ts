@@ -2,21 +2,13 @@
 // DTO for posting a message tied to an encounter.
 
 import { SenderType } from '@prisma/client';
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 import { Sanitize } from '../../../common/decorators/sanitize.decorator';
 
 export class CreateMessageDto {
   @IsEnum(SenderType)
   senderType!: SenderType;
-
-  @IsOptional()
-  @IsInt()
-  createdByUserId?: number;
-
-  @IsOptional()
-  @IsInt()
-  createdByPatientId?: number;
 
   @IsString()
   @MinLength(1)
