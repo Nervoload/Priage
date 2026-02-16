@@ -7,12 +7,13 @@
 // Replaces pagination with practical filters for an ER dashboard.
 
 import { EncounterStatus } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsArray, IsDate, IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class ListEncountersQueryDto {
   /** Filter by one or more statuses (e.g. ?status=TRIAGE&status=WAITING) */
   @IsOptional()
+  @Transform(({ value }) => (Array.isArray(value) ? value : [value]))
   @IsArray()
   @IsEnum(EncounterStatus, { each: true })
   status?: EncounterStatus[];

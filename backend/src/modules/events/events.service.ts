@@ -238,4 +238,11 @@ export class EventsService {
 
     return this.dispatchEncounterEventAndMarkProcessed(event);
   }
+
+  // Phase 6.1: Add an SSE stream method here, e.g.:
+  //   subscribeToHospitalStream(hospitalId: number): Observable<MessageEvent>
+  // This would use an RxJS Subject per hospital to push encounter events,
+  // alerts, and triage updates to connected EventSource clients on the frontend.
+  // The frontend useAlerts hook would replace its setInterval polling with
+  // new EventSource('/events/stream') for instant, low-overhead updates.
 }

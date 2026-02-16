@@ -3,26 +3,25 @@
 
 import { useState } from 'react';
 import type { Encounter } from '../../app/HospitalApp';
+import { patientName } from '../../app/HospitalApp';
 import { TriagePopup } from '../admit/TriagePopup';
 
 interface TriageViewProps {
   onBack?: () => void;
   onNavigate?: (view: 'admit' | 'triage' | 'waiting') => void;
   encounters: Encounter[];
+  loading?: boolean;
+  onRefresh?: () => void;
 }
 
-export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) {
+export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh }: TriageViewProps) {
   const [selectedEncounter, setSelectedEncounter] = useState<Encounter | null>(null);
   const getInitials = (name: string): string => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
-  const getPatientId = (id: number): string => {
-    return `P-${String(id).padStart(3, '0')}`;
-  };
-
   const getPriority = (encounter: Encounter): { label: string; color: string } => {
-    const complaint = encounter.chiefComplaint.toLowerCase();
+    const complaint = (encounter.chiefComplaint ?? '').toLowerCase();
     if (complaint.includes('critical') || complaint.includes('chest pain') ||
       complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
       return { label: 'CRITICAL', color: '#ef4444' };
@@ -125,9 +124,36 @@ export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) 
       <div style={{ display: 'flex', gap: '2rem' }}>
         {/* Patient List */}
         <div style={{ flex: 1 }}>
-          <h2 style={{ marginBottom: '1.5rem', fontSize: '1.75rem', color: '#1f2937' }}>Triage Patients</h2>
+          <h2 style={{ marginBottom: '1.5rem', fontSize: '1.75rem', color: '#1f2937' }}>
+            Triage Patients
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                disabled={loading}
+                title="Refresh"
+                style={{
+                  marginLeft: '0.75rem',
+                  padding: '0.3rem 0.6rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  backgroundColor: 'white',
+                  color: '#6b7280',
+                  fontSize: '1rem',
+                  verticalAlign: 'middle',
+                  opacity: loading ? 0.5 : 1,
+                }}
+              >
+                ↻
+              </button>
+            )}
+          </h2>
 
-          {encounters.length === 0 ? (
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '3rem', backgroundColor: 'white', borderRadius: '12px', color: '#6b7280' }}>
+              Loading triage patients…
+            </div>
+          ) : encounters.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', backgroundColor: 'white', borderRadius: '12px' }}>
               No patients in triage
             </div>
@@ -135,7 +161,7 @@ export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {encounters.map(encounter => {
                 const priority = getPriority(encounter);
-                const initials = getInitials(encounter.patient.displayName);
+                const initials = getInitials(patientName(encounter.patient));
 
                 return (
                   <div
@@ -169,10 +195,10 @@ export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) 
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.25rem' }}>
                           <div style={{ fontWeight: 'bold', fontSize: '1rem', color: '#1f2937' }}>
-                            {encounter.patient.displayName}
+                            {patientName(encounter.patient)}
                           </div>
                           <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                            {getPatientId(encounter.id)}
+                            #{encounter.id}
                           </div>
                           <span style={{
                             padding: '0.25rem 0.75rem',
@@ -186,7 +212,7 @@ export function TriageView({ onBack, onNavigate, encounters }: TriageViewProps) 
                           </span>
                         </div>
                         <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                          {encounter.chiefComplaint}
+                          {encounter.chiefComplaint ?? 'No complaint recorded'}
                         </div>
                       </div>
                     </div>

@@ -3,6 +3,7 @@
 
 import { useState } from 'react';
 import type { Encounter, ChatMessage } from '../../app/HospitalApp';
+import { patientName } from '../../app/HospitalApp';
 import { ChatPanel } from './ChatPanel';
 
 interface WaitingRoomViewProps {
@@ -11,6 +12,8 @@ interface WaitingRoomViewProps {
   encounters: Encounter[];
   chatMessages: Record<number, ChatMessage[]>;
   onSendMessage: (encounterId: number, text: string) => void;
+  loading?: boolean;
+  onRefresh?: () => void;
 }
 
 export function WaitingRoomView({
@@ -19,6 +22,8 @@ export function WaitingRoomView({
   encounters,
   chatMessages,
   onSendMessage,
+  loading,
+  onRefresh,
 }: WaitingRoomViewProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
@@ -26,8 +31,6 @@ export function WaitingRoomView({
 
   const getInitials = (name: string) =>
     name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-
-  const getPatientId = (id: number) => `P-${String(id).padStart(3, '0')}`;
 
   const getUnreadCount = (encId: number) => {
     // TODO: Replace with real unread logic from backend
@@ -123,7 +126,11 @@ export function WaitingRoomView({
       </div>
 
       {/* Two-Panel Layout */}
-      {encounters.length === 0 ? (
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '3rem', backgroundColor: 'white', borderRadius: '12px', color: '#6b7280' }}>
+          Loading patients…
+        </div>
+      ) : encounters.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '3rem', backgroundColor: 'white', borderRadius: '12px' }}>
           <h2 style={{ fontSize: '1.25rem', color: '#1f2937', marginBottom: '0.5rem' }}>No patients in waiting room</h2>
           <p style={{ color: '#6b7280', margin: 0 }}>Patients will appear here once they are admitted from the Admittance page.</p>
@@ -162,6 +169,26 @@ export function WaitingRoomView({
               }}
             >
               <span>Patients</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                {onRefresh && (
+                  <button
+                    onClick={onRefresh}
+                    disabled={loading}
+                    title="Refresh"
+                    style={{
+                      padding: '0.15rem 0.4rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '4px',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      backgroundColor: 'white',
+                      color: '#6b7280',
+                      fontSize: '0.85rem',
+                      opacity: loading ? 0.5 : 1,
+                    }}
+                  >
+                    ↻
+                  </button>
+                )}
               <span
                 style={{
                   backgroundColor: '#7c3aed20',
@@ -174,6 +201,7 @@ export function WaitingRoomView({
               >
                 {encounters.length}
               </span>
+              </div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto' }}>
               {encounters.map(encounter => {
@@ -218,7 +246,7 @@ export function WaitingRoomView({
                         flexShrink: 0,
                       }}
                     >
-                      {getInitials(encounter.patient.displayName)}
+                      {getInitials(patientName(encounter.patient))}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -232,7 +260,7 @@ export function WaitingRoomView({
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {encounter.patient.displayName}
+                          {patientName(encounter.patient)}
                         </div>
                         {unread > 0 && (
                           <span
@@ -263,7 +291,7 @@ export function WaitingRoomView({
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {getPatientId(encounter.id)} · {msgCount > 0 ? `${msgCount} message${msgCount !== 1 ? 's' : ''}` : 'No messages'}
+                        #{encounter.id} · {msgCount > 0 ? `${msgCount} message${msgCount !== 1 ? 's' : ''}` : 'No messages'}
                       </div>
                     </div>
                   </div>

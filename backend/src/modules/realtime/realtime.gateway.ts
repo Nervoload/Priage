@@ -398,6 +398,12 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
+  // Phase 6.2: Add a @SubscribeMessage('message.send') handler here to accept
+  // incoming chat messages via WebSocket instead of REST POST. This would allow
+  // the frontend ChatPanel to send messages over the existing Socket.IO connection
+  // instead of calling POST /messaging/encounters/:id/messages, reducing latency
+  // for the staff chat experience. The handler should validate the JWT, call
+  // MessagingService.createMessage(), and emit the result to the encounter room.
   emitMessageCreated(hospitalId: number, encounterId: number, payload: MessageCreatedPayload): void {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);

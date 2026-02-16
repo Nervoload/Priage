@@ -1,35 +1,56 @@
 // HospitalApp/src/features/admit/TriagePopup.tsx
-// Triage form popup modal – placeholder version
+// Triage assessment popup modal – displays real assessment data from the API.
 
-import { useState } from 'react';
-import type { Encounter } from '../../app/HospitalApp';
+import { useEffect, useState } from 'react';
+import type { Encounter, TriageAssessment, VitalSigns } from '../../shared/types/domain';
+import { patientName } from '../../shared/types/domain';
+import { listTriageAssessments } from '../../shared/api/triage';
+import { TriageForm } from '../triage/TriageForm';
 
 interface TriagePopupProps {
     encounter: Encounter;
+    /** Pass a pre-fetched assessment to skip the API call. */
+    assessment?: TriageAssessment;
     onClose: () => void;
     onAdmit?: (encounter: Encounter) => void;
 }
 
-// Premade sample triage data
-const sampleTriage = {
-    painLevel: 6,
-    bloodPressure: '138/88',
-    heartRate: 92,
-    temperature: 38.2,
-    oxygenSaturation: 96,
-    symptoms: ['Nausea', 'Fatigue', 'Dizziness'],
-    notes: 'Patient appears alert and oriented. Mild distress noted.',
-};
+export function TriagePopup({ encounter, assessment: initialAssessment, onClose, onAdmit }: TriagePopupProps) {
+    const [assessment, setAssessment] = useState<TriageAssessment | null>(initialAssessment ?? null);
+    const [loading, setLoading] = useState(!initialAssessment);
+    const [creating, setCreating] = useState(false);
 
-const allSymptoms = [
-    'Nausea', 'Fatigue', 'Dizziness', 'Headache', 'Chest Pain',
-    'Shortness of Breath', 'Fever', 'Vomiting', 'Cough', 'Abdominal Pain',
-];
+    const fetchLatest = async () => {
+        try {
+            const list = await listTriageAssessments(encounter.id);
+            if (list.length > 0) setAssessment(list[list.length - 1]);
+        } catch { /* silent */ }
+    };
 
-export function TriagePopup({ encounter, onClose, onAdmit }: TriagePopupProps) {
-    const [painLevel] = useState(sampleTriage.painLevel);
+    // Fetch the latest assessment if one wasn't provided via props.
+    // TODO: While running against mock data (HospitalApp initialEncounters),
+    //       this API call will 404 silently. Once HospitalApp fetches real
+    //       encounters from the backend, this will resolve automatically.
+    useEffect(() => {
+        if (initialAssessment) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const list = await listTriageAssessments(encounter.id);
+                if (!cancelled && list.length > 0) {
+                    setAssessment(list[list.length - 1]); // latest
+                }
+            } catch {
+                // silent – we'll show "no data" placeholders
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [encounter.id, initialAssessment]);
 
-    const getPatientId = (id: number) => `P-${String(id).padStart(3, '0')}`;
+    const vitals: VitalSigns = assessment?.vitalSigns ?? {};
+    const painLevel = assessment?.painLevel ?? 0;
 
     const getPainColor = (level: number) => {
         if (level <= 3) return '#10b981';
@@ -105,12 +126,30 @@ export function TriagePopup({ encounter, onClose, onAdmit }: TriagePopupProps) {
                 >
                     <div>
                         <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: '#1f2937' }}>
-                            Triage Assessment
+                            {creating ? 'New Triage Assessment' : 'Triage Assessment'}
                         </h2>
                         <div style={{ fontSize: '0.875rem', color: '#6b7280', marginTop: '0.15rem' }}>
-                            {encounter.patient.displayName} · {getPatientId(encounter.id)}
+                            {patientName(encounter.patient)} · #{encounter.id}
                         </div>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        {!creating && (
+                            <button
+                                onClick={() => setCreating(true)}
+                                style={{
+                                    padding: '0.4rem 0.85rem',
+                                    backgroundColor: '#7c3aed',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    fontWeight: 600,
+                                    fontSize: '0.8rem',
+                                }}
+                            >
+                                + New
+                            </button>
+                        )}
                     <button
                         onClick={onClose}
                         style={{
@@ -135,10 +174,22 @@ export function TriagePopup({ encounter, onClose, onAdmit }: TriagePopupProps) {
                     >
                         ✕
                     </button>
+                    </div>
                 </div>
 
-                {/* Body */}
+                {/* Body — switches between create form and view mode */}
                 <div style={{ padding: '1.5rem' }}>
+                  {creating ? (
+                    <TriageForm
+                      encounterId={encounter.id}
+                      onCreated={async () => {
+                        await fetchLatest();
+                        setCreating(false);
+                      }}
+                      onCancel={() => setCreating(false)}
+                    />
+                  ) : (
+                    <>
                     {/* Chief Complaint Banner */}
                     <div
                         style={{
@@ -158,7 +209,7 @@ export function TriagePopup({ encounter, onClose, onAdmit }: TriagePopupProps) {
                                 Chief Complaint
                             </div>
                             <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#78350f' }}>
-                                {encounter.chiefComplaint}
+                                {encounter.chiefComplaint ?? 'No complaint recorded'}
                             </div>
                         </div>
                     </div>
@@ -198,52 +249,51 @@ export function TriagePopup({ encounter, onClose, onAdmit }: TriagePopupProps) {
                     {/* Vitals Grid */}
                     <div style={{ marginBottom: '1.5rem' }}>
                         <div style={{ ...labelStyle, marginBottom: '0.65rem' }}>Vital Signs</div>
+                        {loading ? (
+                            <div style={{ color: '#9ca3af', fontSize: '0.9rem' }}>Loading…</div>
+                        ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
                             <div style={cardStyle}>
                                 <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Blood Pressure</div>
-                                <div style={valueStyle}>{sampleTriage.bloodPressure} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>mmHg</span></div>
+                                <div style={valueStyle}>{vitals.bloodPressure ?? '—'} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>mmHg</span></div>
                             </div>
                             <div style={cardStyle}>
                                 <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Heart Rate</div>
-                                <div style={valueStyle}>{sampleTriage.heartRate} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>bpm</span></div>
+                                <div style={valueStyle}>{vitals.heartRate ?? '—'} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>bpm</span></div>
                             </div>
                             <div style={cardStyle}>
                                 <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Temperature</div>
-                                <div style={valueStyle}>{sampleTriage.temperature}° <span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>°C</span></div>
+                                <div style={valueStyle}>{vitals.temperature ?? '—'} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>°C</span></div>
                             </div>
                             <div style={cardStyle}>
                                 <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>O₂ Saturation</div>
-                                <div style={valueStyle}>{sampleTriage.oxygenSaturation}<span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>%</span></div>
+                                <div style={valueStyle}>{vitals.oxygenSaturation ?? '—'}<span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>%</span></div>
                             </div>
                         </div>
+                        )}
                     </div>
 
-                    {/* Symptoms Checklist */}
+                    {/* CTAS Level (if available) */}
+                    {assessment && (
                     <div style={{ marginBottom: '1.5rem' }}>
-                        <div style={{ ...labelStyle, marginBottom: '0.65rem' }}>Symptoms</div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            {allSymptoms.map((symptom) => {
-                                const isActive = sampleTriage.symptoms.includes(symptom);
-                                return (
-                                    <span
-                                        key={symptom}
-                                        style={{
-                                            padding: '0.35rem 0.85rem',
-                                            borderRadius: '20px',
-                                            fontSize: '0.8rem',
-                                            fontWeight: 500,
-                                            backgroundColor: isActive ? '#7c3aed15' : '#f3f4f6',
-                                            color: isActive ? '#7c3aed' : '#9ca3af',
-                                            border: isActive ? '1.5px solid #7c3aed' : '1.5px solid transparent',
-                                            cursor: 'default',
-                                        }}
-                                    >
-                                        {isActive && '✓ '}{symptom}
-                                    </span>
-                                );
-                            })}
+                        <div style={{ ...labelStyle, marginBottom: '0.65rem' }}>CTAS Level</div>
+                        <div style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            backgroundColor: '#f9fafb',
+                            borderRadius: '10px',
+                            padding: '0.6rem 1rem',
+                        }}>
+                            <span style={{ fontWeight: 700, fontSize: '1.25rem', color: '#7c3aed' }}>
+                                {assessment.ctasLevel}
+                            </span>
+                            <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                                / 5 — Priority Score: {assessment.priorityScore}
+                            </span>
                         </div>
                     </div>
+                    )}
 
                     {/* Notes */}
                     <div style={{ marginBottom: '1.5rem' }}>
@@ -260,9 +310,11 @@ export function TriagePopup({ encounter, onClose, onAdmit }: TriagePopupProps) {
                                 minHeight: '60px',
                             }}
                         >
-                            {sampleTriage.notes}
+                        {assessment?.note ?? 'No notes recorded.'}
                         </div>
                     </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Footer with Admit button */}
@@ -278,7 +330,6 @@ export function TriagePopup({ encounter, onClose, onAdmit }: TriagePopupProps) {
                 >
                     <button
                         onClick={() => {
-                            // TODO: Implement admit logic
                             onAdmit?.(encounter);
                         }}
                         style={{
@@ -306,7 +357,7 @@ export function TriagePopup({ encounter, onClose, onAdmit }: TriagePopupProps) {
                             e.currentTarget.style.transform = 'scale(1)';
                         }}
                     >
-                        Admit
+                        {encounter.status === 'EXPECTED' ? 'Confirm Arrival' : 'Start Triage'}
                     </button>
                 </div>
             </div>

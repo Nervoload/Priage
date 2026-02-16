@@ -2,20 +2,35 @@
 // Login page matching the Priage landing page design
 
 import { useState } from 'react';
+import { useAuth } from '../AuthContext';
+import { ApiError } from '../../shared/api/client';
 
 interface LoginPageProps {
   onLogin?: () => void;
 }
 
 export function LoginPage({ onLogin }: LoginPageProps) {
+  const { login, loggingIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: Implement login logic
-    console.log('Login:', { email, password });
-    onLogin?.();
+    setError(null);
+
+    try {
+      await login(email, password);
+      onLogin?.();
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 401) {
+        setError('Invalid email or password.');
+      } else if (err instanceof ApiError) {
+        setError(`Login failed (${err.status}). Please try again.`);
+      } else {
+        setError(err instanceof Error ? err.message : 'Login failed. Please try again.');
+      }
+    }
   };
 
   return (
@@ -108,6 +123,19 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         </p>
 
         <form onSubmit={handleSubmit}>
+          {error && (
+            <div style={{
+              backgroundColor: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: '8px',
+              padding: '0.75rem',
+              marginBottom: '1.5rem',
+              fontSize: '0.875rem',
+              color: '#b91c1c',
+            }}>
+              {error}
+            </div>
+          )}
           <div style={{ marginBottom: '1.5rem' }}>
             <label
               htmlFor="email"
@@ -184,26 +212,28 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
           <button
             type="submit"
+            disabled={loggingIn}
             style={{
               width: '100%',
               padding: '0.75rem',
-              backgroundColor: '#7c3aed',
+              backgroundColor: loggingIn ? '#a78bfa' : '#7c3aed',
               color: 'white',
               border: 'none',
               borderRadius: '8px',
               fontSize: '1rem',
               fontWeight: '600',
-              cursor: 'pointer',
+              cursor: loggingIn ? 'not-allowed' : 'pointer',
               transition: 'background-color 0.2s',
+              opacity: loggingIn ? 0.7 : 1,
             }}
             onMouseOver={(e) => {
-              e.currentTarget.style.backgroundColor = '#6d28d9';
+              if (!loggingIn) e.currentTarget.style.backgroundColor = '#6d28d9';
             }}
             onMouseOut={(e) => {
-              e.currentTarget.style.backgroundColor = '#7c3aed';
+              if (!loggingIn) e.currentTarget.style.backgroundColor = '#7c3aed';
             }}
           >
-            Sign In
+            {loggingIn ? 'Signing In…' : 'Sign In'}
           </button>
         </form>
       </div>

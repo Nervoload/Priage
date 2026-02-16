@@ -27,6 +27,16 @@ export class TriageController {
     return this.triageService.createAssessment(dto, user.hospitalId, user.userId, req.correlationId);
   }
 
+  @Get('assessments/:id')
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  async getAssessment(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number },
+  ) {
+    return this.triageService.getAssessment(id, user.hospitalId, req.correlationId);
+  }
+
   @Get('encounters/:encounterId/assessments')
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async listAssessments(
@@ -36,4 +46,13 @@ export class TriageController {
   ) {
     return this.triageService.listAssessments(encounterId, user.hospitalId, req.correlationId);
   }
+
+  // Phase 6.5: Add an AI triage suggestion endpoint here:
+  //   @Post('encounters/:encounterId/suggest')
+  //   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  //   async suggestTriage(@Param('encounterId') encounterId: number, @CurrentUser() user)
+  // This endpoint would analyze the encounter's chief complaint, vital signs,
+  // and patient demographics to return a suggested CTAS level, pain level,
+  // and reasoning string. The frontend TriageForm would call this via an
+  // "AI Suggest" button and pre-fill form fields with the response.
 }

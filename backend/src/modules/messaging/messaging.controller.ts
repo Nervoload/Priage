@@ -29,6 +29,10 @@ export class MessagingController {
     return this.messagingService.listMessages(encounterId, user.hospitalId, query, req.correlationId);
   }
 
+  // Phase 6.2: This REST endpoint will remain as a fallback, but the primary
+  // send path should move to the WebSocket gateway (@SubscribeMessage('message.send'))
+  // for lower-latency staff chat. The messaging.ts API client on the frontend
+  // already wraps this endpoint but isn't wired into ChatPanel yet.
   @Post('encounters/:encounterId/messages')
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async create(

@@ -10,6 +10,7 @@ export interface EncounterPatientSummary {
   id: number;
   firstName: string | null;
   lastName: string | null;
+  phone: string | null;
   age: number | null;
   gender: string | null;
   preferredLanguage: string;
@@ -38,6 +39,7 @@ export interface EncounterSummaryDto {
     id: number;
     firstName: string | null;
     lastName: string | null;
+    phone: string | null;
     age: number | null;
   };
 }

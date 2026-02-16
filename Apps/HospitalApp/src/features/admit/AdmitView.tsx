@@ -4,15 +4,18 @@
 import { useState, useMemo } from 'react';
 import { TriagePopup } from './TriagePopup';
 import type { Encounter } from '../../app/HospitalApp';
+import { patientName } from '../../app/HospitalApp';
 
 interface AdmitViewProps {
   onBack?: () => void;
   onNavigate?: (view: 'admit' | 'triage' | 'waiting') => void;
   encounters: Encounter[];
-  onAdmit: (encounter: Encounter) => void;
+  onAdmit: (encounter: Encounter) => void | Promise<void>;
+  loading?: boolean;
+  onRefresh?: () => void;
 }
 
-export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitViewProps) {
+export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, onRefresh }: AdmitViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All Stages');
   const [selectedEncounter, setSelectedEncounter] = useState<Encounter | null>(null);
@@ -24,8 +27,8 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
     // Apply status filter
     if (statusFilter !== 'All Stages') {
       const statusMap: Record<string, Encounter['status']> = {
-        'Expected': 'PRE_TRIAGE',
-        'Admittance': 'ARRIVED',
+        'Expected': 'EXPECTED',
+        'Admittance': 'ADMITTED',
         'In Triage': 'TRIAGE',
         'Waiting': 'WAITING',
       };
@@ -38,9 +41,9 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
     // Apply search filter
     if (searchQuery) {
       filtered = filtered.filter(e =>
-        e.patient.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        e.chiefComplaint.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        `P-${String(e.id).padStart(3, '0')}`.toLowerCase().includes(searchQuery.toLowerCase())
+        patientName(e.patient).toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (e.chiefComplaint ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        String(e.id).includes(searchQuery)
       );
     }
 
@@ -49,11 +52,12 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
 
   const getStatusLabel = (status: Encounter['status']): string => {
     const labels: Record<Encounter['status'], string> = {
-      'PRE_TRIAGE': 'Expected',
-      'ARRIVED': 'Admittance',
+      'EXPECTED': 'Expected',
+      'ADMITTED': 'Admittance',
       'TRIAGE': 'In Triage',
       'WAITING': 'Waiting',
       'COMPLETE': 'Complete',
+      'UNRESOLVED': 'Unresolved',
       'CANCELLED': 'Cancelled',
     };
     return labels[status] || status;
@@ -61,11 +65,12 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
 
   const getStatusColor = (status: Encounter['status']): string => {
     const colors: Record<Encounter['status'], string> = {
-      'PRE_TRIAGE': '#3b82f6',
-      'ARRIVED': '#eab308',
+      'EXPECTED': '#3b82f6',
+      'ADMITTED': '#eab308',
       'TRIAGE': '#f97316',
       'WAITING': '#7c3aed',
       'COMPLETE': '#10b981',
+      'UNRESOLVED': '#6b7280',
       'CANCELLED': '#ef4444',
     };
     return colors[status] || '#6b7280';
@@ -73,7 +78,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
 
   const getPriority = (encounter: Encounter): { label: string; color: string } => {
     // Priority logic based on keywords in chief complaint
-    const complaint = encounter.chiefComplaint.toLowerCase();
+    const complaint = (encounter.chiefComplaint ?? '').toLowerCase();
     if (complaint.includes('critical') || complaint.includes('chest pain') ||
       complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
       return { label: 'CRITICAL', color: '#ef4444' };
@@ -89,18 +94,14 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
-  const getPatientId = (id: number): string => {
-    return `P-${String(id).padStart(3, '0')}`;
-  };
-
   const formatTime = (dateString: string): string => {
     const date = new Date(dateString);
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
   // Calculate summary stats
-  const expecting = encounters.filter(e => e.status === 'PRE_TRIAGE').length;
-  const inAdmittance = encounters.filter(e => e.status === 'ARRIVED').length;
+  const expecting = encounters.filter(e => e.status === 'EXPECTED').length;
+  const inAdmittance = encounters.filter(e => e.status === 'ADMITTED').length;
   const totalActive = encounters.filter(e =>
     e.status !== 'COMPLETE' && e.status !== 'CANCELLED'
   ).length;
@@ -276,10 +277,36 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
           <option>In Triage</option>
           <option>Waiting</option>
         </select>
+        {onRefresh && (
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            title="Refresh encounters"
+            style={{
+              padding: '0.75rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '8px',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              backgroundColor: 'white',
+              color: '#6b7280',
+              fontSize: '1rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: loading ? 0.5 : 1,
+            }}
+          >
+            ↻
+          </button>
+        )}
       </div>
 
       {/* Patient Cards */}
-      {filteredEncounters.length === 0 ? (
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '3rem', backgroundColor: 'white', borderRadius: '12px', color: '#6b7280' }}>
+          Loading encounters…
+        </div>
+      ) : filteredEncounters.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '3rem', backgroundColor: 'white', borderRadius: '12px' }}>
           No patients found
         </div>
@@ -292,7 +319,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
           {filteredEncounters.map(encounter => {
             const priority = getPriority(encounter);
             const statusColor = getStatusColor(encounter.status);
-            const initials = getInitials(encounter.patient.displayName);
+            const initials = getInitials(patientName(encounter.patient));
 
             return (
               <div
@@ -321,10 +348,10 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 'bold', fontSize: '1rem', color: '#1f2937' }}>
-                      {encounter.patient.displayName}
+                      {patientName(encounter.patient)}
                     </div>
                     <div style={{ fontSize: '0.875rem', color: '#6b7280' }}>
-                      {getPatientId(encounter.id)}
+                      #{encounter.id}
                     </div>
                   </div>
                 </div>
@@ -357,7 +384,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit }: AdmitView
                     Chief Complaint
                   </div>
                   <div style={{ fontSize: '0.875rem', color: '#1f2937', fontWeight: '500' }}>
-                    {encounter.chiefComplaint}
+                    {encounter.chiefComplaint ?? 'No complaint recorded'}
                   </div>
                 </div>
 

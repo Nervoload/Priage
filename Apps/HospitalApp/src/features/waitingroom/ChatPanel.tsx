@@ -1,9 +1,18 @@
 // HospitalApp/src/features/waitingroom/ChatPanel.tsx
 // Private chat panel for a single patient – admin side
 // TODO: Connect to backend WebSocket for real-time messaging
+//
+// Phase 6.2: Replace the local-only messaging flow with live WebSocket chat:
+//   1. Import { getSocket } from '../../shared/realtime/socket' and listen for
+//      'message.created' events filtered to this encounter.id.
+//   2. Wire handleSend to emit via socket (or call sendMessage from messaging.ts
+//      API) instead of the parent’s local-state onSendMessage callback.
+//   3. Remove the placeholder banner below once messages flow through the backend.
+//   4. Fetch message history on mount via listMessages() from messaging.ts.
 
 import { useState, useRef, useEffect } from 'react';
 import type { Encounter, ChatMessage } from '../../app/HospitalApp';
+import { patientName } from '../../app/HospitalApp';
 
 interface ChatPanelProps {
     encounter: Encounter;
@@ -33,8 +42,6 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
             handleSend();
         }
     };
-
-    const getPatientId = (id: number) => `P-${String(id).padStart(3, '0')}`;
 
     const formatTime = (timestamp: string) => {
         const d = new Date(timestamp);
@@ -67,14 +74,14 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                         fontSize: '0.8rem',
                     }}
                 >
-                    {encounter.patient.displayName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                    {patientName(encounter.patient).split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
                 </div>
                 <div>
                     <div style={{ fontWeight: 600, fontSize: '0.95rem', color: '#1f2937' }}>
-                        {encounter.patient.displayName}
+                        {patientName(encounter.patient)}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                        {getPatientId(encounter.id)} · {encounter.chiefComplaint}
+                        #{encounter.id} · {encounter.chiefComplaint ?? 'N/A'}
                     </div>
                 </div>
             </div>

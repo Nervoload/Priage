@@ -2,7 +2,7 @@
 // Triage assessments service.
 
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { EventType } from '@prisma/client';
+import { EventType, Prisma } from '@prisma/client';
 
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
@@ -39,11 +39,12 @@ export class TriageService {
       },
       {
         ctasLevel: dto.ctasLevel,
+        painLevel: dto.painLevel,
       },
     );
 
     try {
-      const priorityScore = this.computePriorityScore(dto.ctasLevel);
+      const priorityScore = this.computePriorityScore(dto.ctasLevel, dto.painLevel);
 
       const { assessment, event } = await this.prisma.$transaction(async (tx) => {
         const encounter = await tx.encounter.findUnique({
@@ -75,6 +76,11 @@ export class TriageService {
             hospitalId,
             ctasLevel: dto.ctasLevel,
             priorityScore,
+            chiefComplaint: dto.chiefComplaint,
+            painLevel: dto.painLevel,
+            vitalSigns: dto.vitalSigns
+              ? (dto.vitalSigns as unknown as Prisma.InputJsonValue)
+              : undefined,
             note: dto.note,
             createdByUserId,
           },
@@ -202,7 +208,49 @@ export class TriageService {
     }
   }
 
-  private computePriorityScore(ctasLevel: number): number {
+  async getAssessment(assessmentId: number, hospitalId: number, correlationId?: string) {
+    this.loggingService.debug(
+      'Fetching triage assessment',
+      {
+        service: 'TriageService',
+        operation: 'getAssessment',
+        correlationId,
+        assessmentId,
+        hospitalId,
+      },
+    );
+
+    const assessment = await this.prisma.triageAssessment.findFirst({
+      where: { id: assessmentId, hospitalId },
+    });
+
+    if (!assessment) {
+      throw new NotFoundException(`Triage assessment ${assessmentId} not found`);
+    }
+
+    return assessment;
+  }
+
+  // Phase 6.5: Add an AI suggestion method here, e.g.:
+  //   async suggestTriageLevel(encounterId: number, hospitalId: number): Promise<{
+  //     suggestedCtasLevel: number;
+  //     suggestedPainLevel: number;
+  //     reasoning: string;
+  //     confidence: number;
+  //   }>
+  // This would fetch the encounter's chief complaint and vital signs, then call
+  // an LLM or ML model to analyze the data and return a recommended CTAS level.
+  // It sits alongside computePriorityScore() below, which handles deterministic
+  // scoring after the triage level has been decided.
+
+  /**
+   * Compute a sortable priority score from CTAS level and optional pain level.
+   * Higher score = more urgent = sorted first.
+   *
+   * Base: CTAS 1 → 100, CTAS 5 → 20
+   * Pain bonus: up to +10 for pain level 10
+   */
+  private computePriorityScore(ctasLevel: number, painLevel?: number): number {
     const baseScores: Record<number, number> = {
       1: 100,
       2: 80,
@@ -211,6 +259,8 @@ export class TriageService {
       5: 20,
     };
 
-    return baseScores[ctasLevel] ?? 0;
+    const base = baseScores[ctasLevel] ?? 0;
+    const painBonus = painLevel != null ? Math.round(painLevel) : 0;
+    return base + painBonus;
   }
 }

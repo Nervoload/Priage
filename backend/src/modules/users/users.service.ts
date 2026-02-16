@@ -103,6 +103,13 @@ export class UsersService {
     return user;
   }
 
+  // Phase 6.4: Add an updateProfile method here:
+  //   async updateProfile(userId: number, dto: { displayName?, avatarUrl?, phone?, department?, specialization? })
+  // The current getUser select list (id, email, role, createdAt, hospitalId) will
+  // need to expand to include new profile fields once the Prisma schema is updated.
+  // Consider a DynamoDB table for unstructured profile data (avatar, preferences)
+  // or adding columns to the existing User model for structured fields.
+
   async getUsersByHospital(hospitalId: number, correlationId?: string) {
     this.loggingService.debug('Fetching users by hospital', {
       service: 'UsersService',
