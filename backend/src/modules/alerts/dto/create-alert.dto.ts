@@ -7,9 +7,6 @@ export class CreateAlertDto {
   @IsInt()
   encounterId!: number;
 
-  @IsInt()
-  hospitalId!: number;
-
   @IsString()
   @MaxLength(120)
   type!: string;
@@ -21,7 +18,4 @@ export class CreateAlertDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, unknown>;
-
-  @IsInt()
-  actorUserId!: number;
 }

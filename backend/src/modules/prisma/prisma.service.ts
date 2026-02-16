@@ -71,7 +71,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // Subscribe to Prisma's query events for performance monitoring
     this.$on('warn' as never, async (e: any) => {
       if (this.loggingService) {
-        await this.loggingService.warn(
+        this.loggingService.warn(
           'Prisma warning',
           {
             service: 'PrismaService',
@@ -92,7 +92,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     this.$on('error' as never, async (e: any) => {
       if (this.loggingService) {
-        await this.loggingService.error(
+        this.loggingService.error(
           'Prisma error',
           {
             service: 'PrismaService',
@@ -131,7 +131,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         await this.$queryRaw`SELECT 1`;
         
         if (this.loggingService) {
-          await this.loggingService.info(
+          this.loggingService.info(
             'Database connection established successfully',
             {
               service: 'PrismaService',
@@ -158,7 +158,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         return;
       } catch (error) {
         if (this.loggingService) {
-          await this.loggingService.error(
+          this.loggingService.error(
             'Failed to connect to database',
             {
               service: 'PrismaService',
@@ -200,7 +200,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     try {
       await this.$disconnect();
       if (this.loggingService) {
-        await this.loggingService.info(
+        this.loggingService.info(
           'Prisma client disconnected',
           {
             service: 'PrismaService',
@@ -213,7 +213,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       }
     } catch (error) {
       if (this.loggingService) {
-        await this.loggingService.error(
+        this.loggingService.error(
           'Error disconnecting Prisma client',
           {
             service: 'PrismaService',
@@ -234,7 +234,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     try {
       await this.pool.end();
       if (this.loggingService) {
-        await this.loggingService.info(
+        this.loggingService.info(
           'Database connection pool closed',
           {
             service: 'PrismaService',
@@ -253,7 +253,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       }
     } catch (error) {
       if (this.loggingService) {
-        await this.loggingService.error(
+        this.loggingService.error(
           'Error closing database pool',
           {
             service: 'PrismaService',
@@ -283,7 +283,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     };
 
     if (this.loggingService) {
-      await this.loggingService.debug(
+      this.loggingService.debug(
         'Current pool statistics',
         {
           service: 'PrismaService',

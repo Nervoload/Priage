@@ -34,7 +34,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto, correlationId?: string) {
-    await this.loggingService.info('Login attempt', {
+    this.loggingService.info('Login attempt', {
       service: 'AuthService',
       operation: 'login',
       correlationId,
@@ -48,7 +48,7 @@ export class AuthService {
       });
 
       if (!user) {
-        await this.loggingService.warn('Login failed - user not found', {
+        this.loggingService.warn('Login failed - user not found', {
           service: 'AuthService',
           operation: 'login',
           correlationId,
@@ -61,7 +61,7 @@ export class AuthService {
       const isPasswordValid = await bcrypt.compare(dto.password, user.password);
 
       if (!isPasswordValid) {
-        await this.loggingService.warn('Login failed - invalid password', {
+        this.loggingService.warn('Login failed - invalid password', {
           service: 'AuthService',
           operation: 'login',
           correlationId,
@@ -79,7 +79,7 @@ export class AuthService {
 
       const access_token = this.jwtService.sign(payload);
 
-      await this.loggingService.info('Login successful', {
+      this.loggingService.info('Login successful', {
         service: 'AuthService',
         operation: 'login',
         correlationId,
@@ -105,7 +105,7 @@ export class AuthService {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      await this.loggingService.error('Login error', {
+      this.loggingService.error('Login error', {
         service: 'AuthService',
         operation: 'login',
         correlationId,
@@ -119,7 +119,7 @@ export class AuthService {
   }
 
   async validateUser(payload: JwtPayload, correlationId?: string) {
-    await this.loggingService.debug('Validating JWT token', {
+    this.loggingService.debug('Validating JWT token', {
       service: 'AuthService',
       operation: 'validateUser',
       correlationId,
@@ -133,7 +133,7 @@ export class AuthService {
       });
 
       if (!user) {
-        await this.loggingService.warn('JWT validation failed - user not found', {
+        this.loggingService.warn('JWT validation failed - user not found', {
           service: 'AuthService',
           operation: 'validateUser',
           correlationId,
@@ -142,7 +142,7 @@ export class AuthService {
         throw new UnauthorizedException('User not found');
       }
 
-      await this.loggingService.debug('JWT validated successfully', {
+      this.loggingService.debug('JWT validated successfully', {
         service: 'AuthService',
         operation: 'validateUser',
         correlationId,
@@ -161,7 +161,7 @@ export class AuthService {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      await this.loggingService.error('JWT validation error', {
+      this.loggingService.error('JWT validation error', {
         service: 'AuthService',
         operation: 'validateUser',
         correlationId,

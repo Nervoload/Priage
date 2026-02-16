@@ -11,12 +11,17 @@ import { CreateAssetDto } from './dto/create-asset.dto';
 export class AssetsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createAsset(dto: CreateAssetDto) {
+  async createAsset(dto: CreateAssetDto, hospitalId: number) {
     const encounter = await this.prisma.encounter.findUnique({
-      where: { id: dto.encounterId },
+      where: {
+        id_hospitalId: {
+          id: dto.encounterId,
+          hospitalId,
+        },
+      },
       select: { id: true, hospitalId: true },
     });
-    if (!encounter || encounter.hospitalId !== dto.hospitalId) {
+    if (!encounter) {
       throw new NotFoundException('Encounter does not belong to hospital');
     }
 
@@ -25,7 +30,7 @@ export class AssetsService {
     const asset = await this.prisma.asset.create({
       data: {
         encounterId: dto.encounterId,
-        hospitalId: dto.hospitalId,
+        hospitalId,
         storageKey,
         mimeType: dto.mimeType,
         sizeBytes: dto.sizeBytes,
@@ -39,9 +44,9 @@ export class AssetsService {
     };
   }
 
-  async listAssets(encounterId: number) {
+  async listAssets(encounterId: number, hospitalId: number) {
     return this.prisma.asset.findMany({
-      where: { encounterId },
+      where: { encounterId, hospitalId },
       orderBy: { createdAt: 'asc' },
     });
   }

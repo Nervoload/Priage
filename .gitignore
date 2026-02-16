@@ -27,7 +27,6 @@ out/
 prisma/dev.db
 prisma/*.db
 prisma/*.db-journal
-prisma/migrations/*
 
 # =========================
 # Logs

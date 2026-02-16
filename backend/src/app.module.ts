@@ -23,6 +23,7 @@ import { MessagingModule } from './modules/messaging/messaging.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { RedisModule } from './modules/redis/redis.module';
 import { TriageModule } from './modules/triage/triage.module';
 import { UsersModule } from './modules/users/users.module';
 
@@ -35,6 +36,7 @@ import { UsersModule } from './modules/users/users.module';
       },
     ]),
     PrismaModule,
+    RedisModule,   // Global Redis client for caching (location, sessions)
     LoggingModule, // Global logging with correlation support
     AuthModule,
     UsersModule,

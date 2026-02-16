@@ -112,15 +112,6 @@ export class AlertsProcessor extends WorkerHost {
       let errors = 0;
 
       for (const encounter of encounters) {
-        if (!encounter.hospitalId) {
-          this.logger.warn({
-            message: 'Skipping encounter without hospitalId',
-            encounterId: encounter.id,
-          });
-          alertsSkipped++;
-          continue;
-        }
-
         try {
           const existingAlert = await this.prisma.alert.findFirst({
             where: {
@@ -144,22 +135,20 @@ export class AlertsProcessor extends WorkerHost {
           const { alert, event } = await this.prisma.$transaction(async (tx) => {
             return this.alerts.createAlertTx(tx, {
               encounterId: encounter.id,
-              hospitalId: encounter.hospitalId ?? undefined,
+              hospitalId: encounter.hospitalId,
               type: ALERT_TYPE,
               severity: 'MEDIUM',
               metadata: { thresholdMinutes },
             });
           });
 
-          if (event) {
-            this.events.dispatchEncounterEvent(event);
-          }
+          void this.events.dispatchEncounterEventAndMarkProcessed(event);
 
           this.logger.log({
             message: 'Triage reassessment alert created',
             encounterId: encounter.id,
             alertId: alert.id,
-            eventId: event?.id,
+            eventId: event.id,
           });
 
           alertsCreated++;

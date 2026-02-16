@@ -15,9 +15,6 @@ export class CreateEncounterDto {
   @IsInt()
   patientId!: number;
 
-  @IsInt()
-  hospitalId!: number;
-
   @IsString()
   @MinLength(1)
   @MaxLength(240)

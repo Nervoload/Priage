@@ -5,12 +5,12 @@ import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, Req, UseGuards
 import { Request } from 'express';
 import { Role } from '@prisma/client';
 
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages.query.dto';
-import { MarkMessageReadDto } from './dto/mark-message-read.dto';
 import { MessagingService } from './messaging.service';
 
 @Controller('messaging')
@@ -24,8 +24,9 @@ export class MessagingController {
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Query() query: ListMessagesQueryDto,
     @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
-    return this.messagingService.listMessages(encounterId, query, req.correlationId);
+    return this.messagingService.listMessages(encounterId, user.hospitalId, query, req.correlationId);
   }
 
   @Post('encounters/:encounterId/messages')
@@ -34,17 +35,24 @@ export class MessagingController {
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Body() dto: CreateMessageDto,
     @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
-    return this.messagingService.createMessage(encounterId, dto, req.correlationId);
+    return this.messagingService.createMessage(
+      encounterId,
+      user.hospitalId,
+      user.userId,
+      dto,
+      req.correlationId,
+    );
   }
 
   @Post('messages/:messageId/read')
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async markRead(
     @Param('messageId', ParseIntPipe) messageId: number,
-    @Body() dto: MarkMessageReadDto,
     @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
-    return this.messagingService.markMessageRead(messageId, dto.actorUserId, req.correlationId);
+    return this.messagingService.markMessageRead(messageId, user.hospitalId, user.userId, req.correlationId);
   }
 }

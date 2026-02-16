@@ -3,20 +3,20 @@
 
 // Written by: John Surette
 // Date Created: Dec 9 2025
-// Last Edited: Jan 6 2026
+// Last Edited: Feb 12 2026
 
 // Business logic for encounters.
 // Writes to Postgres via Prisma and emits domain events.
-// Auth is intentionally skipped; later enforce role rules here.
+// Auth enforced at controller layer via JwtAuthGuard/PatientGuard.
 
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EncounterStatus, EventType, Prisma } from '@prisma/client';
 
-import { PaginatedResponse } from '../../common/dto/pagination.dto';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
+import { EncounterListResponseDto, PatientEncounterDto } from './dto/encounter-response.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
 
 export type EncounterActor = {
@@ -89,14 +89,19 @@ export class EncountersService {
     this.logger.log('EncountersService initialized');
   }
 
-  async createEncounter(dto: CreateEncounterDto, actor?: EncounterActor, correlationId?: string) {
-    await this.loggingService.info(
+  async createEncounter(
+    hospitalId: number,
+    dto: CreateEncounterDto,
+    actor?: EncounterActor,
+    correlationId?: string,
+  ) {
+    this.loggingService.info(
       'Creating new encounter',
       {
         service: 'EncountersService',
         operation: 'createEncounter',
         correlationId,
-        hospitalId: dto.hospitalId,
+        hospitalId,
         patientId: dto.patientId,
       },
       {
@@ -110,19 +115,28 @@ export class EncountersService {
         const created = await tx.encounter.create({
           data: {
             status: EncounterStatus.EXPECTED,
-            hospitalId: dto.hospitalId,
+            hospitalId,
             patientId: dto.patientId,
             chiefComplaint: dto.chiefComplaint,
             details: dto.details,
           },
           include: {
-            patient: true,
+            patient: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                age: true,
+                gender: true,
+                preferredLanguage: true,
+              },
+            },
           },
         });
 
         const createdEvent = await this.events.emitEncounterEventTx(tx, {
           encounterId: created.id,
-          hospitalId: created.hospitalId ?? undefined,
+          hospitalId: created.hospitalId,
           type: EventType.ENCOUNTER_CREATED,
           metadata: {
             status: created.status,
@@ -133,37 +147,35 @@ export class EncountersService {
         return { encounter: created, event: createdEvent };
       });
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Encounter created successfully',
         {
           service: 'EncountersService',
           operation: 'createEncounter',
           correlationId,
-          hospitalId: dto.hospitalId,
+          hospitalId,
           patientId: dto.patientId,
           encounterId: encounter.id,
         },
         {
           status: encounter.status,
-          eventId: event?.id,
+          eventId: event.id,
           actorUserId: actor?.actorUserId,
           actorPatientId: actor?.actorPatientId,
         },
       );
 
-      if (event) {
-        this.events.dispatchEncounterEvent(event);
-      }
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
 
       return encounter;
     } catch (error) {
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to create encounter',
         {
           service: 'EncountersService',
           operation: 'createEncounter',
           correlationId,
-          hospitalId: dto.hospitalId,
+          hospitalId,
           patientId: dto.patientId,
         },
         error instanceof Error ? error : new Error(String(error)),
@@ -176,37 +188,48 @@ export class EncountersService {
     }
   }
 
-  async listEncounters(query: ListEncountersQueryDto, correlationId?: string): Promise<PaginatedResponse<any>> {
-    await this.loggingService.info(
+  async listEncounters(
+    hospitalId: number,
+    query: ListEncountersQueryDto,
+    correlationId?: string,
+  ): Promise<EncounterListResponseDto> {
+    this.loggingService.info(
       'Listing encounters',
       {
         service: 'EncountersService',
         operation: 'listEncounters',
         correlationId,
-        hospitalId: query.hospitalId,
+        hospitalId,
       },
       {
         status: query.status,
-        page: query.page,
+        since: query.since,
         limit: query.limit,
       },
     );
 
     try {
-      const where: Prisma.EncounterWhereInput = {};
+      const where: Prisma.EncounterWhereInput = { hospitalId };
 
-      if (query.status) where.status = query.status;
-      if (query.hospitalId) where.hospitalId = query.hospitalId;
+      // Filter by one or more statuses
+      if (query.status && query.status.length > 0) {
+        where.status = { in: query.status };
+      }
 
-      const page = query.page || 1;
-      const limit = query.limit || 20;
-      const skip = (page - 1) * limit;
+      // Filter by created date
+      if (query.since) {
+        where.createdAt = { gte: query.since };
+      }
+
+      const limit = query.limit || 200;
 
       const [encounters, total] = await Promise.all([
         this.prisma.encounter.findMany({
           where,
-          orderBy: { createdAt: 'desc' },
-          skip,
+          orderBy: [
+            { currentPriorityScore: 'desc' },
+            { createdAt: 'asc' },
+          ],
           take: limit,
           include: {
             patient: {
@@ -222,43 +245,32 @@ export class EncountersService {
         this.prisma.encounter.count({ where }),
       ]);
 
-      const totalPages = Math.ceil(total / limit);
-
-      await this.loggingService.info(
+      this.loggingService.info(
         'Encounters listed successfully',
         {
           service: 'EncountersService',
           operation: 'listEncounters',
           correlationId,
-          hospitalId: query.hospitalId,
+          hospitalId,
         },
         {
           count: encounters.length,
           total,
-          page,
-          totalPages,
         },
       );
 
       return {
         data: encounters,
-        meta: {
-          page,
-          limit,
-          total,
-          totalPages,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1,
-        },
+        total,
       };
     } catch (error) {
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to list encounters',
         {
           service: 'EncountersService',
           operation: 'listEncounters',
           correlationId,
-          hospitalId: query.hospitalId,
+          hospitalId,
         },
         error instanceof Error ? error : new Error(String(error)),
         {
@@ -269,22 +281,42 @@ export class EncountersService {
     }
   }
 
-  async getEncounter(encounterId: number, correlationId?: string) {
-    await this.loggingService.info(
+  async getEncounter(hospitalId: number, encounterId: number, correlationId?: string) {
+    this.loggingService.info(
       'Fetching encounter',
       {
         service: 'EncountersService',
         operation: 'getEncounter',
         correlationId,
         encounterId,
+        hospitalId,
       },
     );
 
     try {
       const encounter = await this.prisma.encounter.findUnique({
-        where: { id: encounterId },
+        where: {
+          id_hospitalId: {
+            id: encounterId,
+            hospitalId,
+          },
+        },
         include: {
-          patient: true,
+          patient: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              age: true,
+              gender: true,
+              heightCm: true,
+              weightKg: true,
+              allergies: true,
+              conditions: true,
+              preferredLanguage: true,
+              optionalHealthInfo: true,
+            },
+          },
           triageAssessments: { orderBy: { createdAt: 'asc' } },
           messages: { orderBy: { createdAt: 'asc' } },
           alerts: { orderBy: { createdAt: 'asc' } },
@@ -293,26 +325,27 @@ export class EncountersService {
       });
 
       if (!encounter) {
-        await this.loggingService.warn(
+        this.loggingService.warn(
           'Encounter not found',
           {
             service: 'EncountersService',
             operation: 'getEncounter',
             correlationId,
             encounterId,
+            hospitalId,
           },
         );
         throw new NotFoundException(`Encounter ${encounterId} not found`);
       }
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Encounter fetched successfully',
         {
           service: 'EncountersService',
           operation: 'getEncounter',
           correlationId,
           encounterId,
-          hospitalId: encounter.hospitalId ?? undefined,
+          hospitalId: encounter.hospitalId,
         },
         {
           status: encounter.status,
@@ -324,13 +357,14 @@ export class EncountersService {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to fetch encounter',
         {
           service: 'EncountersService',
           operation: 'getEncounter',
           correlationId,
           encounterId,
+          hospitalId,
         },
         error instanceof Error ? error : new Error(String(error)),
       );
@@ -338,31 +372,32 @@ export class EncountersService {
     }
   }
 
-  async confirm(encounterId: number, actor?: EncounterActor, correlationId?: string) {
-    return this.transition(encounterId, 'confirm', actor, correlationId);
+  async confirm(hospitalId: number, encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(hospitalId, encounterId, 'confirm', actor, correlationId);
   }
 
-  async markArrived(encounterId: number, actor?: EncounterActor, correlationId?: string) {
-    return this.transition(encounterId, 'markArrived', actor, correlationId);
+  async markArrived(hospitalId: number, encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(hospitalId, encounterId, 'markArrived', actor, correlationId);
   }
 
-  async createWaiting(encounterId: number, actor?: EncounterActor, correlationId?: string) {
-    return this.transition(encounterId, 'createWaiting', actor, correlationId);
+  async createWaiting(hospitalId: number, encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(hospitalId, encounterId, 'createWaiting', actor, correlationId);
   }
 
-  async startExam(encounterId: number, actor?: EncounterActor, correlationId?: string) {
-    return this.transition(encounterId, 'startExam', actor, correlationId);
+  async startExam(hospitalId: number, encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(hospitalId, encounterId, 'startExam', actor, correlationId);
   }
 
-  async discharge(encounterId: number, actor?: EncounterActor, correlationId?: string) {
-    return this.transition(encounterId, 'discharge', actor, correlationId);
+  async discharge(hospitalId: number, encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(hospitalId, encounterId, 'discharge', actor, correlationId);
   }
 
-  async cancel(encounterId: number, actor?: EncounterActor, correlationId?: string) {
-    return this.transition(encounterId, 'cancel', actor, correlationId);
+  async cancel(hospitalId: number, encounterId: number, actor?: EncounterActor, correlationId?: string) {
+    return this.transition(hospitalId, encounterId, 'cancel', actor, correlationId);
   }
 
   private async transition(
+    hospitalId: number,
     encounterId: number,
     transitionKey: keyof typeof TRANSITIONS,
     actor?: EncounterActor,
@@ -370,13 +405,14 @@ export class EncountersService {
   ) {
     const transition = TRANSITIONS[transitionKey];
     if (!transition) {
-      await this.loggingService.error(
+      this.loggingService.error(
         'Unknown transition attempted',
         {
           service: 'EncountersService',
           operation: 'transition',
           correlationId,
           encounterId,
+          hospitalId,
         },
         new Error(`Unknown transition: ${String(transitionKey)}`),
         {
@@ -386,13 +422,14 @@ export class EncountersService {
       throw new BadRequestException(`Unknown transition: ${String(transitionKey)}`);
     }
 
-    await this.loggingService.info(
+    this.loggingService.info(
       'Starting encounter transition',
       {
         service: 'EncountersService',
         operation: 'transition',
         correlationId,
         encounterId,
+        hospitalId,
       },
       {
         transitionKey: String(transitionKey),
@@ -407,15 +444,23 @@ export class EncountersService {
 
     try {
       const { encounter, event } = await this.prisma.$transaction(async (tx) => {
-        const current = await tx.encounter.findUnique({ where: { id: encounterId } });
+        const current = await tx.encounter.findUnique({
+          where: {
+            id_hospitalId: {
+              id: encounterId,
+              hospitalId,
+            },
+          },
+        });
         if (!current) {
-          await this.loggingService.warn(
+          this.loggingService.warn(
             'Encounter not found during transition',
             {
               service: 'EncountersService',
               operation: 'transition',
               correlationId,
               encounterId,
+              hospitalId,
             },
             {
               transitionKey: String(transitionKey),
@@ -426,13 +471,14 @@ export class EncountersService {
         }
 
         if (TERMINAL_STATUSES.has(current.status)) {
-          await this.loggingService.warn(
+          this.loggingService.warn(
             'Transition attempted on terminal status',
             {
               service: 'EncountersService',
               operation: 'transition',
               correlationId,
               encounterId,
+              hospitalId,
             },
             {
               currentStatus: current.status,
@@ -443,13 +489,14 @@ export class EncountersService {
         }
 
         if (!transition.allowedFrom.includes(current.status)) {
-          await this.loggingService.warn(
+          this.loggingService.warn(
             'Invalid state transition attempted',
             {
               service: 'EncountersService',
               operation: 'transition',
               correlationId,
               encounterId,
+              hospitalId,
             },
             {
               currentStatus: current.status,
@@ -463,86 +510,111 @@ export class EncountersService {
           );
         }
 
-      const updateData: Prisma.EncounterUpdateInput = {
-        status: transition.to,
-      };
+        const updateData: Prisma.EncounterUpdateInput = {
+          status: transition.to,
+        };
 
-      if (transition.timestampField) {
-        const timestampField = transition.timestampField as keyof typeof current;
-        if (!current[timestampField]) {
-          updateData[transition.timestampField] = now;
+        if (transition.timestampField) {
+          const timestampField = transition.timestampField as keyof typeof current;
+          if (!current[timestampField]) {
+            updateData[transition.timestampField] = now;
+          }
         }
-      }
 
-      const updated = await tx.encounter.update({
-        where: { id: encounterId },
-        data: updateData,
-      });
-
-      const createdEvent = await this.events.emitEncounterEventTx(tx, {
-        encounterId: updated.id,
-        hospitalId: updated.hospitalId ?? undefined,
-        type: EventType.STATUS_CHANGE,
-        metadata: {
-          fromStatus: current.status,
-          toStatus: updated.status,
-          transition: transitionKey,
-          timestamps: {
-            arrivedAt: updated.arrivedAt,
-            triagedAt: updated.triagedAt,
-            waitingAt: updated.waitingAt,
-            seenAt: updated.seenAt,
-            departedAt: updated.departedAt,
-            cancelledAt: updated.cancelledAt,
+        const updateResult = await tx.encounter.updateMany({
+          where: {
+            id: encounterId,
+            hospitalId,
+            status: current.status,
           },
-        },
-        actor,
-      });
+          data: updateData,
+        });
+        if (updateResult.count !== 1) {
+          throw new ConflictException(
+            `Encounter ${encounterId} was updated by another request. Refresh and retry.`,
+          );
+        }
 
-      return { encounter: updated, event: createdEvent };
+        const updated = await tx.encounter.findUnique({
+          where: {
+            id_hospitalId: {
+              id: encounterId,
+              hospitalId,
+            },
+          },
+        });
+        if (!updated) {
+          throw new NotFoundException(`Encounter ${encounterId} not found`);
+        }
+
+        const createdEvent = await this.events.emitEncounterEventTx(tx, {
+          encounterId: updated.id,
+          hospitalId: updated.hospitalId,
+          type: EventType.STATUS_CHANGE,
+          metadata: {
+            fromStatus: current.status,
+            toStatus: updated.status,
+            transition: transitionKey,
+            timestamps: {
+              arrivedAt: updated.arrivedAt,
+              triagedAt: updated.triagedAt,
+              waitingAt: updated.waitingAt,
+              seenAt: updated.seenAt,
+              departedAt: updated.departedAt,
+              cancelledAt: updated.cancelledAt,
+            },
+          },
+          actor,
+        });
+
+        return { encounter: updated, event: createdEvent };
       });
 
       const duration = Date.now() - startTime;
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Encounter transition completed successfully',
         {
           service: 'EncountersService',
           operation: 'transition',
           correlationId,
           encounterId: encounter.id,
+          hospitalId,
         },
         {
-          fromStatus: event?.metadata && typeof event.metadata === 'object' && 'fromStatus' in event.metadata ? event.metadata.fromStatus : undefined,
+          fromStatus: event.metadata && typeof event.metadata === 'object' && 'fromStatus' in event.metadata ? event.metadata.fromStatus : undefined,
           toStatus: encounter.status,
           transitionKey: String(transitionKey),
-          eventId: event?.id,
+          eventId: event.id,
           durationMs: duration,
           actorUserId: actor?.actorUserId,
           actorPatientId: actor?.actorPatientId,
         },
       );
 
-      if (event) {
-        this.events.dispatchEncounterEvent(event);
-      }
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
 
       return encounter;
     } catch (error) {
       const duration = Date.now() - startTime;
       
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ConflictException
+      ) {
         // These are expected validation errors, logged at warn level above
         throw error;
       }
 
-      await this.loggingService.error(
+      this.loggingService.error(
         'Encounter transition failed',
         {
           service: 'EncountersService',
           operation: 'transition',
           correlationId,
           encounterId,
+          hospitalId,
         },
         error instanceof Error ? error : new Error(String(error)),
         {
@@ -555,5 +627,177 @@ export class EncountersService {
       );
       throw error;
     }
+  }
+
+  // ─── Patient-scoped access methods ──────────────────────────────────────────
+
+  /**
+   * Get an encounter from the patient's perspective.
+   * Returns limited data — no triage assessments, no internal messages, no alerts.
+   * Enforces that the patient owns this encounter.
+   */
+  async getEncounterForPatient(
+    patientId: number,
+    encounterId: number,
+    hospitalId: number | null,
+    correlationId?: string,
+  ): Promise<PatientEncounterDto> {
+    this.loggingService.info(
+      'Patient fetching own encounter',
+      {
+        service: 'EncountersService',
+        operation: 'getEncounterForPatient',
+        correlationId,
+        encounterId,
+        patientId,
+      },
+    );
+
+    // Use compound key when hospitalId is available (defense-in-depth)
+    const encounter = hospitalId
+      ? await this.prisma.encounter.findUnique({
+          where: {
+            id_hospitalId: {
+              id: encounterId,
+              hospitalId,
+            },
+          },
+          include: {
+            messages: {
+              where: { isInternal: false },
+              orderBy: { createdAt: 'asc' },
+              select: {
+                id: true,
+                createdAt: true,
+                senderType: true,
+                content: true,
+                createdByUserId: true,
+                createdByPatientId: true,
+              },
+            },
+          },
+        })
+      : await this.prisma.encounter.findUnique({
+          where: { id: encounterId },
+          include: {
+            messages: {
+              where: { isInternal: false },
+              orderBy: { createdAt: 'asc' },
+              select: {
+                id: true,
+                createdAt: true,
+                senderType: true,
+                content: true,
+                createdByUserId: true,
+                createdByPatientId: true,
+              },
+            },
+          },
+        });
+
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
+
+    if (encounter.patientId !== patientId) {
+      throw new ForbiddenException('You can only view your own encounters');
+    }
+
+    return {
+      id: encounter.id,
+      createdAt: encounter.createdAt,
+      status: encounter.status,
+      chiefComplaint: encounter.chiefComplaint,
+      details: encounter.details,
+      hospitalId: encounter.hospitalId,
+      expectedAt: encounter.expectedAt,
+      arrivedAt: encounter.arrivedAt,
+      messages: encounter.messages,
+    };
+  }
+
+  /**
+   * List all encounters belonging to a patient (limited view).
+   */
+  async listEncountersForPatient(
+    patientId: number,
+    correlationId?: string,
+  ) {
+    this.loggingService.info(
+      'Patient listing own encounters',
+      {
+        service: 'EncountersService',
+        operation: 'listEncountersForPatient',
+        correlationId,
+        patientId,
+      },
+    );
+
+    const encounters = await this.prisma.encounter.findMany({
+      where: { patientId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        createdAt: true,
+        status: true,
+        chiefComplaint: true,
+        hospitalId: true,
+        expectedAt: true,
+        arrivedAt: true,
+      },
+    });
+
+    return encounters;
+  }
+
+  // ─── Wait time estimation ───────────────────────────────────────────────────
+
+  /**
+   * Estimate a patient's queue position and wait time.
+   * Counts encounters ahead of them in WAITING status, ordered by priority.
+   * Uses a naive average of 15 minutes per patient — replace with real averages
+   * from completed encounters once enough data exists.
+   */
+  async getQueuePosition(
+    encounterId: number,
+    hospitalId: number,
+    correlationId?: string,
+  ): Promise<{
+    position: number;
+    estimatedMinutes: number;
+    totalInQueue: number;
+  }> {
+    this.loggingService.info(
+      'Calculating queue position',
+      {
+        service: 'EncountersService',
+        operation: 'getQueuePosition',
+        correlationId,
+        encounterId,
+        hospitalId,
+      },
+    );
+
+    const waiting = await this.prisma.encounter.findMany({
+      where: {
+        hospitalId,
+        status: EncounterStatus.WAITING,
+      },
+      orderBy: [
+        { currentPriorityScore: 'desc' },
+        { createdAt: 'asc' },
+      ],
+      select: { id: true },
+    });
+
+    const index = waiting.findIndex((e) => e.id === encounterId);
+
+    const AVG_MINUTES_PER_PATIENT = 15;
+
+    return {
+      position: index === -1 ? 0 : index + 1,
+      estimatedMinutes: index === -1 ? 0 : (index + 1) * AVG_MINUTES_PER_PATIENT,
+      totalInQueue: waiting.length,
+    };
   }
 }

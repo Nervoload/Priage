@@ -7,9 +7,6 @@ export class CreateTriageAssessmentDto {
   encounterId!: number;
 
   @IsInt()
-  hospitalId!: number;
-
-  @IsInt()
   @Min(1)
   @Max(5)
   ctasLevel!: number;
@@ -18,7 +15,4 @@ export class CreateTriageAssessmentDto {
   @IsString()
   @MaxLength(2000)
   note?: string;
-
-  @IsInt()
-  createdByUserId!: number;
 }

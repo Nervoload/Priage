@@ -5,6 +5,7 @@ import { Controller, Get, Param, ParseIntPipe, Req, UseGuards } from '@nestjs/co
 import { Role } from '@prisma/client';
 import { Request } from 'express';
 
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -17,7 +18,11 @@ export class PatientsController {
 
   @Get(':id')
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async getPatient(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
-    return this.patientsService.getPatient(id, req.correlationId);
+  async getPatient(
+    @Req() req: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: { userId: number; hospitalId: number },
+  ) {
+    return this.patientsService.getPatient(id, user.hospitalId, req.correlationId);
   }
 }

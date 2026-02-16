@@ -8,6 +8,8 @@ import { Job } from 'bullmq';
 import { EventsService } from '../../events/events.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
+const IMMEDIATE_DISPATCH_GRACE_MS = 10_000;
+
 @Processor('events')
 export class EventsProcessor extends WorkerHost {
   private readonly logger = new Logger(EventsProcessor.name);
@@ -74,8 +76,12 @@ export class EventsProcessor extends WorkerHost {
     this.logger.debug('Polling for unprocessed events');
 
     try {
+      const fallbackCutoff = new Date(Date.now() - IMMEDIATE_DISPATCH_GRACE_MS);
       const events = await this.prisma.encounterEvent.findMany({
-        where: { processedAt: null },
+        where: {
+          processedAt: null,
+          createdAt: { lt: fallbackCutoff },
+        },
         orderBy: { createdAt: 'asc' },
         take: 50,
       });
@@ -99,8 +105,12 @@ export class EventsProcessor extends WorkerHost {
 
       for (const event of events) {
         try {
-          this.events.dispatchEncounterEvent(event);
-          successCount++;
+          const dispatched = await this.events.dispatchEncounterEventAndMarkProcessed(event);
+          if (dispatched) {
+            successCount++;
+          } else {
+            failureCount++;
+          }
         } catch (error) {
           failureCount++;
           this.logger.error({
@@ -110,11 +120,6 @@ export class EventsProcessor extends WorkerHost {
           });
         }
       }
-
-      await this.prisma.encounterEvent.updateMany({
-        where: { id: { in: events.map((event) => event.id) } },
-        data: { processedAt: new Date() },
-      });
 
       this.logger.log({
         message: 'Event poll completed',
@@ -141,33 +146,10 @@ export class EventsProcessor extends WorkerHost {
     });
 
     try {
-      const event = await this.prisma.encounterEvent.findUnique({
-        where: { id: eventId },
-      });
-
-      if (!event) {
-        this.logger.warn({
-          message: 'Event not found for dispatch',
-          eventId,
-        });
-        return;
+      const dispatched = await this.events.dispatchEncounterEventById(eventId);
+      if (!dispatched) {
+        throw new Error(`Failed to dispatch event ${eventId}`);
       }
-
-      if (event.processedAt) {
-        this.logger.debug({
-          message: 'Event already processed, skipping',
-          eventId,
-          processedAt: event.processedAt,
-        });
-        return;
-      }
-
-      this.events.dispatchEncounterEvent(event);
-
-      await this.prisma.encounterEvent.update({
-        where: { id: event.id },
-        data: { processedAt: new Date() },
-      });
 
       this.logger.log({
         message: 'Event dispatched and marked as processed',

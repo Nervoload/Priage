@@ -15,7 +15,7 @@ export class HospitalsService {
   ) {}
 
   async getHospital(id: number, correlationId?: string) {
-    await this.loggingService.debug('Fetching hospital details', {
+    this.loggingService.debug('Fetching hospital details', {
       service: 'HospitalsService',
       operation: 'getHospital',
       correlationId,
@@ -38,7 +38,7 @@ export class HospitalsService {
     });
 
     if (!hospital) {
-      await this.loggingService.warn('Hospital not found', {
+      this.loggingService.warn('Hospital not found', {
         service: 'HospitalsService',
         operation: 'getHospital',
         correlationId,
@@ -47,7 +47,7 @@ export class HospitalsService {
       throw new NotFoundException(`Hospital ${id} not found`);
     }
 
-    await this.loggingService.debug('Hospital details fetched', {
+    this.loggingService.debug('Hospital details fetched', {
       service: 'HospitalsService',
       operation: 'getHospital',
       correlationId,
@@ -61,7 +61,7 @@ export class HospitalsService {
   }
 
   async getDashboard(hospitalId: number, correlationId?: string) {
-    await this.loggingService.info('Fetching hospital dashboard', {
+    this.loggingService.info('Fetching hospital dashboard', {
       service: 'HospitalsService',
       operation: 'getDashboard',
       correlationId,
@@ -125,7 +125,7 @@ export class HospitalsService {
       }, {} as Record<string, number>),
     };
 
-    await this.loggingService.info('Hospital dashboard fetched', {
+    this.loggingService.info('Hospital dashboard fetched', {
       service: 'HospitalsService',
       operation: 'getDashboard',
       correlationId,
@@ -141,7 +141,7 @@ export class HospitalsService {
   }
 
   async getQueueStatus(hospitalId: number, correlationId?: string) {
-    await this.loggingService.info('Fetching hospital queue status', {
+    this.loggingService.info('Fetching hospital queue status', {
       service: 'HospitalsService',
       operation: 'getQueueStatus',
       correlationId,
@@ -191,7 +191,7 @@ export class HospitalsService {
       encounters,
     };
 
-    await this.loggingService.info('Hospital queue status fetched', {
+    this.loggingService.info('Hospital queue status fetched', {
       service: 'HospitalsService',
       operation: 'getQueueStatus',
       correlationId,

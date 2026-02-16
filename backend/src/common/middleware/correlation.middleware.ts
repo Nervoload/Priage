@@ -5,11 +5,16 @@ import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 
-// Extend Express Request type to include correlationId
+// Extend Express Request type to include correlationId and patientUser
 declare global {
   namespace Express {
     interface Request {
       correlationId: string;
+      patientUser?: {
+        patientId: number;
+        sessionId: number;
+        encounterId: number | null;
+      };
     }
   }
 }

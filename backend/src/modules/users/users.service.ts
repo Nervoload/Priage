@@ -15,7 +15,7 @@ export class UsersService {
   ) {}
 
   async getUsers(hospitalId: number, role?: Role, correlationId?: string) {
-    await this.loggingService.debug('Fetching hospital users', {
+    this.loggingService.debug('Fetching hospital users', {
       service: 'UsersService',
       operation: 'getUsers',
       correlationId,
@@ -42,7 +42,7 @@ export class UsersService {
       orderBy: { createdAt: 'desc' },
     });
 
-    await this.loggingService.debug('Hospital users fetched', {
+    this.loggingService.debug('Hospital users fetched', {
       service: 'UsersService',
       operation: 'getUsers',
       correlationId,
@@ -56,7 +56,7 @@ export class UsersService {
   }
 
   async getUser(id: number, correlationId?: string) {
-    await this.loggingService.debug('Fetching user by ID', {
+    this.loggingService.debug('Fetching user by ID', {
       service: 'UsersService',
       operation: 'getUser',
       correlationId,
@@ -81,7 +81,7 @@ export class UsersService {
     });
 
     if (!user) {
-      await this.loggingService.warn('User not found', {
+      this.loggingService.warn('User not found', {
         service: 'UsersService',
         operation: 'getUser',
         correlationId,
@@ -90,7 +90,7 @@ export class UsersService {
       throw new NotFoundException(`User ${id} not found`);
     }
 
-    await this.loggingService.debug('User fetched successfully', {
+    this.loggingService.debug('User fetched successfully', {
       service: 'UsersService',
       operation: 'getUser',
       correlationId,
@@ -104,7 +104,7 @@ export class UsersService {
   }
 
   async getUsersByHospital(hospitalId: number, correlationId?: string) {
-    await this.loggingService.debug('Fetching users by hospital', {
+    this.loggingService.debug('Fetching users by hospital', {
       service: 'UsersService',
       operation: 'getUsersByHospital',
       correlationId,
@@ -122,7 +122,7 @@ export class UsersService {
       orderBy: { role: 'asc' },
     });
 
-    await this.loggingService.debug('Users by hospital fetched', {
+    this.loggingService.debug('Users by hospital fetched', {
       service: 'UsersService',
       operation: 'getUsersByHospital',
       correlationId,

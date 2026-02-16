@@ -34,7 +34,7 @@ export class JobsService implements OnModuleInit {
         },
       );
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Event polling job configured',
         {
           service: 'JobsService',
@@ -58,7 +58,7 @@ export class JobsService implements OnModuleInit {
         },
       );
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'Triage reassessment job configured',
         {
           service: 'JobsService',
@@ -71,7 +71,7 @@ export class JobsService implements OnModuleInit {
         },
       );
 
-      await this.loggingService.info(
+      this.loggingService.info(
         'All recurring jobs configured successfully',
         {
           service: 'JobsService',
@@ -80,7 +80,7 @@ export class JobsService implements OnModuleInit {
         },
       );
     } catch (error) {
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to configure recurring jobs',
         {
           service: 'JobsService',
@@ -94,7 +94,7 @@ export class JobsService implements OnModuleInit {
   }
 
   async enqueueEventProcessing(eventId: number) {
-    await this.loggingService.info(
+    this.loggingService.info(
       'Enqueuing event for processing',
       {
         service: 'JobsService',
@@ -109,7 +109,7 @@ export class JobsService implements OnModuleInit {
     try {
       await this.eventsQueue.add('dispatch-event', { eventId });
       
-      await this.loggingService.info(
+      this.loggingService.info(
         'Event enqueued successfully',
         {
           service: 'JobsService',
@@ -121,7 +121,7 @@ export class JobsService implements OnModuleInit {
         },
       );
     } catch (error) {
-      await this.loggingService.error(
+      this.loggingService.error(
         'Failed to enqueue event processing',
         {
           service: 'JobsService',

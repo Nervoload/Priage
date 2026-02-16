@@ -18,7 +18,14 @@ import type { Server, Socket } from 'socket.io';
 
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { RealtimeEvents } from './realtime.events';
+import {
+  AlertAcknowledgedPayload,
+  AlertCreatedPayload,
+  AlertResolvedPayload,
+  EncounterUpdatedPayload,
+  MessageCreatedPayload,
+  RealtimeEvents,
+} from './realtime.events';
 import { encounterRoomKey, hospitalRoomKey } from './realtime.rooms';
 
 type StaffSocketClaims = {
@@ -78,7 +85,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       remoteAddress: client.handshake.address,
     });
     
-    await this.loggingService.info('New WebSocket connection attempt', {
+    this.loggingService.info('New WebSocket connection attempt', {
       service: 'RealtimeGateway',
       operation: 'handleConnection',
     }, {
@@ -94,7 +101,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           clientId,
         });
         
-        await this.loggingService.warn('Connection rejected - no authentication token', {
+        this.loggingService.warn('Connection rejected - no authentication token', {
           service: 'RealtimeGateway',
           operation: 'handleConnection',
         }, {
@@ -105,7 +112,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         return;
       }
 
-      const secret = process.env.JWT_SECRET ?? 'dev-secret';
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        this.loggingService.error('Connection rejected - JWT_SECRET is not configured', {
+          service: 'RealtimeGateway',
+          operation: 'handleConnection',
+        }, new Error('JWT_SECRET environment variable is required'), {
+          clientId,
+        });
+        client.disconnect();
+        return;
+      }
 
       let claims: StaffSocketClaims;
       try {
@@ -117,7 +134,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           error: jwtError instanceof Error ? jwtError.message : String(jwtError),
         });
         
-        await this.loggingService.warn('Connection rejected - invalid JWT token', {
+        this.loggingService.warn('Connection rejected - invalid JWT token', {
           service: 'RealtimeGateway',
           operation: 'handleConnection',
         }, {
@@ -136,7 +153,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           claims,
         });
         
-        await this.loggingService.warn('Connection rejected - invalid token claims', {
+        this.loggingService.warn('Connection rejected - invalid token claims', {
           service: 'RealtimeGateway',
           operation: 'handleConnection',
         }, {
@@ -150,31 +167,57 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         return;
       }
 
-      client.data.user = claims;
+      const user = await this.prisma.user.findUnique({
+        where: { id: claims.userId },
+        select: { id: true, hospitalId: true, role: true },
+      });
+
+      if (!user || user.hospitalId !== claims.hospitalId) {
+        this.loggingService.warn('Connection rejected - token claims do not match current user state', {
+          service: 'RealtimeGateway',
+          operation: 'handleConnection',
+        }, {
+          clientId,
+          tokenUserId: claims.userId,
+          tokenHospitalId: claims.hospitalId,
+          userFound: !!user,
+          actualHospitalId: user?.hospitalId,
+        });
+        client.disconnect();
+        return;
+      }
+
+      const trustedClaims: StaffSocketClaims = {
+        userId: user.id,
+        hospitalId: user.hospitalId,
+        role: user.role,
+      };
+
+      client.data.user = trustedClaims;
       this.connectedClients.set(clientId, {
-        userId: claims.userId,
-        hospitalId: claims.hospitalId,
+        userId: user.id,
+        hospitalId: user.hospitalId,
         connectedAt: new Date(),
       });
 
-      await client.join(hospitalRoomKey(claims.hospitalId));
+      await client.join(hospitalRoomKey(user.hospitalId));
       
       this.logger.log({
         message: 'Client joined hospital room',
         clientId,
-        userId: claims.userId,
-        hospitalId: claims.hospitalId,
-        role: claims.role,
+        userId: user.id,
+        hospitalId: user.hospitalId,
+        role: user.role,
       });
       
-      await this.loggingService.info('Client joined hospital room', {
+      this.loggingService.info('Client joined hospital room', {
         service: 'RealtimeGateway',
         operation: 'handleConnection',
-        userId: claims.userId,
-        hospitalId: claims.hospitalId,
+        userId: user.id,
+        hospitalId: user.hospitalId,
       }, {
         clientId,
-        role: claims.role,
+        role: user.role,
       });
 
       const requestedEncounterIds = this.getEncounterIdsFromHandshake(client);
@@ -183,7 +226,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           const encounters = await this.prisma.encounter.findMany({
             where: {
               id: { in: requestedEncounterIds },
-              hospitalId: claims.hospitalId,
+              hospitalId: user.hospitalId,
             },
             select: { id: true },
           });
@@ -195,17 +238,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           this.logger.log({
             message: 'Client subscribed to encounter rooms',
             clientId,
-            userId: claims.userId,
+            userId: user.id,
             requestedCount: requestedEncounterIds.length,
             subscribedCount: encounters.length,
             encounterIds: encounters.map(e => e.id),
           });
           
-          await this.loggingService.info('Client subscribed to encounter rooms', {
+          this.loggingService.info('Client subscribed to encounter rooms', {
             service: 'RealtimeGateway',
             operation: 'handleConnection',
-            userId: claims.userId,
-            hospitalId: claims.hospitalId,
+            userId: user.id,
+            hospitalId: user.hospitalId,
           }, {
             clientId,
             requestedCount: requestedEncounterIds.length,
@@ -216,17 +259,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           this.logger.error({
             message: 'Failed to subscribe to encounter rooms',
             clientId,
-            userId: claims.userId,
+            userId: user.id,
             requestedEncounterIds,
             error: dbError instanceof Error ? dbError.message : String(dbError),
             stack: dbError instanceof Error ? dbError.stack : undefined,
           });
           
-          await this.loggingService.error('Failed to subscribe to encounter rooms', {
+          this.loggingService.error('Failed to subscribe to encounter rooms', {
             service: 'RealtimeGateway',
             operation: 'handleConnection',
-            userId: claims.userId,
-            hospitalId: claims.hospitalId,
+            userId: user.id,
+            hospitalId: user.hospitalId,
           }, dbError instanceof Error ? dbError : undefined, {
             clientId,
             requestedEncounterIds,
@@ -238,16 +281,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       this.logger.log({
         message: 'WebSocket connection established successfully',
         clientId,
-        userId: claims.userId,
-        hospitalId: claims.hospitalId,
+        userId: user.id,
+        hospitalId: user.hospitalId,
         totalConnections: this.connectedClients.size,
       });
       
-      await this.loggingService.info('WebSocket connection established successfully', {
+      this.loggingService.info('WebSocket connection established successfully', {
         service: 'RealtimeGateway',
         operation: 'handleConnection',
-        userId: claims.userId,
-        hospitalId: claims.hospitalId,
+        userId: user.id,
+        hospitalId: user.hospitalId,
       }, {
         clientId,
         totalConnections: this.connectedClients.size,
@@ -260,7 +303,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         stack: error instanceof Error ? error.stack : undefined,
       });
       
-      await this.loggingService.error('Unexpected error during WebSocket connection', {
+      this.loggingService.error('Unexpected error during WebSocket connection', {
         service: 'RealtimeGateway',
         operation: 'handleConnection',
       }, error instanceof Error ? error : undefined, {
@@ -314,7 +357,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitEncounterUpdated(hospitalId: number, encounterId: number, payload: unknown): void {
+  emitEncounterUpdated(hospitalId: number, encounterId: number, payload: EncounterUpdatedPayload): void {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
@@ -355,7 +398,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitMessageCreated(hospitalId: number, encounterId: number, payload: unknown): void {
+  emitMessageCreated(hospitalId: number, encounterId: number, payload: MessageCreatedPayload): void {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
@@ -378,7 +421,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitAlertCreated(hospitalId: number, encounterId: number, payload: unknown): void {
+  emitAlertCreated(hospitalId: number, encounterId: number, payload: AlertCreatedPayload): void {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
@@ -401,7 +444,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitAlertAcknowledged(hospitalId: number, encounterId: number, payload: unknown): void {
+  emitAlertAcknowledged(hospitalId: number, encounterId: number, payload: AlertAcknowledgedPayload): void {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
@@ -424,7 +467,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitAlertResolved(hospitalId: number, encounterId: number, payload: unknown): void {
+  emitAlertResolved(hospitalId: number, encounterId: number, payload: AlertResolvedPayload): void {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);

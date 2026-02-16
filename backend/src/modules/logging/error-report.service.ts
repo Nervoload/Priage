@@ -37,7 +37,7 @@ export class ErrorReportService {
       correlationId,
     });
 
-    const logs = await this.loggingService.getLogsByCorrelationId(correlationId);
+    const logs = this.loggingService.getLogsByCorrelationId(correlationId);
 
     if (logs.length === 0) {
       throw new Error(`No logs found for correlation ID: ${correlationId}`);

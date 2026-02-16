@@ -4,6 +4,7 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -17,14 +18,17 @@ export class AssetsController {
 
   @Post()
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async create(@Body() dto: CreateAssetDto) {
-    return this.assetsService.createAsset(dto);
+  async create(@Body() dto: CreateAssetDto, @CurrentUser() user: { hospitalId: number }) {
+    return this.assetsService.createAsset(dto, user.hospitalId);
   }
 
   @Get('encounters/:encounterId')
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
-  async listForEncounter(@Param('encounterId', ParseIntPipe) encounterId: number) {
-    return this.assetsService.listAssets(encounterId);
+  async listForEncounter(
+    @Param('encounterId', ParseIntPipe) encounterId: number,
+    @CurrentUser() user: { hospitalId: number },
+  ) {
+    return this.assetsService.listAssets(encounterId, user.hospitalId);
   }
 
   @Post(':id/upload')
