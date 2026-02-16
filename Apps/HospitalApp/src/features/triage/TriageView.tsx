@@ -5,6 +5,8 @@ import { useState } from 'react';
 import type { Encounter } from '../../app/HospitalApp';
 import { patientName } from '../../app/HospitalApp';
 import { TriagePopup } from '../admit/TriagePopup';
+import { moveToWaiting } from '../../shared/api/encounters';
+import { useToast } from '../../shared/ui/ToastContext';
 
 interface TriageViewProps {
   onBack?: () => void;
@@ -16,21 +18,31 @@ interface TriageViewProps {
 
 export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh }: TriageViewProps) {
   const [selectedEncounter, setSelectedEncounter] = useState<Encounter | null>(null);
+  const { showToast } = useToast();
   const getInitials = (name: string): string => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
   const getPriority = (encounter: Encounter): { label: string; color: string } => {
-    const complaint = (encounter.chiefComplaint ?? '').toLowerCase();
-    if (complaint.includes('critical') || complaint.includes('chest pain') ||
-      complaint.includes('difficulty breathing') || complaint.includes('shortness of breath')) {
-      return { label: 'CRITICAL', color: '#ef4444' };
+    const ctas = encounter.currentCtasLevel;
+    if (ctas === 1) return { label: 'CRITICAL', color: '#ef4444' };
+    if (ctas === 2) return { label: 'HIGH', color: '#f97316' };
+    if (ctas === 3) return { label: 'MEDIUM', color: '#eab308' };
+    if (ctas === 4) return { label: 'LOW', color: '#3b82f6' };
+    if (ctas === 5) return { label: 'LOW', color: '#6b7280' };
+    return { label: 'UNASSESSED', color: '#9ca3af' };
+  };
+
+  const handleMoveToWaiting = async (encounter: Encounter) => {
+    try {
+      await moveToWaiting(encounter.id);
+      showToast(`${encounter.patient.firstName ?? 'Patient'} moved to waiting`, 'success');
+      setSelectedEncounter(null);
+      onRefresh?.();
+    } catch (err) {
+      console.error('[TriageView] Failed to move to waiting:', err);
+      showToast('Failed to move patient to waiting. Please try again.', 'error');
     }
-    if (complaint.includes('severe') || complaint.includes('high fever') ||
-      complaint.includes('high')) {
-      return { label: 'HIGH', color: '#f97316' };
-    }
-    return { label: 'MEDIUM', color: '#eab308' };
   };
 
   return (
@@ -270,6 +282,7 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh 
         <TriagePopup
           encounter={selectedEncounter}
           onClose={() => setSelectedEncounter(null)}
+          onAdmit={handleMoveToWaiting}
         />
       )}
 

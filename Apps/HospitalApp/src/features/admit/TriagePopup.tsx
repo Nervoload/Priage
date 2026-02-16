@@ -269,6 +269,10 @@ export function TriagePopup({ encounter, assessment: initialAssessment, onClose,
                                 <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>O₂ Saturation</div>
                                 <div style={valueStyle}>{vitals.oxygenSaturation ?? '—'}<span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>%</span></div>
                             </div>
+                            <div style={cardStyle}>
+                                <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Resp Rate</div>
+                                <div style={valueStyle}>{vitals.respiratoryRate ?? '—'} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: '#9ca3af' }}>/min</span></div>
+                            </div>
                         </div>
                         )}
                     </div>
@@ -328,9 +332,10 @@ export function TriagePopup({ encounter, assessment: initialAssessment, onClose,
                         borderRadius: '0 0 16px 16px',
                     }}
                 >
+                    {onAdmit && (
                     <button
                         onClick={() => {
-                            onAdmit?.(encounter);
+                            onAdmit(encounter);
                         }}
                         style={{
                             width: '100%',
@@ -357,8 +362,13 @@ export function TriagePopup({ encounter, assessment: initialAssessment, onClose,
                             e.currentTarget.style.transform = 'scale(1)';
                         }}
                     >
-                        {encounter.status === 'EXPECTED' ? 'Confirm Arrival' : 'Start Triage'}
+                        {encounter.status === 'EXPECTED' ? 'Confirm Arrival'
+                          : encounter.status === 'ADMITTED' ? 'Start Triage'
+                          : encounter.status === 'TRIAGE' ? 'Move to Waiting'
+                          : encounter.status === 'WAITING' ? 'Discharge'
+                          : 'Update'}
                     </button>
+                    )}
                 </div>
             </div>
 
