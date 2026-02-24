@@ -7,11 +7,12 @@ Priage enables communication between patients and ER staff, allowing for updates
 
 # OUTLINE:
 **This is a comprehensive README, with both the value proposition for the competition, and the software architecture. For developers, scroll down to the development half of this document.**
-
-## 1) Our mission
-## 2) Development
+- 1) Our mission
+- 2) Development
 
 ---
+
+## Our Mission
 
 **Our healthcare system is bursting at the seems: overloaded testing infrastructure, family doctor shortages, deep dissatisfaction, culminating to Canadians dying in the waiting room.**
 
@@ -23,12 +24,12 @@ Further, while research focus grows on prevention, **5.9 million Canadians lack 
 
 **It is clear that this is a social, and systemic problem. We allow the slow-adapting public system to fall further behind immediate, modern needs. It is time that we force against this inertia towards a healthcare system that works with patients, and enables hospitals to provide more care with less. **
 
-## Presenting Priage 
+### Presenting Priage 
 
 Priage is our platform to address the patient traffic and support for Hospitals. We want to build the infrastructure for managing patients before treatment: from starting their encounters from their phones, wherever they are. Priage is intent to create better access to information where previously overlooked. 
 
 Our core value proposition:
-### 1) Priage. To manage patient traffic, and identify where patients need and can go to for treatment
+#### 1) Priage. To manage patient traffic, and identify where patients need and can go to for treatment
 
 We are prioritizing true emergencies, to reduce unnecessary burden on the care network. We are evaluating severity before triage: Pre-Triage.
 
@@ -38,7 +39,7 @@ Some patients are simply concerned about their health, and are not educated abou
 
 Thus, we also will manage the routing to the alternative treatment resources. With a network of hospitals and clinics, we can access live wait times and patient load data, which is currently inaccessible at scale without partnerships. We can reallocate concerned patients who do not have emergency cases to treatment resources with better fit. 
 
-### 2) To support hospitals by accelerating patient processing
+#### 2) To support hospitals by accelerating patient processing
 
 For hospital to provider more and easier, we want to enable the most efficient transfer of information. By helping hospitals, we help patients get the care they need.
 
@@ -54,6 +55,7 @@ We also want to give patients care-provider approved readings, summaries of thei
 
 # Development 
 
+## Architecture:
 We are building a modular platform for Hospitals, Clinics and Patients. We want to build a prototype to present to Hospitals, and so we need to build the basic architecture which will be the foundation for scaling in the future. We are going to build the following:
 
 1) The backend infrastructure to transfer patient profile data across the pipeline, send live notifications, and queue jobs for real-time updates. 
