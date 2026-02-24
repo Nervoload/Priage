@@ -5,6 +5,53 @@ Priage improves the emergency room experience for hospitals and patients. Throug
 
 Priage enables communication between patients and ER staff, allowing for updates directly from the waiting room. The medical team can view the condition, health status, messages and more for all patients. 
 
+# OUTLINE:
+**This is a comprehensive README, with both the value proposition for the competition, and the software architecture. For developers, scroll down to the development half of this document.**
+
+## 1) Our mission
+## 2) Development
+
+---
+
+**Our healthcare system is bursting at the seems: overloaded testing infrastructure, family doctor shortages, deep dissatisfaction, culminating to Canadians dying in the waiting room.**
+
+**This is unacceptable.** Though, pointing fingers and shifting responsibility is not how we solve problems. Our healthcare system is riddled with inefficiency, neglect, and overworked staff—this is a deeply intrenched issue laden by conflicting interests, incentives and agendas. We want to challenge the system, and provide better ways to manage incoming traffic.
+
+**1 in 7 of ~15 million visits to the ER could be managed by primary care. That’s 15% excess burden on Hospitals** who spent those resources, especially the time, on non-severe cases. That’s 2 million extra people where our hospitals could have been otherwise devoting their time to saving lives. Additionally, 1.2 million people leave the waiting room without being seen (in 2024). While many of those people could have be in a non-life-threatening emergency, others might leave prematurely; walk-outs may have a progressing condition, an oversight that could cost them their life.
+
+Further, while research focus grows on prevention, **5.9 million Canadians lack a primary care provider**. Individuals who may have high-risk profiles cannot access the support they need. Symptoms that may be indicative of late stage disease (such as cancer, coronary artery disease, and even diabetes) can be passed off as insignificant. While the majority of Canadians do have access to the primary care network, there is consensus that Canadians are unsatisfied. Long wait times, unaccommodating services, and poor understanding of their condition. Many Canadians seek help, and understanding, though they are left concerned and conflicted about their health. 
+
+**It is clear that this is a social, and systemic problem. We allow the slow-adapting public system to fall further behind immediate, modern needs. It is time that we force against this inertia towards a healthcare system that works with patients, and enables hospitals to provide more care with less. **
+
+## Presenting Priage 
+
+Priage is our platform to address the patient traffic and support for Hospitals. We want to build the infrastructure for managing patients before treatment: from starting their encounters from their phones, wherever they are. Priage is intent to create better access to information where previously overlooked. 
+
+Our core value proposition:
+### 1) Priage. To manage patient traffic, and identify where patients need and can go to for treatment
+
+We are prioritizing true emergencies, to reduce unnecessary burden on the care network. We are evaluating severity before triage: Pre-Triage.
+
+Some patients are simply concerned about their health, and are not educated about medicine. They do not understand how to recognize potential life-threatening signs or symptoms. A purple spot under the skins could be a simple bruise. It could also be internal bleeding. It could very well be flesh-eating bacteria. This is an education problem. We need to be able to make fast decisions, and give the understanding to patients that quell their fears.
+
+**Priage will leverage performant AI Vision models**, which are capable of recognizing pathological features to 99% accuracy, crushing human performance in few-shot analysis. Priage in fact, it solving an easier problem. We are not trying to replace doctors or triage staff: we are trying to help make the decisions for patients on whether they should go to the emergency room. It is a layer where we can accelerate patient inflow for those who need it, and course-correction for cases better solved by primary care, or clinics other than the emergency room.  
+
+Thus, we also will manage the routing to the alternative treatment resources. With a network of hospitals and clinics, we can access live wait times and patient load data, which is currently inaccessible at scale without partnerships. We can reallocate concerned patients who do not have emergency cases to treatment resources with better fit. 
+
+### 2) To support hospitals by accelerating patient processing
+
+For hospital to provider more and easier, we want to enable the most efficient transfer of information. By helping hospitals, we help patients get the care they need.
+
+**We will not allow for anyone to die in the waiting room.** We want to supercharge hospital staff by allowing for live monitoring of any patient in their waiting room, through their personal devices. Everyone has phones, this is no secret. Approximately 95% of Canadian adults own a smartphone as of 2025, with ownership being near-universal across most age demographics. Data from early 2025 shows 41.6 million active cellular mobile connections in Canada, equivalent to 104% of the total population, indicating that many people own more than one device or have multiple plans. 
+
+Patients should be able to interface with their waiting room staff: To send requests if they have any problems, or especially progressing symptoms. Care providers should also be able to interface with their patients, so that they can be aware of any potential high-risk cases. Priage as a platform enables this line of communication, where patients can communicate with their providers directly. 
+
+Waiting Room staff can view a dashboard of all the patients in the waiting room, where they can access necessary information about the patient. We may also enable remote waiting rooms, so that pathogens can’t spread in crowded rooms. To reduce the overhead, we leverage LLMs and hard-coded software to summarize and prioritize messages, so that if a severe alert is hidden amongst dozens of patients, it is ensured to reach the care team. 
+
+We also want to give patients care-provider approved readings, summaries of their treatment, and information about concerns during their encounter and after they are seen by medical staff. We can provide that satisfaction of knowing you are not in danger by answering questions and detailed explanations to patients as they leave the hospital. By taking the burden of lossy explanations from the medical staff, patients don’t receive over-simplified reasons for their symptoms.
+
+---
+
 # Development 
 
 We are building a modular platform for Hospitals, Clinics and Patients. We want to build a prototype to present to Hospitals, and so we need to build the basic architecture which will be the foundation for scaling in the future. We are going to build the following:
