@@ -22,7 +22,7 @@ Priage enables communication between patients and ER staff, allowing for updates
 
 Further, while research focus grows on prevention, **5.9 million Canadians lack a primary care provider**. Individuals who may have high-risk profiles cannot access the support they need. Symptoms that may be indicative of late stage disease (such as cancer, coronary artery disease, and even diabetes) can be passed off as insignificant. While the majority of Canadians do have access to the primary care network, there is consensus that Canadians are unsatisfied. Long wait times, unaccommodating services, and poor understanding of their condition. Many Canadians seek help, and understanding, though they are left concerned and conflicted about their health. 
 
-**It is clear that this is a social, and systemic problem. We allow the slow-adapting public system to fall further behind immediate, modern needs. It is time that we force against this inertia towards a healthcare system that works with patients, and enables hospitals to provide more care with less. **
+**It is clear that this is a social, and systemic problem. We allow the slow-adapting public system to fall further behind immediate, modern needs. It is time that we force against this inertia towards a healthcare system that works with patients, and enables hospitals to provide more care with less.**
 
 ### Presenting Priage 
 
