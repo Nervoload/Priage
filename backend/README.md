@@ -82,7 +82,7 @@ backend/
 ├── scripts/
 │   ├── smoke-test-v2.js   # Comprehensive E2E tests
 │   ├── test-logging.js    # Logging system tests
-│   └── test-auth.js       # Auth validation
+│   └── seed.js            # Local seed data
 ├── docs/                  # Documentation
 └── package.json
 ```

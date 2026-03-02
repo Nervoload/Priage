@@ -80,55 +80,42 @@ npm run test:logging:setup
 
 ---
 
-### 3. Authentication Test
-**File**: `scripts/test-auth.js`
+### 3. Frontend Flow E2E Test
+**File**: `scripts/e2e-frontend-flows.js`
 
-Quick authentication validation.
+Backend-driven flow validation for the Hospital App.
 
 ```bash
-node scripts/test-auth.js
+node scripts/e2e-frontend-flows.js --seed --verbose
 ```
 
 **What it tests**:
-- ✅ Login with test user
-- ✅ Token generation
-- ✅ Protected route access
-- ✅ Authorization checks
+- ✅ Login flow
+- ✅ Encounter creation and transitions
+- ✅ Triage form submission
+- ✅ Waiting room API flow
 
 **When to use**:
-- Quick auth validation
-- Debugging authentication issues
-- Testing JWT configuration
-
----
-
-### 4. Legacy Smoke Test
-**File**: `scripts/smoke-test.js`
-
-Original smoke test (use smoke-test-v2.js instead).
-
-```bash
-node scripts/smoke-test.js
-```
-
-**Status**: Legacy - use `smoke-test-v2.js` for comprehensive testing
+- Validating backend support for the Hospital App
+- Reproducing end-to-end UI workflows without opening the browser
+- Regression testing after API changes
 
 ---
 
 ## Test Comparison Matrix
 
-| Feature | Smoke Test v2 | Logging Test | Auth Test | Legacy Smoke |
-|---------|--------------|--------------|-----------|--------------|
-| **Authentication** | ✅ | ✅ | ✅ | ✅ |
-| **Patient Intake** | ✅ | ❌ | ❌ | ⚠️ |
-| **Encounters** | ✅ | ✅ | ❌ | ✅ |
-| **Triage** | ✅ | ❌ | ❌ | ❌ |
-| **Messaging** | ✅ | ❌ | ❌ | ❌ |
-| **Alerts** | ✅ | ❌ | ❌ | ❌ |
-| **Logging** | ⚠️ | ✅ | ❌ | ❌ |
-| **CLI Options** | ✅ | ✅ | ❌ | ❌ |
-| **Selective Testing** | ✅ | ✅ | ❌ | ❌ |
-| **Documentation** | ✅ | ✅ | ❌ | ❌ |
+| Feature | Smoke Test v2 | Logging Test | Frontend Flow E2E |
+|---------|--------------|--------------|-------------------|
+| **Authentication** | ✅ | ✅ | ✅ |
+| **Patient Intake** | ✅ | ❌ | ⚠️ |
+| **Encounters** | ✅ | ✅ | ✅ |
+| **Triage** | ✅ | ❌ | ✅ |
+| **Messaging** | ✅ | ❌ | ❌ |
+| **Alerts** | ✅ | ❌ | ❌ |
+| **Logging** | ⚠️ | ✅ | ❌ |
+| **CLI Options** | ✅ | ✅ | ✅ |
+| **Selective Testing** | ✅ | ✅ | ❌ |
+| **Documentation** | ✅ | ✅ | ❌ |
 
 Legend: ✅ Full support | ⚠️ Partial | ❌ Not supported
 
@@ -190,8 +177,8 @@ node scripts/smoke-test-v2.js -m -v
 # Run with verbose to see correlation IDs
 node scripts/smoke-test-v2.js -v
 
-# Then query logs with correlation ID
-SELECT * FROM logs WHERE correlation_id LIKE 'smoke-test-%';
+# Then query the logging API with the correlation ID
+curl "http://localhost:3000/logging/query?correlationId=smoke-test-example"
 ```
 
 ---
@@ -338,8 +325,8 @@ node scripts/smoke-test-v2.js -s -v
 # Test logging system
 npm run test:logging
 
-# Quick auth check
-node scripts/test-auth.js
+# Frontend flow check
+node scripts/e2e-frontend-flows.js --seed --verbose
 
 # Show help
 node scripts/smoke-test-v2.js --help

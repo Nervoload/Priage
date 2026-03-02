@@ -11,16 +11,17 @@ import { TriageView } from '../features/triage/TriageView';
 import { WaitingRoomView } from '../features/waitingroom/WaitingRoomView';
 import { listEncounters, startExam, confirmEncounter } from '../shared/api/encounters';
 import { ApiError } from '../shared/api/client';
-import { getSocket } from '../shared/realtime/socket';
+import { getSocket, sendMessageViaSocket } from '../shared/realtime/socket';
 import { useAlerts } from '../shared/api/useAlerts';
 import { AlertsBanner } from '../features/alerts/AlertsBanner';
+import { listMessages } from '../shared/api/messaging';
 
 // Re-export domain types so existing component imports keep working
 export type { PatientSummary as Patient, ChatMessage, Encounter } from '../shared/types/domain';
 export { patientName } from '../shared/types/domain';
 
-import type { Encounter, ChatMessage, EncounterStatus } from '../shared/types/domain';
-import { RealtimeEvents } from '../shared/types/domain';
+import type { Encounter, ChatMessage, EncounterStatus, Message } from '../shared/types/domain';
+import { RealtimeEvents, messageToChatMessage } from '../shared/types/domain';
 
 type View = 'admit' | 'triage' | 'waiting';
 
@@ -32,6 +33,7 @@ export function HospitalApp() {
   const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
   const [loadingEncounters, setLoadingEncounters] = useState(false);
   const isMounted = useRef(true);
+  const loadedMessageEncounters = useRef<Set<number>>(new Set());
 
   // ─── Alerts (derived + server) ────────────────────────────────────────────
 
@@ -42,11 +44,6 @@ export function HospitalApp() {
 
   // ─── Fetch encounters from backend ──────────────────────────────────────
 
-  // Phase 6.3: Currently fetches all encounters without server-side filtering.
-  // Once GET /patients supports query params (search, status, pagination),
-  // add a search input to the UI and call a new searchPatients() API function.
-  // The encounter list can remain as-is for the dashboard, but a dedicated
-  // patient search modal/page would use the new filtered endpoint.
   const ACTIVE_STATUSES: EncounterStatus[] = ['EXPECTED', 'ADMITTED', 'TRIAGE', 'WAITING'];
 
   const fetchEncounters = useCallback(async () => {
@@ -66,6 +63,35 @@ export function HospitalApp() {
     }
   }, [user, showToast]);
 
+  const upsertChatMessage = useCallback((message: Message) => {
+    const nextMessage = messageToChatMessage(message);
+    setChatMessages((prev) => {
+      const existing = prev[nextMessage.encounterId] || [];
+      if (existing.some((item) => item.id === nextMessage.id)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [nextMessage.encounterId]: [...existing, nextMessage],
+      };
+    });
+  }, []);
+
+  const fetchMessagesForEncounter = useCallback(async (encounterId: number) => {
+    try {
+      const res = await listMessages(encounterId, { limit: 200 });
+      loadedMessageEncounters.current.add(encounterId);
+      setChatMessages((prev) => ({
+        ...prev,
+        [encounterId]: res.data.map(messageToChatMessage),
+      }));
+    } catch (err) {
+      console.error(`[HospitalApp] Failed to fetch messages for encounter ${encounterId}:`, err);
+      if (err instanceof ApiError && err.status === 401) return;
+      showToast('Failed to load messages. Please try again.', 'error');
+    }
+  }, [showToast]);
+
   // Fetch on login and listen for real-time updates
   useEffect(() => {
     if (!user) return;
@@ -74,17 +100,30 @@ export function HospitalApp() {
     fetchEncounters();
 
     const socket = getSocket();
+    const handleConnect = () => {
+      void fetchEncounters();
+      for (const encounterId of loadedMessageEncounters.current) {
+        void fetchMessagesForEncounter(encounterId);
+      }
+    };
     const handleEncounterUpdate = () => {
-      fetchEncounters();
+      void fetchEncounters();
+    };
+    const handleMessageCreated = (payload: { encounterId: number }) => {
+      void fetchMessagesForEncounter(payload.encounterId);
     };
 
+    socket.on('connect', handleConnect);
     socket.on(RealtimeEvents.EncounterUpdated, handleEncounterUpdate);
+    socket.on(RealtimeEvents.MessageCreated, handleMessageCreated);
 
     return () => {
       isMounted.current = false;
+      socket.off('connect', handleConnect);
       socket.off(RealtimeEvents.EncounterUpdated, handleEncounterUpdate);
+      socket.off(RealtimeEvents.MessageCreated, handleMessageCreated);
     };
-  }, [user, fetchEncounters]);
+  }, [user, fetchEncounters, fetchMessagesForEncounter]);
 
   // ─── Show loading spinner while checking stored token ───────────────────
 
@@ -138,26 +177,16 @@ export function HospitalApp() {
     }
   };
 
-  // Send a chat message from admin to a patient (local state only)
-  // TODO: Replace with POST /messaging/encounters/:id/messages when messaging API service is created
-  // Phase 6.2: Replace this entire handler with a call to sendMessage() from
-  // shared/api/messaging.ts (already built). Then subscribe to 'message.created'
-  // Socket.IO events to update chatMessages state in real time. The messaging.ts
-  // API client and the backend WebSocket gateway are both ready — this handler
-  // just needs to be rewired.
-  const handleSendMessage = (encounterId: number, text: string) => {
-    const message: ChatMessage = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      encounterId,
-      sender: 'admin',
-      text,
-      timestamp: new Date().toISOString(),
-    };
-    setChatMessages(prev => ({
-      ...prev,
-      [encounterId]: [...(prev[encounterId] || []), message],
-    }));
-  };
+  const handleSendMessage = useCallback(async (encounterId: number, text: string) => {
+    try {
+      const created = await sendMessageViaSocket(encounterId, text);
+      upsertChatMessage(created);
+    } catch (err) {
+      console.error('[HospitalApp] Failed to send message:', err);
+      showToast('Failed to send message. Please try again.', 'error');
+      throw err;
+    }
+  }, [showToast, upsertChatMessage]);
 
   // Admittance shows EXPECTED and ADMITTED patients
   const admitEncounters = encounters.filter(
@@ -171,6 +200,15 @@ export function HospitalApp() {
   const waitingEncounters = encounters.filter(
     e => e.status === 'TRIAGE' || e.status === 'WAITING' || e.status === 'COMPLETE'
   );
+
+  useEffect(() => {
+    if (currentView !== 'waiting') return;
+    for (const encounter of waitingEncounters) {
+      if (!loadedMessageEncounters.current.has(encounter.id)) {
+        void fetchMessagesForEncounter(encounter.id);
+      }
+    }
+  }, [currentView, waitingEncounters, fetchMessagesForEncounter]);
 
   return (
     <>

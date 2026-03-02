@@ -1,12 +1,18 @@
 // backend/src/modules/logging/logging.controller.ts
 // REST endpoints for error reports and log queries
 
-import { Controller, Get, Param, Query, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Param, Query, NotFoundException, UseGuards } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { ErrorReportService } from './error-report.service';
 import { LoggingService } from './logging.service';
 import { LogLevel } from './types/log-entry.type';
 
 @Controller('logging')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.ADMIN)
 export class LoggingController {
   constructor(
     private readonly errorReportService: ErrorReportService,
@@ -15,7 +21,7 @@ export class LoggingController {
 
   /**
    * Generate error report for a correlation ID
-   * GET /api/logging/error-reports/generate?correlationId=xxx
+   * GET /logging/error-reports/generate?correlationId=xxx
    */
   @Get('error-reports/generate')
   async generateErrorReport(@Query('correlationId') correlationId: string) {
@@ -28,7 +34,7 @@ export class LoggingController {
 
   /**
    * Get existing error report by ID
-   * GET /api/logging/error-reports/:reportId
+   * GET /logging/error-reports/:reportId
    */
   @Get('error-reports/:reportId')
   async getErrorReport(@Param('reportId') reportId: string) {
@@ -43,7 +49,7 @@ export class LoggingController {
 
   /**
    * Export error report in full detail
-   * GET /api/logging/error-reports/:reportId/export
+   * GET /logging/error-reports/:reportId/export
    */
   @Get('error-reports/:reportId/export')
   async exportErrorReport(@Param('reportId') reportId: string) {
@@ -52,7 +58,7 @@ export class LoggingController {
 
   /**
    * Get all logs for a correlation ID
-   * GET /api/logging/correlation/:correlationId
+   * GET /logging/correlation/:correlationId
    */
   @Get('correlation/:correlationId')
   async getLogsByCorrelation(@Param('correlationId') correlationId: string) {
@@ -67,7 +73,7 @@ export class LoggingController {
 
   /**
    * Query logs with filters
-   * GET /api/logging/query?level=error&service=encounters
+   * GET /logging/query?level=error&service=encounters
    */
   @Get('query')
   async queryLogs(
@@ -95,7 +101,7 @@ export class LoggingController {
 
   /**
    * Get logging statistics
-   * GET /api/logging/stats
+   * GET /logging/stats
    */
   @Get('stats')
   async getStats() {

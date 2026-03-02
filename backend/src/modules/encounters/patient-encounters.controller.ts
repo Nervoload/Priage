@@ -61,7 +61,8 @@ export class PatientEncountersController {
     if (!patient.hospitalId) {
       return { position: 0, estimatedMinutes: 0, totalInQueue: 0 };
     }
-    return this.encountersService.getQueuePosition(
+    return this.encountersService.getQueuePositionForPatient(
+      patient.patientId,
       id,
       patient.hospitalId,
       req.correlationId,

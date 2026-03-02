@@ -8,7 +8,7 @@
 //
 // Written by: John Surette
 // Date Created: Jan 20 2026
-// Last Modified: Feb 2026 (updated for guarded endpoints)
+// Last Modified: Feb 15 2026 (updated for guarded endpoints)
 
 require('dotenv').config();
 
@@ -601,6 +601,83 @@ async function testEncounterManagement() {
       throw new Error('Expected { data: [...] } response');
     }
     logSuccess(`Listed ${encounters.data.length} encounter(s), total: ${encounters.total}`);
+
+    // 3A.1: List patients
+    logSubSection('3A.1: List Patients (GET /patients)');
+    const patients = await makeRequest('GET', '/patients', {
+      headers: staffAuth(testState.staffToken),
+    });
+    if (!patients.data || !Array.isArray(patients.data) || !patients.meta) {
+      throw new Error('Expected paginated patient response');
+    }
+    const listedPatient = patients.data.find((patient) => patient.id === testState.patient.id);
+    if (!listedPatient) {
+      throw new Error('Expected test patient in /patients response');
+    }
+    if (listedPatient.preferredLanguage !== 'en') {
+      throw new Error(`Expected preferredLanguage=en, got ${listedPatient.preferredLanguage}`);
+    }
+    logSuccess(`Listed ${patients.data.length} patient(s), total: ${patients.meta.total}`);
+
+    // 3A.2: Filter patients by status
+    logSubSection('3A.2: Filter Patients by Encounter Status');
+    const filteredPatients = await makeRequest('GET', '/patients?status=EXPECTED', {
+      headers: staffAuth(testState.staffToken),
+    });
+    if (!filteredPatients.data.some((patient) => patient.id === testState.patient.id || patient.id === testState.intakePatient?.id)) {
+      throw new Error('Expected at least one EXPECTED patient in filtered results');
+    }
+    logSuccess(`Filtered patients by status, ${filteredPatients.data.length} result(s)`);
+
+    // 3A.3: Hospital scoping
+    logSubSection('3A.3: Patient Results Are Hospital Scoped');
+    const hashedPassword = await bcrypt.hash(CONFIG.testPassword, 10);
+    const externalSuffix = randomUUID().slice(0, 8);
+    const externalHospital = await prisma.hospital.create({
+      data: { name: 'External Smoke Hospital', slug: `external-${externalSuffix}` },
+    });
+    const externalPatient = await prisma.patientProfile.create({
+      data: {
+        email: `external-patient-${externalSuffix}@test.com`,
+        password: hashedPassword,
+        firstName: 'External',
+        lastName: 'Patient',
+        preferredLanguage: 'fr',
+      },
+    });
+    await prisma.encounter.create({
+      data: {
+        hospitalId: externalHospital.id,
+        patientId: externalPatient.id,
+        chiefComplaint: 'External complaint',
+      },
+    });
+
+    const scopedPatients = await makeRequest('GET', '/patients', {
+      headers: staffAuth(testState.staffToken),
+    });
+    if (scopedPatients.data.some((patient) => patient.id === externalPatient.id)) {
+      throw new Error('Found patient from another hospital in results');
+    }
+    logSuccess('Patient results scoped to authenticated hospital');
+
+    await prisma.encounter.deleteMany({ where: { hospitalId: externalHospital.id, patientId: externalPatient.id } });
+    await prisma.patientProfile.delete({ where: { id: externalPatient.id } });
+    await prisma.hospital.delete({ where: { id: externalHospital.id } });
+
+    // 3A.4: Invalid query validation
+    logSubSection('3A.4: Reject Invalid Patient Query');
+    try {
+      await makeRequest('GET', '/patients?limit=0', {
+        headers: staffAuth(testState.staffToken),
+      });
+      throw new Error('Expected invalid patient query to fail');
+    } catch (error) {
+      if (!String(error.message).includes('400')) {
+        throw error;
+      }
+      logSuccess('Invalid patient query rejected with 400');
+    }
     
     // 3B: Get specific encounter
     logSubSection('3B: Get Encounter Details (GET /encounters/:id)');

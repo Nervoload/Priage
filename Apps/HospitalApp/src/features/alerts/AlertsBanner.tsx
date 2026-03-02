@@ -2,9 +2,9 @@
 // Floating alert banner that shows the top unacknowledged alerts.
 // Renders a collapsed badge by default; expands on click to show the list.
 //
-// Phase 6.1: This component is presentational — it receives alerts via props from
-// useAlerts. Once SSE is connected, alert data will flow in real time without
-// any changes needed here. The parent (HospitalApp) wires the data source.
+// This component is presentational — it receives alerts via props from
+// useAlerts. The parent (HospitalApp) hydrates via REST and applies live
+// Socket.IO updates without any transport logic in this component.
 
 import { useState } from 'react';
 import type { UnifiedAlert } from '../../shared/api/useAlerts';

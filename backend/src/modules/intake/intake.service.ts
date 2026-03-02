@@ -1,11 +1,18 @@
 // backend/src/modules/intake/intake.service.ts
 // Patient intake service.
 
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { EncounterStatus, EventType } from '@prisma/client';
 import Redis from 'ioredis';
 
+import { AssetsService } from '../assets/assets.service';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,6 +23,7 @@ import { LocationPingDto } from './dto/location-ping.dto';
 import { UpdateIntakeDetailsDto } from './dto/update-intake-details.dto';
 
 const LOCATION_TTL_SECONDS = 600; // 10 minutes
+const PATIENT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type LocationEntry = {
   latitude: number;
@@ -23,11 +31,25 @@ export type LocationEntry = {
   timestamp: string;
 };
 
+type SessionRecord = {
+  id: number;
+  patientId: number;
+  encounterId: number | null;
+  pendingChiefComplaint: string | null;
+  pendingDetails: string | null;
+  expiresAt: Date | null;
+  encounter: {
+    hospitalId: number;
+    status: EncounterStatus;
+  } | null;
+};
+
 @Injectable()
 export class IntakeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
+    private readonly assetsService: AssetsService,
     private readonly loggingService: LoggingService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
@@ -61,6 +83,7 @@ export class IntakeService {
       data: {
         token,
         patientId: patient.id,
+        expiresAt: new Date(Date.now() + PATIENT_SESSION_TTL_MS),
         pendingChiefComplaint: dto.chiefComplaint,
         pendingDetails: dto.details,
       },
@@ -97,50 +120,86 @@ export class IntakeService {
   }
 
   private async confirmWithSession(
-    session: { id: number; patientId: number; encounterId: number | null; pendingChiefComplaint: string | null; pendingDetails: string | null },
+    session: SessionRecord,
     dto: ConfirmIntentDto,
     correlationId?: string,
   ) {
-
     const hospitalId = await this.resolveHospitalId(dto);
+    const { encounter, event } = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        SELECT 1
+        FROM "PatientSession"
+        WHERE "id" = ${session.id}
+        FOR UPDATE
+      `;
 
-    if (session.encounterId) {
-      const existingEncounter = await this.prisma.encounter.findUnique({
-        where: { id: session.encounterId },
+      const lockedSession = await tx.patientSession.findUnique({
+        where: { id: session.id },
+        include: {
+          encounter: {
+            select: {
+              id: true,
+              hospitalId: true,
+              status: true,
+            },
+          },
+        },
       });
 
-      if (!existingEncounter) {
-        throw new NotFoundException('Encounter linked to session was not found');
+      if (!lockedSession) {
+        throw new NotFoundException('Patient session not found');
       }
-      if (existingEncounter.hospitalId !== hospitalId) {
-        throw new BadRequestException(
-          `Session is already confirmed for hospital ${existingEncounter.hospitalId}`,
+
+      this.ensureSessionIsActive(lockedSession);
+
+      if (lockedSession.encounterId) {
+        if (!lockedSession.encounter) {
+          throw new NotFoundException('Encounter linked to session was not found');
+        }
+        if (lockedSession.encounter.hospitalId !== hospitalId) {
+          throw new BadRequestException(
+            `Session is already confirmed for hospital ${lockedSession.encounter.hospitalId}`,
+          );
+        }
+
+        await this.assetsService.promoteSessionAssetsToEncounter(
+          lockedSession.id,
+          lockedSession.encounter.id,
+          lockedSession.encounter.hospitalId,
+          lockedSession.patientId,
+          tx,
         );
+
+        return { encounter: lockedSession.encounter, event: null };
       }
 
-      return existingEncounter;
-    }
-
-    const { encounter, event } = await this.prisma.$transaction(async (tx) => {
       const createdEncounter = await tx.encounter.create({
         data: {
-          patientId: session.patientId,
+          patientId: lockedSession.patientId,
           hospitalId,
           status: EncounterStatus.EXPECTED,
-          chiefComplaint: session.pendingChiefComplaint,
-          details: session.pendingDetails,
+          chiefComplaint: lockedSession.pendingChiefComplaint,
+          details: lockedSession.pendingDetails,
           expectedAt: new Date(),
         },
       });
 
       await tx.patientSession.update({
-        where: { id: session.id },
+        where: { id: lockedSession.id },
         data: {
           encounterId: createdEncounter.id,
           pendingChiefComplaint: null,
           pendingDetails: null,
         },
       });
+
+      await this.assetsService.promoteSessionAssetsToEncounter(
+        lockedSession.id,
+        createdEncounter.id,
+        createdEncounter.hospitalId,
+        lockedSession.patientId,
+        tx,
+      );
 
       const createdEvent = await this.events.emitEncounterEventTx(tx, {
         encounterId: createdEncounter.id,
@@ -150,13 +209,15 @@ export class IntakeService {
           status: createdEncounter.status,
           intake: 'confirmed',
         },
-        actor: { actorPatientId: session.patientId },
+        actor: { actorPatientId: lockedSession.patientId },
       });
 
       return { encounter: createdEncounter, event: createdEvent };
     });
 
-    void this.events.dispatchEncounterEventAndMarkProcessed(event);
+    if (event) {
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
+    }
 
     this.loggingService.info('Patient intent confirmed successfully', {
       service: 'IntakeService',
@@ -291,6 +352,14 @@ export class IntakeService {
   private async getSession(sessionToken: string, correlationId?: string) {
     const session = await this.prisma.patientSession.findUnique({
       where: { token: sessionToken },
+      include: {
+        encounter: {
+          select: {
+            hospitalId: true,
+            status: true,
+          },
+        },
+      },
     });
 
     if (!session) {
@@ -302,12 +371,22 @@ export class IntakeService {
       throw new NotFoundException('Invalid patient session token');
     }
 
+    this.ensureSessionIsActive(session);
+
     return session;
   }
 
   private async getSessionById(sessionId: number, correlationId?: string) {
     const session = await this.prisma.patientSession.findUnique({
       where: { id: sessionId },
+      include: {
+        encounter: {
+          select: {
+            hospitalId: true,
+            status: true,
+          },
+        },
+      },
     });
 
     if (!session) {
@@ -319,7 +398,29 @@ export class IntakeService {
       throw new NotFoundException('Patient session not found');
     }
 
+    this.ensureSessionIsActive(session);
+
     return session;
+  }
+
+  private ensureSessionIsActive(session: {
+    expiresAt: Date | null;
+    encounter: { status: EncounterStatus } | null;
+  }) {
+    if (session.expiresAt && session.expiresAt < new Date()) {
+      throw new UnauthorizedException('Patient session has expired');
+    }
+
+    if (
+      session.encounter &&
+      (
+        session.encounter.status === EncounterStatus.COMPLETE ||
+        session.encounter.status === EncounterStatus.CANCELLED ||
+        session.encounter.status === EncounterStatus.UNRESOLVED
+      )
+    ) {
+      throw new UnauthorizedException('Patient session is no longer active');
+    }
   }
 
   private getLocationCacheKey(session: { id: number; encounterId: number | null }) {

@@ -617,7 +617,8 @@ curl "/logging/query?service=EncountersService"
 Error reports are only kept for 24 hours. Export important reports:
 
 ```bash
-curl "/logging/export/${correlationId}" -o "reports/error-${correlationId}.txt"
+# First generate a report to get reportId
+curl "/logging/error-reports/${reportId}/export" -o "reports/error-${correlationId}.txt"
 ```
 
 ### 4. Monitor System Stats

@@ -66,14 +66,19 @@ export function useTriageEncounters(): UseTriageEncountersResult {
 
     // Listen for real-time encounter updates and refresh
     const socket = getSocket();
+    const handleConnect = () => {
+      void fetchData();
+    };
     const handleUpdate = () => {
-      fetchData();
+      void fetchData();
     };
 
+    socket.on('connect', handleConnect);
     socket.on(RealtimeEvents.EncounterUpdated, handleUpdate);
 
     return () => {
       isMounted.current = false;
+      socket.off('connect', handleConnect);
       socket.off(RealtimeEvents.EncounterUpdated, handleUpdate);
     };
   }, [fetchData]);

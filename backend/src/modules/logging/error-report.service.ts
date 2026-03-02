@@ -1,7 +1,7 @@
 // backend/src/modules/logging/error-report.service.ts
 // Service for generating comprehensive error reports for users to send to support
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, forwardRef } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import {
   ErrorReport,
@@ -23,6 +23,7 @@ export class ErrorReportService {
   constructor(
     private readonly loggingService: LoggingService,
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => RealtimeGateway))
     private readonly realtime: RealtimeGateway,
   ) {
     this.logger.log('ErrorReportService initialized');

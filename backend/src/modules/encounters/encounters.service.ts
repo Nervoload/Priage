@@ -10,8 +10,9 @@
 // Auth enforced at controller layer via JwtAuthGuard/PatientGuard.
 
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { EncounterStatus, EventType, Prisma } from '@prisma/client';
+import { AssetContext, AssetStatus, EncounterStatus, EventType, Prisma } from '@prisma/client';
 
+import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -36,6 +37,26 @@ const TERMINAL_STATUSES = new Set<EncounterStatus>([
   EncounterStatus.CANCELLED,
   EncounterStatus.UNRESOLVED,
 ]);
+
+const PRIORITY_ORDER: Prisma.EncounterOrderByWithRelationInput[] = [
+  { currentPriorityScore: { sort: 'desc', nulls: 'last' } },
+  { createdAt: 'asc' },
+];
+
+const encounterMessageSelect = {
+  id: true,
+  createdAt: true,
+  senderType: true,
+  content: true,
+  isInternal: true,
+  createdByUserId: true,
+  createdByPatientId: true,
+  assets: {
+    where: { status: AssetStatus.READY },
+    select: assetSummarySelect,
+    orderBy: { createdAt: 'asc' as const },
+  },
+} satisfies Prisma.MessageSelect;
 
 // TRANSTIONS --> changing Encounter.status throughout the lifecycle
 
@@ -227,10 +248,7 @@ export class EncountersService {
       const [encounters, total] = await Promise.all([
         this.prisma.encounter.findMany({
           where,
-          orderBy: [
-            { currentPriorityScore: 'desc' },
-            { createdAt: 'asc' },
-          ],
+          orderBy: PRIORITY_ORDER,
           take: limit,
           include: {
             patient: {
@@ -321,9 +339,19 @@ export class EncountersService {
             },
           },
           triageAssessments: { orderBy: { createdAt: 'asc' } },
-          messages: { orderBy: { createdAt: 'asc' } },
+          messages: {
+            orderBy: { createdAt: 'asc' },
+            select: encounterMessageSelect,
+          },
           alerts: { orderBy: { createdAt: 'asc' } },
-          assets: { orderBy: { createdAt: 'asc' } },
+          assets: {
+            where: {
+              status: AssetStatus.READY,
+              context: AssetContext.INTAKE_IMAGE,
+            },
+            select: assetSummarySelect,
+            orderBy: { createdAt: 'asc' },
+          },
         },
       });
 
@@ -355,7 +383,16 @@ export class EncountersService {
         },
       );
 
-      return encounter;
+      const { assets, ...encounterWithoutAssets } = encounter;
+
+      return {
+        ...encounterWithoutAssets,
+        messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
+          ...message,
+          attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
+        })),
+        intakeImages: assets.map((asset) => mapAssetSummary(asset, 'staff')),
+      };
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
@@ -669,14 +706,15 @@ export class EncountersService {
             messages: {
               where: { isInternal: false },
               orderBy: { createdAt: 'asc' },
-              select: {
-                id: true,
-                createdAt: true,
-                senderType: true,
-                content: true,
-                createdByUserId: true,
-                createdByPatientId: true,
+              select: encounterMessageSelect,
+            },
+            assets: {
+              where: {
+                status: AssetStatus.READY,
+                context: AssetContext.INTAKE_IMAGE,
               },
+              select: assetSummarySelect,
+              orderBy: { createdAt: 'asc' },
             },
           },
         })
@@ -686,14 +724,15 @@ export class EncountersService {
             messages: {
               where: { isInternal: false },
               orderBy: { createdAt: 'asc' },
-              select: {
-                id: true,
-                createdAt: true,
-                senderType: true,
-                content: true,
-                createdByUserId: true,
-                createdByPatientId: true,
+              select: encounterMessageSelect,
+            },
+            assets: {
+              where: {
+                status: AssetStatus.READY,
+                context: AssetContext.INTAKE_IMAGE,
               },
+              select: assetSummarySelect,
+              orderBy: { createdAt: 'asc' },
             },
           },
         });
@@ -715,7 +754,11 @@ export class EncountersService {
       hospitalId: encounter.hospitalId,
       expectedAt: encounter.expectedAt,
       arrivedAt: encounter.arrivedAt,
-      messages: encounter.messages,
+      messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
+        ...message,
+        attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'patient')),
+      })),
+      intakeImages: encounter.assets.map((asset) => mapAssetSummary(asset, 'patient')),
     };
   }
 
@@ -781,15 +824,26 @@ export class EncountersService {
       },
     );
 
+    const encounter = await this.prisma.encounter.findUnique({
+      where: {
+        id_hospitalId: {
+          id: encounterId,
+          hospitalId,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
+
     const waiting = await this.prisma.encounter.findMany({
       where: {
         hospitalId,
         status: EncounterStatus.WAITING,
       },
-      orderBy: [
-        { currentPriorityScore: 'desc' },
-        { createdAt: 'asc' },
-      ],
+      orderBy: PRIORITY_ORDER,
       select: { id: true },
     });
 
@@ -802,5 +856,43 @@ export class EncountersService {
       estimatedMinutes: index === -1 ? 0 : (index + 1) * AVG_MINUTES_PER_PATIENT,
       totalInQueue: waiting.length,
     };
+  }
+
+  async getQueuePositionForPatient(
+    patientId: number,
+    encounterId: number,
+    hospitalId: number,
+    correlationId?: string,
+  ): Promise<{
+    position: number;
+    estimatedMinutes: number;
+    totalInQueue: number;
+  }> {
+    const encounter = await this.prisma.encounter.findUnique({
+      where: {
+        id_hospitalId: {
+          id: encounterId,
+          hospitalId,
+        },
+      },
+      select: { patientId: true },
+    });
+
+    if (!encounter || encounter.patientId !== patientId) {
+      this.loggingService.warn(
+        'Patient attempted to access queue position for another encounter',
+        {
+          service: 'EncountersService',
+          operation: 'getQueuePositionForPatient',
+          correlationId,
+          encounterId,
+          hospitalId,
+          patientId,
+        },
+      );
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
+
+    return this.getQueuePosition(encounterId, hospitalId, correlationId);
   }
 }

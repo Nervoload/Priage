@@ -7,7 +7,7 @@
 // Usage:
 //   const { alerts, acknowledgeAlert, resolveAlert, unacknowledgedCount } = useAlerts(encounters, hospitalId);
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { deriveAlertsFromEncounters, SEVERITY_COLORS } from './alertDerivation';
 import { listUnacknowledgedAlerts, acknowledgeAlert as ackAlertApi, resolveAlert as resolveAlertApi } from './alerts';
 import { getSocket } from '../realtime/socket';
@@ -38,11 +38,13 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
   const [serverAlerts, setServerAlerts] = useState<Alert[]>([]);
   const [acknowledgedDerived, setAcknowledgedDerived] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
 
   // 1. Fetch server-side unacknowledged alerts
   const fetchServerAlerts = useCallback(async () => {
-    if (!hospitalId) return;
+    if (!hospitalId) {
+      setServerAlerts([]);
+      return;
+    }
     try {
       setLoading(true);
       const alerts = await listUnacknowledgedAlerts(hospitalId);
@@ -54,25 +56,23 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
     }
   }, [hospitalId]);
 
-  // Fetch on mount and poll every 30s
-  // Phase 6.1: Replace this polling interval with an EventSource (SSE) connection
-  // to GET /events/stream. The SSE stream would push alert.created, alert.acknowledged,
-  // and alert.resolved events in real time, eliminating the 30-second delay.
-  // Example: const es = new EventSource(`${API_BASE_URL}/events/stream?token=...`);
-  //          es.onmessage = (e) => { const data = JSON.parse(e.data); ... };
+  // Fetch once for hydration or hospital changes. WebSocket reconnects trigger
+  // a fresh fetch so the UI can reconcile any updates missed while disconnected.
   useEffect(() => {
     fetchServerAlerts();
-    pollRef.current = setInterval(fetchServerAlerts, 30_000);
-    return () => clearInterval(pollRef.current);
   }, [fetchServerAlerts]);
 
   // 2. Subscribe to real-time alert events
   useEffect(() => {
     const socket = getSocket();
+    const handleConnect = () => {
+      if (hospitalId) {
+        void fetchServerAlerts();
+      }
+    };
 
     const handleAlertCreated = () => {
-      // Re-fetch when a new alert is created
-      fetchServerAlerts();
+      void fetchServerAlerts();
     };
 
     const handleAlertAcknowledged = (payload: { metadata?: { alertId?: number } }) => {
@@ -89,16 +89,18 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
       }
     };
 
+    socket.on('connect', handleConnect);
     socket.on(RealtimeEvents.AlertCreated, handleAlertCreated);
     socket.on(RealtimeEvents.AlertAcknowledged, handleAlertAcknowledged);
     socket.on(RealtimeEvents.AlertResolved, handleAlertResolved);
 
     return () => {
+      socket.off('connect', handleConnect);
       socket.off(RealtimeEvents.AlertCreated, handleAlertCreated);
       socket.off(RealtimeEvents.AlertAcknowledged, handleAlertAcknowledged);
       socket.off(RealtimeEvents.AlertResolved, handleAlertResolved);
     };
-  }, [fetchServerAlerts]);
+  }, [fetchServerAlerts, hospitalId]);
 
   // 3. Derive alerts from encounters
   const derivedAlerts = useMemo(

@@ -187,7 +187,15 @@ export class AlertsService {
 
     try {
       const { alert, event } = await this.prisma.$transaction(async (tx) => {
-        const existing = await tx.alert.findUnique({ where: { id: alertId } });
+        const existing = await tx.alert.findUnique({
+          where: { id: alertId },
+          select: {
+            id: true,
+            hospitalId: true,
+            encounterId: true,
+            acknowledgedAt: true,
+          },
+        });
         if (!existing) {
           this.loggingService.warn(
             'Alert not found for acknowledgement',
@@ -223,13 +231,38 @@ export class AlertsService {
           throw new BadRequestException(`Alert ${alertId} already acknowledged`);
         }
 
-        const updated = await tx.alert.update({
-          where: { id: alertId },
+        const now = new Date();
+        const result = await tx.alert.updateMany({
+          where: {
+            id: alertId,
+            hospitalId,
+            acknowledgedAt: null,
+          },
           data: {
-            acknowledgedAt: new Date(),
+            acknowledgedAt: now,
             acknowledgedByUserId: actorUserId,
           },
         });
+
+        if (result.count === 0) {
+          const current = await tx.alert.findUnique({
+            where: { id: alertId },
+            select: {
+              id: true,
+              hospitalId: true,
+              acknowledgedAt: true,
+            },
+          });
+          if (!current || current.hospitalId !== hospitalId) {
+            throw new NotFoundException(`Alert ${alertId} not found`);
+          }
+          throw new BadRequestException(`Alert ${alertId} already acknowledged`);
+        }
+
+        const updated = await tx.alert.findUnique({ where: { id: alertId } });
+        if (!updated) {
+          throw new NotFoundException(`Alert ${alertId} not found`);
+        }
 
         const createdEvent = await this.events.emitEncounterEventTx(tx, {
           encounterId: updated.encounterId,
@@ -308,7 +341,15 @@ export class AlertsService {
 
     try {
       const { alert, event } = await this.prisma.$transaction(async (tx) => {
-        const existing = await tx.alert.findUnique({ where: { id: alertId } });
+        const existing = await tx.alert.findUnique({
+          where: { id: alertId },
+          select: {
+            id: true,
+            hospitalId: true,
+            encounterId: true,
+            resolvedAt: true,
+          },
+        });
         if (!existing) {
           this.loggingService.warn(
             'Alert not found for resolution',
@@ -344,13 +385,38 @@ export class AlertsService {
           throw new BadRequestException(`Alert ${alertId} already resolved`);
         }
 
-        const updated = await tx.alert.update({
-          where: { id: alertId },
+        const now = new Date();
+        const result = await tx.alert.updateMany({
+          where: {
+            id: alertId,
+            hospitalId,
+            resolvedAt: null,
+          },
           data: {
-            resolvedAt: new Date(),
+            resolvedAt: now,
             resolvedByUserId: actorUserId,
           },
         });
+
+        if (result.count === 0) {
+          const current = await tx.alert.findUnique({
+            where: { id: alertId },
+            select: {
+              id: true,
+              hospitalId: true,
+              resolvedAt: true,
+            },
+          });
+          if (!current || current.hospitalId !== hospitalId) {
+            throw new NotFoundException(`Alert ${alertId} not found`);
+          }
+          throw new BadRequestException(`Alert ${alertId} already resolved`);
+        }
+
+        const updated = await tx.alert.findUnique({ where: { id: alertId } });
+        if (!updated) {
+          throw new NotFoundException(`Alert ${alertId} not found`);
+        }
 
         const createdEvent = await this.events.emitEncounterEventTx(tx, {
           encounterId: updated.encounterId,

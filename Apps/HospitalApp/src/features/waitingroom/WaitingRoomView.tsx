@@ -13,7 +13,7 @@ interface WaitingRoomViewProps {
   onNavigate?: (view: 'admit' | 'triage' | 'waiting') => void;
   encounters: Encounter[];
   chatMessages: Record<number, ChatMessage[]>;
-  onSendMessage: (encounterId: number, text: string) => void;
+  onSendMessage: (encounterId: number, text: string) => Promise<void>;
   loading?: boolean;
   onRefresh?: () => void;
 }
@@ -37,9 +37,8 @@ export function WaitingRoomView({
   const selectedEncounter = encounters.find(e => e.id === selectedId) ?? null;
 
   // ─── Search filtering ──────────────────────────────────────────────────
-  // TODO (Phase 6.3): Replace client-side filtering with a server-side
-  //   GET /patients?search=... query param once the backend supports it.
-  //   See FEATURES.md § "Patient Search" for the full integration guide.
+  // Waiting-room filtering stays local for MVP because this screen already
+  // renders the active encounter roster loaded from the backend.
   const filteredEncounters = encounters.filter(enc => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();

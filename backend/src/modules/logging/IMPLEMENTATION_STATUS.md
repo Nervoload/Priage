@@ -26,10 +26,10 @@ All core logging infrastructure has been successfully implemented and tested.
   - Accepts existing correlation IDs from clients
 
 - **REST API** (`logging.controller.ts`)
-  - `POST /logging/reports` - Generate error report
-  - `GET /logging/reports/:id` - Get existing report
-  - `GET /logging/reports/:id/export` - Export report for users
-  - `GET /logging/logs` - Query logs with filters
+  - `GET /logging/error-reports/generate?correlationId=xxx` - Generate error report
+  - `GET /logging/error-reports/:reportId` - Get existing report
+  - `GET /logging/error-reports/:reportId/export` - Export report for users
+  - `GET /logging/query` - Query logs with filters
   - `GET /logging/stats` - Get logging statistics
 
 ### Services with Comprehensive Logging

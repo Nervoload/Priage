@@ -51,16 +51,16 @@ export class YourController {
 
 ```bash
 # Generate error report
-curl http://localhost:3000/api/logging/error-reports/generate?correlationId=xxx
+curl http://localhost:3000/logging/error-reports/generate?correlationId=xxx
 
 # Get all logs for a correlation
-curl http://localhost:3000/api/logging/correlation/xxx
+curl http://localhost:3000/logging/correlation/xxx
 
 # Query logs
-curl http://localhost:3000/api/logging/query?level=error&service=EncountersService
+curl http://localhost:3000/logging/query?level=error&service=EncountersService
 
 # System stats
-curl http://localhost:3000/api/logging/stats
+curl http://localhost:3000/logging/stats
 ```
 
 ## 📝 Integration Pattern (Recommended)
@@ -141,12 +141,12 @@ curl -i http://localhost:3000/api/encounters
 
 ### 4. Query logs for that correlation
 ```bash
-curl http://localhost:3000/api/logging/correlation/xxx-xxx-xxx
+curl http://localhost:3000/logging/correlation/xxx-xxx-xxx
 ```
 
 ### 5. If an error occurred, generate report
 ```bash
-curl http://localhost:3000/api/logging/error-reports/generate?correlationId=xxx-xxx-xxx
+curl http://localhost:3000/logging/error-reports/generate?correlationId=xxx-xxx-xxx
 ```
 
 ## 🎯 Next Steps
@@ -186,7 +186,7 @@ const correlationId = response.headers.get('x-correlation-id');
 // If error, fetch report
 if (!response.ok) {
   const report = await fetch(
-    `/api/logging/error-reports/generate?correlationId=${correlationId}`
+    `/logging/error-reports/generate?correlationId=${correlationId}`
   ).then(r => r.json());
   
   console.log('Error Report ID:', report.reportId);
@@ -198,7 +198,7 @@ if (!response.ok) {
 
 ### Check system health
 ```bash
-curl http://localhost:3000/api/logging/stats
+curl http://localhost:3000/logging/stats
 ```
 
 Returns:
@@ -215,22 +215,22 @@ Returns:
 
 ### Find all errors in the system
 ```bash
-curl http://localhost:3000/api/logging/query?level=error
+curl http://localhost:3000/logging/query?level=error
 ```
 
 ### Find logs for a specific user
 ```bash
-curl http://localhost:3000/api/logging/query?userId=123
+curl http://localhost:3000/logging/query?userId=123
 ```
 
 ### Find logs for a specific hospital
 ```bash
-curl http://localhost:3000/api/logging/query?hospitalId=1
+curl http://localhost:3000/logging/query?hospitalId=1
 ```
 
 ### Find logs for a specific service
 ```bash
-curl http://localhost:3000/api/logging/query?service=EncountersService
+curl http://localhost:3000/logging/query?service=EncountersService
 ```
 
 ## ⚠️ Important Notes

@@ -46,6 +46,21 @@ enum AlertSeverity {
   HIGH
   CRITICAL
 }
+
+enum AssetKind {
+  IMAGE
+}
+
+enum AssetContext {
+  INTAKE_IMAGE
+  MESSAGE_ATTACHMENT
+}
+
+enum AssetStatus {
+  READY
+  DELETED
+}
+
 enum EventType {
   // Inbound patient events
   ENCOUNTER_CREATED
@@ -104,6 +119,7 @@ model Encounter {
   alerts            Alert[]
   assets            Asset[]
   patientSessions   PatientSession[]
+  readCursors       EncounterReadCursor[]
 
 
   // Tenant-hardening: enables compound FKs from child tables
@@ -156,6 +172,8 @@ model User {
   messages          Message[]
   acknowledgedAlerts Alert[] @relation("alert_ack_by")
   resolvedAlerts     Alert[] @relation("alert_resolve_by")
+  readCursors        EncounterReadCursor[]
+  assets             Asset[]
 
   @@unique([hospitalId, email])
   @@index([hospitalId, role])
@@ -265,6 +283,8 @@ model PatientProfile {
   encounters Encounter[]
   messages   Message[]
   patientSessions PatientSession[]
+  readCursors EncounterReadCursor[]
+  assets      Asset[]
 
 }
 
@@ -281,9 +301,31 @@ model PatientSession {
 
   encounterId Int?
   encounter   Encounter? @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  assets      Asset[]
 
   @@index([patientId, createdAt])
   @@index([encounterId, createdAt])
+  @@index([expiresAt])
+}
+
+model EncounterReadCursor {
+  id                Int      @id @default(autoincrement())
+  encounterId       Int
+  hospitalId        Int
+  userId            Int?
+  patientId         Int?
+  lastReadMessageId Int?
+  lastReadAt        DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  encounter Encounter       @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  user      User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  patient   PatientProfile? @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([encounterId, hospitalId])
+  @@unique([encounterId, userId])
+  @@unique([encounterId, patientId])
 }
 
 model Message {
@@ -309,6 +351,7 @@ model Message {
 
   // Optional future-proofing
   isInternal Boolean @default(false)
+  assets     Asset[]
 
   @@index([encounterId, createdAt])
   @@index([hospitalId, createdAt])
@@ -317,18 +360,40 @@ model Message {
 model Asset {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Store pointers/metadata, not the binary.
-  storageKey String
-  mimeType   String?
-  sizeBytes  Int?
+  kind             AssetKind    @default(IMAGE)
+  context          AssetContext
+  status           AssetStatus  @default(READY)
+  storageKey       String
+  originalFilename String
+  mimeType         String
+  sizeBytes        Int
+  width            Int?
+  height           Int?
   sha256     String?
 
-  // Tenant-safe encounter link
-  encounterId Int
-  hospitalId  Int
-  encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  // Tenant-safe encounter link. Intake uploads can exist before an encounter is created.
+  encounterId Int?
+  hospitalId  Int?
+  encounter   Encounter? @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  patientSessionId Int?
+  patientSession   PatientSession? @relation(fields: [patientSessionId], references: [id], onDelete: Cascade)
+
+  messageId Int?
+  message   Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  createdByUserId Int?
+  createdByUser   User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdByPatientId Int?
+  createdByPatient   PatientProfile? @relation(fields: [createdByPatientId], references: [id], onDelete: SetNull)
 
   @@index([encounterId, createdAt])
   @@index([hospitalId, createdAt])
+  @@index([patientSessionId, createdAt])
+  @@index([messageId, createdAt])
+  @@index([status])
+  @@index([context])
 }

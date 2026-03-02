@@ -59,4 +59,19 @@ export class MessagingController {
   ) {
     return this.messagingService.markMessageRead(messageId, user.hospitalId, user.userId, req.correlationId);
   }
+
+  @Get('encounters/:encounterId/read-state')
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  async getReadState(
+    @Param('encounterId', ParseIntPipe) encounterId: number,
+    @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number },
+  ) {
+    return this.messagingService.getEncounterReadState(
+      encounterId,
+      user.hospitalId,
+      user.userId,
+      req.correlationId,
+    );
+  }
 }

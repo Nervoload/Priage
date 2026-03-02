@@ -33,9 +33,8 @@ export async function resolveAlert(alertId: number): Promise<Alert> {
 }
 
 // ─── List unacknowledged alerts for a hospital ──────────────────────────────
-// Phase 6.1: Once SSE is connected (GET /events/stream), this REST call will only
-// be needed for initial hydration on mount. Subsequent alerts will arrive via the
-// SSE push channel, so the 30s polling in useAlerts.ts can be removed.
+// Used for initial hydration and reconnect recovery. Live alert lifecycle
+// updates arrive through the Socket.IO realtime channel.
 
 export async function listUnacknowledgedAlerts(hospitalId: number): Promise<Alert[]> {
   return client<Alert[]>(`/alerts/hospitals/${hospitalId}/unacknowledged`);

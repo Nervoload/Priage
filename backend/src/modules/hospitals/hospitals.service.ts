@@ -180,7 +180,7 @@ export class HospitalsService {
         },
       },
       orderBy: [
-        { currentPriorityScore: 'desc' },
+        { currentPriorityScore: { sort: 'desc', nulls: 'last' } },
         { createdAt: 'asc' },
       ],
     });

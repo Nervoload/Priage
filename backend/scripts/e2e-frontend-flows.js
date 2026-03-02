@@ -17,6 +17,7 @@
 //       List Alerts → Discharge → Verify Terminal State
 
 require('dotenv').config();
+const { io } = require('socket.io-client');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const VERBOSE = process.argv.includes('--verbose');
@@ -35,6 +36,7 @@ const C = {
 let passed = 0;
 let failed = 0;
 let token = null;
+let socket = null;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -69,6 +71,26 @@ function assert(label, condition) {
 
 function section(name) {
   console.log(`\n${C.cyan}${C.bold}── ${name} ──${C.reset}`);
+}
+
+async function connectSocket() {
+  if (socket?.connected) {
+    return socket;
+  }
+
+  socket = io(BASE, {
+    auth: { token },
+    transports: ['websocket'],
+    autoConnect: false,
+  });
+
+  await new Promise((resolve, reject) => {
+    socket.once('connect', resolve);
+    socket.once('connect_error', reject);
+    socket.connect();
+  });
+
+  return socket;
 }
 
 // ─── Seed (optional) ────────────────────────────────────────────────────────
@@ -231,40 +253,78 @@ async function flowMoveToWaiting(encounterId) {
 }
 
 async function flowSendMessage(encounterId) {
-  section('11. Send message (POST /messaging/encounters/:id/messages)');
-  const { status, json } = await api('POST', `/messaging/encounters/${encounterId}/messages`, {
-    senderType: 'USER',
-    content: 'E2E test: how are you feeling?',
-    isInternal: false,
+  section('11. Send message (Socket.IO message.send)');
+  const realtime = await connectSocket();
+  const outgoing = 'E2E socket message: how are you feeling?';
+
+  const messageCreated = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      realtime.off('message.created', handleCreated);
+      reject(new Error('Timed out waiting for message.created'));
+    }, 5000);
+
+    const handleCreated = (payload) => {
+      if (payload?.encounterId !== encounterId) {
+        return;
+      }
+      clearTimeout(timeout);
+      realtime.off('message.created', handleCreated);
+      resolve(payload);
+    };
+
+    realtime.on('message.created', handleCreated);
   });
 
-  assert('Returns 201', status === 201);
-  assert('Has message id', typeof json?.id === 'number');
-  assert('Content matches', json?.content === 'E2E test: how are you feeling?');
+  const ack = await new Promise((resolve) => {
+    realtime.emit('message.send', {
+      encounterId,
+      content: outgoing,
+      isInternal: false,
+    }, resolve);
+  });
 
-  section('12. List messages (GET /messaging/encounters/:id/messages)');
+  assert('Ack returns ok=true', ack?.ok === true);
+  assert('Ack includes created message', typeof ack?.message?.id === 'number');
+  assert('Ack message content matches', ack?.message?.content === outgoing);
+
+  const createdPayload = await messageCreated;
+  assert('Receives message.created event', createdPayload?.metadata?.messageId === ack?.message?.id);
+
+  section('12. Reject invalid socket message payload');
+  const invalidAck = await new Promise((resolve) => {
+    realtime.emit('message.send', {
+      encounterId,
+      content: '   ',
+      isInternal: false,
+    }, resolve);
+  });
+  assert('Invalid payload returns ok=false', invalidAck?.ok === false);
+  assert('Invalid payload code is VALIDATION_ERROR', invalidAck?.error?.code === 'VALIDATION_ERROR');
+
+  section('13. List messages (GET /messaging/encounters/:id/messages)');
   const { status: s2, json: list } = await api('GET', `/messaging/encounters/${encounterId}/messages`);
   assert('Returns 200', s2 === 200);
   assert('Has data array', Array.isArray(list?.data));
   assert('Has at least 1 message', list?.data?.length >= 1);
+  assert('Persisted socket message appears in history', list?.data?.some((item) => item.id === ack?.message?.id));
 
-  if (json?.id) {
-    section('13. Mark message read (POST /messaging/messages/:id/read)');
-    const { status: s3, json: readRes } = await api('POST', `/messaging/messages/${json.id}/read`);
+  if (ack?.message?.id) {
+    section('14. Mark message read (POST /messaging/messages/:id/read)');
+    const { status: s3, json: readRes } = await api('POST', `/messaging/messages/${ack.message.id}/read`);
     assert('Returns 200/201', s3 === 200 || s3 === 201);
     assert('Returns { ok: true }', readRes?.ok === true);
   }
 }
 
 async function flowAlerts(hospitalId) {
-  section('14. List alerts (GET /alerts/hospitals/:hospitalId/unacknowledged)');
+  section('15. List alerts (GET /alerts/hospitals/:hospitalId/unacknowledged)');
   const { status, json } = await api('GET', `/alerts/hospitals/${hospitalId}/unacknowledged`);
   assert('Returns 200', status === 200);
   assert('Is array', Array.isArray(json));
 }
 
 async function flowDischarge(encounterId) {
-  section('15. Discharge (POST /encounters/:id/discharge)');
+  section('16. Discharge (POST /encounters/:id/discharge)');
   const { status, json } = await api('POST', `/encounters/${encounterId}/discharge`);
   assert('Returns 200/201', status === 200 || status === 201);
   assert('Status is COMPLETE', json?.status === 'COMPLETE');
@@ -272,7 +332,7 @@ async function flowDischarge(encounterId) {
 }
 
 async function flowTokenExpired() {
-  section('16. Token expiration handling (GET /auth/me with bad token)');
+  section('17. Token expiration handling (GET /auth/me with bad token)');
   const savedToken = token;
   token = 'expired.invalid.token';
   const { status } = await api('GET', '/auth/me');
@@ -328,6 +388,10 @@ async function main() {
   } catch (err) {
     console.error(`\n${C.red}${C.bold}Fatal error:${C.reset}`, err);
     process.exit(1);
+  } finally {
+    if (socket) {
+      socket.disconnect();
+    }
   }
 }
 

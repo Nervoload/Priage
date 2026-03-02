@@ -117,7 +117,7 @@ If `docker compose` fails, open Docker Desktop and confirm it’s running.
 
 ## 2) Install repo dependencies (Node packages):
 
-From the repo root (the folder that contains `backend/` and `apps/`):
+From the repo root (the folder that contains `backend/` and `Apps/`):
 
 ### macOS (Terminal)
 ~~~bash
@@ -160,20 +160,20 @@ cp .env.example .env
 Copy-Item .env.example .env
 ~~~
 
-### ~~Frontend env (Vite apps)~~
-**‼️(We don't have this yet)**
+### Frontend env
+Only the Hospital App currently has a committed env example.
 
-#### ~~macOS~~
+#### macOS
 ~~~bash
-cp apps/patient/.env.example apps/patient/.env.local
-cp apps/hospital/.env.example apps/hospital/.env.local
+cp Apps/HospitalApp/.env.example Apps/HospitalApp/.env
 ~~~
 
-#### ~~Windows~~
+#### Windows
 ~~~powershell
-Copy-Item apps\patient\.env.example apps\patient\.env.local
-Copy-Item apps\hospital\.env.example apps\hospital\.env.local
+Copy-Item Apps\HospitalApp\.env.example Apps\HospitalApp\.env
 ~~~
+
+`Apps/PatientApp/` exists as source code, but it does not currently have a local dev package setup or committed env example.
 
 ---
 
@@ -215,7 +215,11 @@ If this fails, check:
 ---
 
 # Running the Software
-For testing locally, we need to start 3 terminals: 1) The backend, 2) the patient app, and 3) the hospital app. Here, we can see how the pipeline works on our docker container DB.
+For testing locally, the currently runnable stack is:
+1) the backend
+2) the Hospital App
+
+`Apps/PatientApp/` is present in the repo, but it does not currently have a runnable local dev setup like `Apps/HospitalApp/`.
 
 ### Terminal 1 — Backend (NestJS)
 #### macOS & Windows
@@ -224,29 +228,16 @@ cd backend
 npm run start:dev
 ~~~
 
-### Terminal 2 — Patient web app (React + Vite + TypeScript)
+### Terminal 2 — Hospital web app (React + Vite + TypeScript)
 #### macOS
 ~~~bash
-cd apps/patient
-npm run dev
-~~~
-
-#### Windows
-~~~powershell
-cd apps\patient
-npm run dev
-~~~
-
-### Terminal 3 — Hospital web app (React + Vite + TypeScript)
-#### macOS
-~~~bash
-cd apps/hospital
+cd Apps/HospitalApp
 npm run dev
 ~~~
 
 #### Windows 
 ~~~powershell
-cd apps\hospital
+cd Apps\HospitalApp
 npm run dev
 ~~~
 

@@ -155,7 +155,7 @@ export class MyGateway {
 
 ### Generate Error Report
 ```bash
-GET /api/logging/error-reports/generate?correlationId=xxx-xxx-xxx
+GET /logging/error-reports/generate?correlationId=xxx-xxx-xxx
 ```
 
 **Response:**
@@ -186,35 +186,35 @@ GET /api/logging/error-reports/generate?correlationId=xxx-xxx-xxx
     "memory": { ... },
     "uptime": 3600
   },
-  "exportUrl": "/api/logging/error-reports/ERR-lm9x2k3-A3F2D5/export"
+  "exportUrl": "/logging/error-reports/ERR-lm9x2k3-A3F2D5/export"
 }
 ```
 
 ### Export Full Report
 ```bash
-GET /api/logging/error-reports/ERR-lm9x2k3-A3F2D5/export
+GET /logging/error-reports/ERR-lm9x2k3-A3F2D5/export
 ```
 Downloads complete report with all logs (JSON format)
 
 ### Query Logs
 ```bash
-GET /api/logging/query?level=error&service=EncountersService&hospitalId=1
+GET /logging/query?level=error&service=EncountersService&hospitalId=1
 ```
 
 ### Get Logs by Correlation
 ```bash
-GET /api/logging/correlation/xxx-xxx-xxx
+GET /logging/correlation/xxx-xxx-xxx
 ```
 
 ### System Statistics
 ```bash
-GET /api/logging/stats
+GET /logging/stats
 ```
 
 ## User Support Workflow
 
 1. **Error Occurs** → User sees error with correlation ID
-2. **Generate Report** → Frontend calls `/error-reports/generate?correlationId=xxx`
+2. **Generate Report** → Frontend calls `/logging/error-reports/generate?correlationId=xxx`
 3. **Download Report** → User clicks "Export Error Report"
 4. **Send to Support** → User emails JSON file
 5. **Reproduce Issue** → Support team has full context to debug
@@ -241,7 +241,7 @@ async function apiCall(method: string, path: string, data?: any) {
     if (!response.ok) {
       // Error occurred - generate report
       const errorReport = await fetch(
-        `/api/logging/error-reports/generate?correlationId=${correlationId}`
+        `/logging/error-reports/generate?correlationId=${correlationId}`
       ).then(r => r.json());
 
       throw new Error(`Request failed. Report ID: ${errorReport.reportId}`);
@@ -260,7 +260,7 @@ function ErrorBoundary({ error, correlationId }) {
 
   const downloadReport = async () => {
     const data = await fetch(
-      `/api/logging/error-reports/generate?correlationId=${correlationId}`
+      `/logging/error-reports/generate?correlationId=${correlationId}`
     ).then(r => r.json());
     
     setReport(data);

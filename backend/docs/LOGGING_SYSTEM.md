@@ -517,7 +517,7 @@ When errors occur, users can generate comprehensive error reports to send to dev
 1. User encounters an error in the UI
 2. UI displays correlation ID (from response headers)
 3. User clicks "Report Error" button
-4. System calls `GET /logging/report/:correlationId`
+4. System calls `GET /logging/error-reports/generate?correlationId=:correlationId`
 5. User receives formatted report with all context
 6. User sends report to development team
 
