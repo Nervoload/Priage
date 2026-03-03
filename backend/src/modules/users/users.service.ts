@@ -81,7 +81,7 @@ export class UsersService {
     });
 
     if (!user) {
-      this.loggingService.warn('User not found', {
+      await this.loggingService.warn('User not found', {
         service: 'UsersService',
         operation: 'getUser',
         correlationId,

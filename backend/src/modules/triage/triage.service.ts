@@ -63,7 +63,7 @@ const { assessment, event } = await this.prisma.$transaction(async (tx) => {
           select: { id: true, hospitalId: true, status: true },
         });
         if (!encounter) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Encounter not found for triage',
             {
               service: 'TriageService',
@@ -151,7 +151,7 @@ const { assessment, event } = await this.prisma.$transaction(async (tx) => {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to create triage assessment',
         {
           service: 'TriageService',
@@ -204,7 +204,7 @@ const { assessment, event } = await this.prisma.$transaction(async (tx) => {
 
       return assessments;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to list triage assessments',
         {
           service: 'TriageService',

@@ -60,10 +60,11 @@ export class IntakeService {
       operation: 'createIntent',
       correlationId,
     }, {
-      firstName: dto.firstName,
-      lastName: dto.lastName,
-      age: dto.age,
-      chiefComplaint: dto.chiefComplaint,
+      hasFirstName: !!dto.firstName,
+      hasLastName: !!dto.lastName,
+      hasAge: dto.age !== undefined && dto.age !== null,
+      hasChiefComplaint: !!dto.chiefComplaint,
+      hasDetails: !!dto.details,
     });
 
     const token = randomUUID();
@@ -363,7 +364,7 @@ export class IntakeService {
     });
 
     if (!session) {
-      this.loggingService.warn('Invalid patient session token', {
+      await this.loggingService.warn('Invalid patient session token', {
         service: 'IntakeService',
         operation: 'getSession',
         correlationId,
@@ -390,7 +391,7 @@ export class IntakeService {
     });
 
     if (!session) {
-      this.loggingService.warn('Patient session not found by ID', {
+      await this.loggingService.warn('Patient session not found by ID', {
         service: 'IntakeService',
         operation: 'getSessionById',
         correlationId,

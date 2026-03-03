@@ -204,7 +204,7 @@ const CONFIG = {
 
 ### ✅ Logging System
 - LoggingService initialization
-- Log storage (in-memory Map)
+- Log persistence in Postgres
 - Log retrieval by correlation ID
 - Log querying (by service, level, filters)
 - Statistics endpoint

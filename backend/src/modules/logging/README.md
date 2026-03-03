@@ -6,7 +6,7 @@ This logging system provides **hospital-grade error tracking and reporting** wit
 - ✅ Request correlation across all services
 - ✅ Centralized log aggregation
 - ✅ User-exportable error reports
-- ✅ Full request chain reconstruction
+- ✅ Full failing-correlation reconstruction
 - ✅ System health metrics
 
 ## Architecture
@@ -28,9 +28,17 @@ User Request → Correlation Middleware → Services → LoggingService → Erro
 
 ### 2. **LoggingService**
 - Central aggregation point for all logs
-- Stores logs by correlation ID
-- Provides query API
-- Auto-cleanup old logs (24hr retention)
+- Persists `warn` and `error` logs to Postgres via Prisma
+- Promotes failing correlations so buffered pre-error `debug`/`info` steps can be flushed
+- Applies strict allowlisting before persistence
+- Provides query API and retention cleanup support
+
+## Current storage model
+
+- `warn` and `error` logs are persisted to Postgres by default
+- `info` and `debug` remain console-only by default unless the correlation is promoted by a `warn`/`error`
+- log query and error-report endpoints read from the database, not process memory
+- retention defaults to 30 days and is enforced by the BullMQ `logging` queue
 
 ### 3. **ErrorReportService**
 - Generates comprehensive error reports
@@ -77,7 +85,7 @@ export class MyService {
       return result;
     } catch (error) {
       // Log error with full context
-      this.loggingService.error(
+      await this.loggingService.error(
         'Operation failed',
         {
           correlationId,
@@ -206,6 +214,8 @@ GET /logging/query?level=error&service=EncountersService&hospitalId=1
 GET /logging/correlation/xxx-xxx-xxx
 ```
 
+Promoted failing correlations return the flushed request chain. Success-only correlations may return no rows when they never cross the persistence threshold.
+
 ### System Statistics
 ```bash
 GET /logging/stats
@@ -286,10 +296,10 @@ function ErrorBoundary({ error, correlationId }) {
 
 ## Performance Considerations
 
-- **Memory Usage:** In-memory storage limited to 10,000 logs (configurable)
-- **Retention:** Auto-cleanup after 24 hours
-- **Performance Impact:** <1ms per log operation
-- **Production:** Consider external log storage (Elasticsearch, CloudWatch, etc.)
+- **Persistence:** `warn` and `error` are stored in Postgres; `info` and `debug` remain console-only unless a failing correlation is promoted and flushed
+- **Retention:** Daily cleanup with `LOG_RETENTION_DAYS` (default `30`)
+- **Performance Impact:** `warn`/`error` incur a DB write; lower levels stay lightweight
+- **Production:** Postgres-backed behavior matches local Docker and managed Postgres environments
 
 ## Future Enhancements (Phase 2 & 3)
 
@@ -305,11 +315,18 @@ function ErrorBoundary({ error, correlationId }) {
 ### Environment Variables
 
 ```bash
-# Log retention (milliseconds)
-LOG_RETENTION_MS=86400000  # 24 hours
+# Enable/disable DB persistence
+LOG_DB_ENABLED=true
 
-# Max logs per correlation
-MAX_LOGS_PER_CORRELATION=1000
+# Persist logs at or above this level
+LOG_DB_MIN_LEVEL=warn
+
+# Log retention (days)
+LOG_RETENTION_DAYS=30
+
+# Query pagination
+LOG_QUERY_DEFAULT_LIMIT=100
+LOG_QUERY_MAX_LIMIT=500
 
 # Max total logs in memory
 MAX_TOTAL_LOGS=10000

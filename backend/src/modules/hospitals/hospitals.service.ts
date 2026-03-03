@@ -38,7 +38,7 @@ export class HospitalsService {
     });
 
     if (!hospital) {
-      this.loggingService.warn('Hospital not found', {
+      await this.loggingService.warn('Hospital not found', {
         service: 'HospitalsService',
         operation: 'getHospital',
         correlationId,

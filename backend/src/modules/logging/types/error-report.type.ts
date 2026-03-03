@@ -33,7 +33,8 @@ export interface ErrorReport {
     encounterId?: number;
   };
   
-  // All related logs
+  // All persisted logs for this correlation. Promoted failing correlations include
+  // buffered pre-error debug/info steps flushed during promotion.
   logs: LogEntry[];
   
   // Export URL

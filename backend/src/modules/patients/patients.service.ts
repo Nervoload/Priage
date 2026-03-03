@@ -137,7 +137,7 @@ export class PatientsService {
         },
       };
     } catch (error) {
-      this.loggingService.error('Failed to list patients', {
+      await this.loggingService.error('Failed to list patients', {
         service: 'PatientsService',
         operation: 'listPatients',
         correlationId,
@@ -197,7 +197,7 @@ export class PatientsService {
     });
 
     if (!patient) {
-      this.loggingService.warn('Patient not found', {
+      await this.loggingService.warn('Patient not found', {
         service: 'PatientsService',
         operation: 'getPatient',
         correlationId,

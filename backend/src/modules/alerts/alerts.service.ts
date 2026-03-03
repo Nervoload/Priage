@@ -67,7 +67,7 @@ export class AlertsService {
           select: { hospitalId: true },
         });
         if (!encounter) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Alert creation rejected: Encounter not found or hospital mismatch',
             {
               service: 'AlertsService',
@@ -119,7 +119,7 @@ export class AlertsService {
 
       return alert;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to create alert',
         {
           service: 'AlertsService',
@@ -197,7 +197,7 @@ export class AlertsService {
           },
         });
         if (!existing) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Alert not found for acknowledgement',
             {
               service: 'AlertsService',
@@ -215,7 +215,7 @@ export class AlertsService {
           throw new NotFoundException(`Alert ${alertId} not found`);
         }
         if (existing.acknowledgedAt) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Alert already acknowledged',
             {
               service: 'AlertsService',
@@ -301,7 +301,7 @@ export class AlertsService {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to acknowledge alert',
         {
           service: 'AlertsService',
@@ -351,7 +351,7 @@ export class AlertsService {
           },
         });
         if (!existing) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Alert not found for resolution',
             {
               service: 'AlertsService',
@@ -369,7 +369,7 @@ export class AlertsService {
           throw new NotFoundException(`Alert ${alertId} not found`);
         }
         if (existing.resolvedAt) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Alert already resolved',
             {
               service: 'AlertsService',
@@ -455,7 +455,7 @@ export class AlertsService {
       if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to resolve alert',
         {
           service: 'AlertsService',
@@ -505,7 +505,7 @@ export class AlertsService {
 
       return alerts;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to list unacknowledged alerts',
         {
           service: 'AlertsService',
@@ -553,7 +553,7 @@ export class AlertsService {
 
       return alerts;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to list alerts for encounter',
         {
           service: 'AlertsService',

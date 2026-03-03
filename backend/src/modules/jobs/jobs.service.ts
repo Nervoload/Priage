@@ -14,6 +14,7 @@ export class JobsService implements OnModuleInit {
   constructor(
     @InjectQueue('events') private readonly eventsQueue: Queue,
     @InjectQueue('alerts') private readonly alertsQueue: Queue,
+    @InjectQueue('logging') private readonly loggingQueue: Queue,
     private readonly loggingService: LoggingService,
   ) {
     this.logger.log('JobsService initialized');
@@ -71,6 +72,29 @@ export class JobsService implements OnModuleInit {
         },
       );
 
+      await this.loggingQueue.add(
+        'purge-old-logs',
+        {},
+        {
+          repeat: { every: 24 * 60 * 60 * 1000 },
+          removeOnComplete: true,
+          removeOnFail: true,
+        },
+      );
+
+      this.loggingService.info(
+        'Log retention cleanup job configured',
+        {
+          service: 'JobsService',
+          operation: 'onModuleInit',
+          correlationId: undefined,
+        },
+        {
+          interval: '86400000ms',
+          queue: 'logging',
+        },
+      );
+
       this.loggingService.info(
         'All recurring jobs configured successfully',
         {
@@ -80,7 +104,7 @@ export class JobsService implements OnModuleInit {
         },
       );
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to configure recurring jobs',
         {
           service: 'JobsService',
@@ -121,7 +145,7 @@ export class JobsService implements OnModuleInit {
         },
       );
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to enqueue event processing',
         {
           service: 'JobsService',

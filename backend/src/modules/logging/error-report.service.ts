@@ -1,24 +1,60 @@
 // backend/src/modules/logging/error-report.service.ts
-// Service for generating comprehensive error reports for users to send to support
+// Service for generating comprehensive error reports for users to send to support.
 
-import { Injectable, Inject, Logger, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
+
 import {
-  ErrorReport,
   ErrorChainEntry,
-  SystemMetrics,
+  ErrorReport,
   ErrorReportExport,
+  SystemMetrics,
 } from './types/error-report.type';
 import { LogEntry, LogLevel } from './types/log-entry.type';
 import { LoggingService } from './logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 
+type ErrorReportPayload = Prisma.JsonObject;
+
+type DbLogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+
+type LogRecordRow = {
+  id: number;
+  createdAt: Date;
+  level: DbLogLevel;
+  message: string;
+  correlationId: string | null;
+  service: string;
+  operation: string;
+  userId: number | null;
+  patientId: number | null;
+  hospitalId: number | null;
+  encounterId: number | null;
+  data: Prisma.JsonValue | null;
+  errorMessage: string | null;
+  errorStack: string | null;
+  errorCode: string | null;
+};
+
+type ErrorReportSnapshotRow = {
+  payload: Prisma.JsonValue;
+};
+
+type LoggingPrismaClient = PrismaService & {
+  logRecord: {
+    findMany(args?: unknown): Promise<LogRecordRow[]>;
+  };
+  errorReportSnapshot: {
+    create(args: unknown): Promise<unknown>;
+    findUnique(args: unknown): Promise<ErrorReportSnapshotRow | null>;
+  };
+};
+
 @Injectable()
 export class ErrorReportService {
   private readonly logger = new Logger(ErrorReportService.name);
-  private readonly reports: Map<string, ErrorReport> = new Map();
-  private readonly maxReports = 100;
 
   constructor(
     private readonly loggingService: LoggingService,
@@ -29,17 +65,13 @@ export class ErrorReportService {
     this.logger.log('ErrorReportService initialized');
   }
 
-  /**
-   * Generate a comprehensive error report from a correlation ID
-   */
-  async generateReport(correlationId: string): Promise<ErrorReport> {
+  async generateReport(correlationId: string, createdByUserId?: number): Promise<ErrorReport> {
     this.logger.log({
       message: 'Generating error report',
       correlationId,
     });
 
-    const logs = this.loggingService.getLogsByCorrelationId(correlationId);
-
+    const logs = await this.getLogsForCorrelation(correlationId);
     if (logs.length === 0) {
       throw new Error(`No logs found for correlation ID: ${correlationId}`);
     }
@@ -62,16 +94,17 @@ export class ErrorReportService {
       exportUrl: `/api/logging/error-reports/${reportId}/export`,
     };
 
-    // Store report for later retrieval
-    this.reports.set(reportId, report);
-
-    // Cleanup old reports if needed
-    if (this.reports.size > this.maxReports) {
-      const firstEntry = this.reports.entries().next();
-      if (!firstEntry.done) {
-        this.reports.delete(firstEntry.value[0]);
-      }
-    }
+    await this.getLoggingPrisma().errorReportSnapshot.create({
+      data: {
+        reportId,
+        correlationId,
+        summary: report.summary,
+        errorCount: errorLogs.length,
+        logCount: logs.length,
+        payload: this.serializeReport(report),
+        createdByUserId,
+      },
+    });
 
     this.logger.log({
       message: 'Error report generated',
@@ -84,16 +117,18 @@ export class ErrorReportService {
     return report;
   }
 
-  /**
-   * Get a previously generated report
-   */
   async getReport(reportId: string): Promise<ErrorReport | null> {
-    return this.reports.get(reportId) || null;
+    const snapshot = await this.getLoggingPrisma().errorReportSnapshot.findUnique({
+      where: { reportId },
+    });
+
+    if (!snapshot) {
+      return null;
+    }
+
+    return this.deserializeReport(snapshot.payload as ErrorReportPayload);
   }
 
-  /**
-   * Export report in a user-friendly format
-   */
   async exportReport(reportId: string): Promise<ErrorReportExport> {
     const report = await this.getReport(reportId);
     if (!report) {
@@ -113,25 +148,31 @@ export class ErrorReportService {
     };
   }
 
-  /**
-   * Check if an error occurred in a correlation
-   */
   async checkForErrors(correlationId: string): Promise<boolean> {
     return this.loggingService.hasErrors(correlationId);
   }
 
-  /**
-   * Auto-generate report if errors detected
-   */
-  async autoGenerateIfErrors(correlationId: string): Promise<ErrorReport | null> {
+  async autoGenerateIfErrors(
+    correlationId: string,
+    createdByUserId?: number,
+  ): Promise<ErrorReport | null> {
     const hasErrors = await this.checkForErrors(correlationId);
     if (hasErrors) {
-      return this.generateReport(correlationId);
+      return this.generateReport(correlationId, createdByUserId);
     }
     return null;
   }
 
-  // Private helper methods
+  private async getLogsForCorrelation(correlationId: string): Promise<LogEntry[]> {
+    await this.loggingService.flushCorrelation(correlationId);
+
+    const rows = await this.getLoggingPrisma().logRecord.findMany({
+      where: { correlationId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+
+    return rows.map((row) => this.mapRecordToLogEntry(row));
+  }
 
   private generateReportId(): string {
     const timestamp = Date.now().toString(36);
@@ -170,8 +211,7 @@ export class ErrorReportService {
   }
 
   private getAffectedServices(logs: LogEntry[]): string[] {
-    const services = new Set(logs.map((log) => log.context.service));
-    return Array.from(services);
+    return Array.from(new Set(logs.map((log) => log.context.service)));
   }
 
   private identifyFailurePoint(errorLogs: LogEntry[]): ErrorReport['failurePoint'] {
@@ -193,15 +233,13 @@ export class ErrorReportService {
 
   private async captureSystemMetrics(): Promise<SystemMetrics> {
     const memory = process.memoryUsage();
-    
-    // Get database metrics - handle failure gracefully
     const dbMetrics: SystemMetrics['database'] = {
       connected: false,
       poolSize: undefined,
       idleConnections: undefined,
       waitingClients: undefined,
     };
-    
+
     try {
       const poolStats = await this.prisma.getPoolStats();
       dbMetrics.connected = true;
@@ -209,19 +247,17 @@ export class ErrorReportService {
       dbMetrics.idleConnections = poolStats.idleCount;
       dbMetrics.waitingClients = poolStats.waitingCount;
     } catch (error) {
-      // Database metrics unavailable - log but continue
       this.logger.warn({
         message: 'Failed to capture database metrics',
         error: error instanceof Error ? error.message : String(error),
       });
     }
 
-    // Get WebSocket metrics - handle failure gracefully
-    let wsMetrics = {
+    let wsMetrics: SystemMetrics['websockets'] = {
       totalConnections: 0,
       connectionsByHospital: {},
     };
-    
+
     try {
       const wsStats = this.realtime.getConnectionStats();
       wsMetrics = {
@@ -229,7 +265,6 @@ export class ErrorReportService {
         connectionsByHospital: Object.fromEntries(wsStats.connectionsByHospital),
       };
     } catch (error) {
-      // WebSocket stats not available - log but continue
       this.logger.warn({
         message: 'Failed to capture WebSocket metrics',
         error: error instanceof Error ? error.message : String(error),
@@ -253,33 +288,166 @@ export class ErrorReportService {
   private extractRequestContext(logs: LogEntry[]): ErrorReport['requestContext'] {
     const context: ErrorReport['requestContext'] = {};
 
-    // Find context from logs
     for (const log of logs) {
       if (log.context.userId) context.userId = log.context.userId;
       if (log.context.hospitalId) context.hospitalId = log.context.hospitalId;
       if (log.context.encounterId) context.encounterId = log.context.encounterId;
-      
-      // Try to extract HTTP method and path from data
-      if (log.data?.method) context.method = log.data.method;
-      if (log.data?.path) context.path = log.data.path;
+      if (typeof log.data?.method === 'string') context.method = log.data.method;
+      if (typeof log.data?.path === 'string') context.path = log.data.path;
     }
 
     return context;
   }
 
   private extractUserAction(logs: LogEntry[]): string | undefined {
-    // Try to determine what the user was trying to do
     const firstLog = logs[0];
-    if (!firstLog) return undefined;
+    if (!firstLog) {
+      return undefined;
+    }
 
-    const operation = firstLog.context.operation;
-    const service = firstLog.context.service;
-
-    // Build a human-readable action description
-    if (operation && service) {
-      return `${operation} in ${service}`;
+    if (firstLog.context.operation && firstLog.context.service) {
+      return `${firstLog.context.operation} in ${firstLog.context.service}`;
     }
 
     return firstLog.message;
+  }
+
+  private mapRecordToLogEntry(
+    row: LogRecordRow,
+  ): LogEntry {
+    return {
+      id: String(row.id),
+      timestamp: row.createdAt,
+      level: this.mapRecordLevelToLogLevel(row.level),
+      message: row.message,
+      context: {
+        correlationId: row.correlationId ?? undefined,
+        userId: row.userId ?? undefined,
+        patientId: row.patientId ?? undefined,
+        hospitalId: row.hospitalId ?? undefined,
+        encounterId: row.encounterId ?? undefined,
+        service: row.service,
+        operation: row.operation,
+      },
+      data:
+        row.data && typeof row.data === 'object' && !Array.isArray(row.data)
+          ? (row.data as Record<string, unknown>)
+          : undefined,
+      error:
+        row.errorMessage || row.errorStack || row.errorCode
+          ? {
+              message: row.errorMessage ?? row.message,
+              stack: row.errorStack ?? undefined,
+              code: row.errorCode ?? undefined,
+            }
+          : undefined,
+    };
+  }
+
+  private mapRecordLevelToLogLevel(level: DbLogLevel): LogLevel {
+    switch (level) {
+      case 'DEBUG':
+        return LogLevel.DEBUG;
+      case 'INFO':
+        return LogLevel.INFO;
+      case 'ERROR':
+        return LogLevel.ERROR;
+      case 'WARN':
+      default:
+        return LogLevel.WARN;
+    }
+  }
+
+  private serializeReport(report: ErrorReport) {
+    return JSON.parse(JSON.stringify(report)) as Prisma.InputJsonObject;
+  }
+
+  private deserializeReport(payload: ErrorReportPayload): ErrorReport {
+    const value = payload as Record<string, unknown>;
+
+    return {
+      reportId: String(value.reportId),
+      timestamp: new Date(String(value.timestamp)),
+      correlationId: String(value.correlationId),
+      summary: String(value.summary),
+      errorChain: Array.isArray(value.errorChain)
+        ? value.errorChain.map((entry) => ({
+            service: String((entry as Record<string, unknown>).service),
+            operation: String((entry as Record<string, unknown>).operation),
+            error: String((entry as Record<string, unknown>).error),
+            timestamp: new Date(String((entry as Record<string, unknown>).timestamp)),
+            stack:
+              typeof (entry as Record<string, unknown>).stack === 'string'
+                ? String((entry as Record<string, unknown>).stack)
+                : undefined,
+          }))
+        : [],
+      affectedServices: Array.isArray(value.affectedServices)
+        ? value.affectedServices.map((service) => String(service))
+        : [],
+      failurePoint: {
+        service: String((value.failurePoint as Record<string, unknown>).service),
+        operation: String((value.failurePoint as Record<string, unknown>).operation),
+        timestamp: new Date(String((value.failurePoint as Record<string, unknown>).timestamp)),
+      },
+      systemMetrics: {
+        timestamp: new Date(String((value.systemMetrics as Record<string, unknown>).timestamp)),
+        database: (value.systemMetrics as Record<string, unknown>).database as SystemMetrics['database'],
+        websockets: (value.systemMetrics as Record<string, unknown>).websockets as SystemMetrics['websockets'],
+        memory: (value.systemMetrics as Record<string, unknown>).memory as SystemMetrics['memory'],
+        uptime: Number((value.systemMetrics as Record<string, unknown>).uptime),
+      },
+      userAction: typeof value.userAction === 'string' ? value.userAction : undefined,
+      requestContext: (value.requestContext ?? {}) as ErrorReport['requestContext'],
+      logs: Array.isArray(value.logs)
+        ? value.logs.map((entry) => {
+            const log = entry as Record<string, unknown>;
+            const rawContext = log.context as Record<string, unknown>;
+            const rawError = log.error as Record<string, unknown> | undefined;
+
+            return {
+              id: String(log.id),
+              timestamp: new Date(String(log.timestamp)),
+              level: String(log.level) as LogLevel,
+              message: String(log.message),
+              context: {
+                correlationId:
+                  typeof rawContext?.correlationId === 'string'
+                    ? rawContext.correlationId
+                    : undefined,
+                userId:
+                  typeof rawContext?.userId === 'number' ? rawContext.userId : undefined,
+                patientId:
+                  typeof rawContext?.patientId === 'number' ? rawContext.patientId : undefined,
+                hospitalId:
+                  typeof rawContext?.hospitalId === 'number' ? rawContext.hospitalId : undefined,
+                encounterId:
+                  typeof rawContext?.encounterId === 'number'
+                    ? rawContext.encounterId
+                    : undefined,
+                service: String(rawContext?.service),
+                operation: String(rawContext?.operation),
+              },
+              data:
+                log.data && typeof log.data === 'object' && !Array.isArray(log.data)
+                  ? (log.data as Record<string, unknown>)
+                  : undefined,
+              error: rawError
+                ? {
+                    message: String(rawError.message),
+                    stack:
+                      typeof rawError.stack === 'string' ? String(rawError.stack) : undefined,
+                    code: typeof rawError.code === 'string' ? String(rawError.code) : undefined,
+                  }
+                : undefined,
+            };
+          })
+        : [],
+      exportUrl: String(value.exportUrl),
+    };
+  }
+
+  private getLoggingPrisma(): LoggingPrismaClient {
+    return this.prisma as LoggingPrismaClient;
   }
 }

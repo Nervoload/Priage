@@ -2,10 +2,12 @@
 
 import { IsInt, IsNumber, IsOptional, IsString, MaxLength, Min, Max, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { Sanitize } from '../../../common/decorators/sanitize.decorator';
 
 export class VitalSignsDto {
   @IsOptional()
   @IsString()
+  @Sanitize()
   bloodPressure?: string; // e.g. "120/80"
 
   @IsOptional()
@@ -37,6 +39,7 @@ export class CreateTriageAssessmentDto {
   @IsOptional()
   @IsString()
   @MaxLength(240)
+  @Sanitize()
   chiefComplaint?: string;
 
   @IsOptional()
@@ -53,5 +56,6 @@ export class CreateTriageAssessmentDto {
   @IsOptional()
   @IsString()
   @MaxLength(2000)
+  @Sanitize()
   note?: string;
 }

@@ -93,7 +93,7 @@ export class EventsService {
 
       return event;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to create encounter event in transaction',
         {
           service: 'EventsService',
@@ -143,22 +143,46 @@ export class EventsService {
         case EventType.STATUS_CHANGE:
         case EventType.TRIAGE_CREATED:
         case EventType.TRIAGE_COMPLETED:
-          this.realtime.emitEncounterUpdated(event.hospitalId, event.encounterId, payloadBase as EncounterUpdatedPayload);
+          await this.realtime.emitEncounterUpdated(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as EncounterUpdatedPayload,
+          );
           break;
         case EventType.MESSAGE_CREATED:
-          this.realtime.emitMessageCreated(event.hospitalId, event.encounterId, payloadBase as MessageCreatedPayload);
+          await this.realtime.emitMessageCreated(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as MessageCreatedPayload,
+          );
           break;
         case EventType.MESSAGE_READ:
-          this.realtime.emitMessageRead(event.hospitalId, event.encounterId, payloadBase as unknown as MessageReadPayload);
+          await this.realtime.emitMessageRead(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as unknown as MessageReadPayload,
+          );
           break;
         case EventType.ALERT_CREATED:
-          this.realtime.emitAlertCreated(event.hospitalId, event.encounterId, payloadBase as AlertCreatedPayload);
+          await this.realtime.emitAlertCreated(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as AlertCreatedPayload,
+          );
           break;
         case EventType.ALERT_ACKNOWLEDGED:
-          this.realtime.emitAlertAcknowledged(event.hospitalId, event.encounterId, payloadBase as unknown as AlertAcknowledgedPayload);
+          await this.realtime.emitAlertAcknowledged(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as unknown as AlertAcknowledgedPayload,
+          );
           break;
         case EventType.ALERT_RESOLVED:
-          this.realtime.emitAlertResolved(event.hospitalId, event.encounterId, payloadBase as unknown as AlertResolvedPayload);
+          await this.realtime.emitAlertResolved(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as unknown as AlertResolvedPayload,
+          );
           break;
         default:
           this.loggingService.debug(
@@ -193,7 +217,7 @@ export class EventsService {
       );
       return true;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to dispatch encounter event to realtime',
         {
           service: 'EventsService',

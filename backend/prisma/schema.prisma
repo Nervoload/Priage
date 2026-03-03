@@ -61,6 +61,13 @@ enum AssetStatus {
   DELETED
 }
 
+enum LogRecordLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
 enum EventType {
   // Inbound patient events
   ENCOUNTER_CREATED
@@ -396,4 +403,46 @@ model Asset {
   @@index([messageId, createdAt])
   @@index([status])
   @@index([context])
+}
+
+model LogRecord {
+  id            Int            @id @default(autoincrement())
+  createdAt     DateTime       @default(now())
+  level         LogRecordLevel
+  message       String
+  correlationId String?
+  service       String
+  operation     String
+  userId        Int?
+  patientId     Int?
+  hospitalId    Int?
+  encounterId   Int?
+  data          Json?
+  errorMessage  String?
+  errorStack    String?
+  errorCode     String?
+
+  @@index([createdAt])
+  @@index([level, createdAt])
+  @@index([correlationId, createdAt])
+  @@index([service, operation, createdAt])
+  @@index([hospitalId, createdAt])
+  @@index([encounterId, createdAt])
+  @@index([userId, createdAt])
+  @@index([patientId, createdAt])
+}
+
+model ErrorReportSnapshot {
+  id              Int      @id @default(autoincrement())
+  reportId        String   @unique
+  correlationId   String
+  generatedAt     DateTime @default(now())
+  summary         String
+  errorCount      Int
+  logCount        Int
+  payload         Json
+  createdByUserId Int?
+
+  @@index([correlationId, generatedAt])
+  @@index([generatedAt])
 }

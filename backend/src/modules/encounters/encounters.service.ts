@@ -191,7 +191,7 @@ export class EncountersService {
 
       return encounter;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to create encounter',
         {
           service: 'EncountersService',
@@ -284,7 +284,7 @@ export class EncountersService {
         total,
       };
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to list encounters',
         {
           service: 'EncountersService',
@@ -356,7 +356,7 @@ export class EncountersService {
       });
 
       if (!encounter) {
-        this.loggingService.warn(
+        await this.loggingService.warn(
           'Encounter not found',
           {
             service: 'EncountersService',
@@ -397,7 +397,7 @@ export class EncountersService {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to fetch encounter',
         {
           service: 'EncountersService',
@@ -445,7 +445,7 @@ export class EncountersService {
   ) {
     const transition = TRANSITIONS[transitionKey];
     if (!transition) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Unknown transition attempted',
         {
           service: 'EncountersService',
@@ -493,7 +493,7 @@ export class EncountersService {
           },
         });
         if (!current) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Encounter not found during transition',
             {
               service: 'EncountersService',
@@ -511,7 +511,7 @@ export class EncountersService {
         }
 
         if (TERMINAL_STATUSES.has(current.status)) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Transition attempted on terminal status',
             {
               service: 'EncountersService',
@@ -529,7 +529,7 @@ export class EncountersService {
         }
 
         if (!transition.allowedFrom.includes(current.status)) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Invalid state transition attempted',
             {
               service: 'EncountersService',
@@ -647,7 +647,7 @@ export class EncountersService {
         throw error;
       }
 
-      this.loggingService.error(
+      await this.loggingService.error(
         'Encounter transition failed',
         {
           service: 'EncountersService',
@@ -879,7 +879,7 @@ export class EncountersService {
     });
 
     if (!encounter || encounter.patientId !== patientId) {
-      this.loggingService.warn(
+      await this.loggingService.warn(
         'Patient attempted to access queue position for another encounter',
         {
           service: 'EncountersService',

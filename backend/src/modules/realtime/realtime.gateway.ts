@@ -69,8 +69,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly messagingService: MessagingService,
   ) {}
 
-  afterInit(server: Server) {
-    this.realtimeRedisAdapter.attach(server);
+  async afterInit(server: Server) {
+    await this.realtimeRedisAdapter.attach(server);
     this.logger.log('WebSocket Gateway initialized');
     this.logger.log('CORS enabled for all origins');
 
@@ -88,7 +88,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         stack: error.stack,
       });
 
-      this.loggingService.error('WebSocket server error', {
+      void this.loggingService.error('WebSocket server error', {
         service: 'RealtimeGateway',
         operation: 'serverError',
       }, error);
@@ -115,7 +115,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const token = this.extractToken(client);
       if (!token) {
-        this.loggingService.warn('Connection rejected - no authentication token', {
+        await this.loggingService.warn('Connection rejected - no authentication token', {
           service: 'RealtimeGateway',
           operation: 'handleConnection',
         }, {
@@ -173,7 +173,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
             encounterIds: encounters.map((encounter) => encounter.id),
           });
         } catch (dbError) {
-          this.loggingService.error('Failed to subscribe to encounter rooms', {
+          await this.loggingService.error('Failed to subscribe to encounter rooms', {
             service: 'RealtimeGateway',
             operation: 'handleConnection',
             userId: trustedUser.userId,
@@ -196,7 +196,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.loggingService.warn('Connection rejected during authentication', {
+      await this.loggingService.warn('Connection rejected during authentication', {
         service: 'RealtimeGateway',
         operation: 'handleConnection',
       }, {
@@ -250,7 +250,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
 
     if (!RealtimeGateway.MESSAGE_SEND_ALLOWED_ROLES.has(trustedUser.role as Role)) {
-      this.loggingService.warn('Socket message rejected - role not permitted', {
+      await this.loggingService.warn('Socket message rejected - role not permitted', {
         service: 'RealtimeGateway',
         operation: 'handleMessageSend',
         userId: trustedUser.userId,
@@ -278,7 +278,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         ? this.formatValidationErrors(errors)
         : 'content or assetIds is required';
 
-      this.loggingService.warn('Socket message rejected - validation failed', {
+      await this.loggingService.warn('Socket message rejected - validation failed', {
         service: 'RealtimeGateway',
         operation: 'handleMessageSend',
         correlationId,
@@ -327,23 +327,42 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     } catch (error) {
       const mapped = this.mapMessageSendError(error);
 
-      this.loggingService[mapped.code === 'INTERNAL_ERROR' ? 'error' : 'warn'](
-        'Socket message send failed',
-        {
-          service: 'RealtimeGateway',
-          operation: 'handleMessageSend',
-          correlationId,
-          userId: trustedUser.userId,
-          hospitalId: trustedUser.hospitalId,
-          encounterId: payload.encounterId,
-        },
-        mapped.code === 'INTERNAL_ERROR' && error instanceof Error ? error : undefined,
-        {
-          clientId: client.id,
-          errorCode: mapped.code,
-          errorMessage: mapped.message,
-        },
-      );
+      if (mapped.code === 'INTERNAL_ERROR') {
+        await this.loggingService.error(
+          'Socket message send failed',
+          {
+            service: 'RealtimeGateway',
+            operation: 'handleMessageSend',
+            correlationId,
+            userId: trustedUser.userId,
+            hospitalId: trustedUser.hospitalId,
+            encounterId: payload.encounterId,
+          },
+          error instanceof Error ? error : undefined,
+          {
+            clientId: client.id,
+            errorCode: mapped.code,
+            errorMessage: mapped.message,
+          },
+        );
+      } else {
+        await this.loggingService.warn(
+          'Socket message send failed',
+          {
+            service: 'RealtimeGateway',
+            operation: 'handleMessageSend',
+            correlationId,
+            userId: trustedUser.userId,
+            hospitalId: trustedUser.hospitalId,
+            encounterId: payload.encounterId,
+          },
+          {
+            clientId: client.id,
+            errorCode: mapped.code,
+            errorMessage: mapped.message,
+          },
+        );
+      }
 
       return {
         ok: false,
@@ -352,7 +371,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitEncounterUpdated(hospitalId: number, encounterId: number, payload: EncounterUpdatedPayload): void {
+  async emitEncounterUpdated(
+    hospitalId: number,
+    encounterId: number,
+    payload: EncounterUpdatedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
@@ -368,7 +391,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         event: RealtimeEvents.EncounterUpdated,
       });
     } catch (error) {
-      this.loggingService.error('Failed to emit encounter update', {
+      await this.loggingService.error('Failed to emit encounter update', {
         service: 'RealtimeGateway',
         operation: 'emitEncounterUpdated',
         hospitalId,
@@ -377,7 +400,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitMessageCreated(hospitalId: number, encounterId: number, payload: MessageCreatedPayload): void {
+  async emitMessageCreated(
+    hospitalId: number,
+    encounterId: number,
+    payload: MessageCreatedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
@@ -393,7 +420,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         event: RealtimeEvents.MessageCreated,
       });
     } catch (error) {
-      this.loggingService.error('Failed to emit message created', {
+      await this.loggingService.error('Failed to emit message created', {
         service: 'RealtimeGateway',
         operation: 'emitMessageCreated',
         hospitalId,
@@ -402,23 +429,35 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitAlertCreated(hospitalId: number, encounterId: number, payload: AlertCreatedPayload): void {
+  async emitAlertCreated(
+    hospitalId: number,
+    encounterId: number,
+    payload: AlertCreatedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
 
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertCreated, payload);
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to emit alert created',
-        hospitalId,
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      await this.loggingService.error(
+        'Failed to emit alert created',
+        {
+          service: 'RealtimeGateway',
+          operation: 'emitAlertCreated',
+          hospitalId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 
-  emitMessageRead(hospitalId: number, encounterId: number, payload: MessageReadPayload): void {
+  async emitMessageRead(
+    hospitalId: number,
+    encounterId: number,
+    payload: MessageReadPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
@@ -434,7 +473,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         event: RealtimeEvents.MessageRead,
       });
     } catch (error) {
-      this.loggingService.error('Failed to emit message read', {
+      await this.loggingService.error('Failed to emit message read', {
         service: 'RealtimeGateway',
         operation: 'emitMessageRead',
         hospitalId,
@@ -443,35 +482,51 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitAlertAcknowledged(hospitalId: number, encounterId: number, payload: AlertAcknowledgedPayload): void {
+  async emitAlertAcknowledged(
+    hospitalId: number,
+    encounterId: number,
+    payload: AlertAcknowledgedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
 
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to emit alert acknowledged',
-        hospitalId,
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      await this.loggingService.error(
+        'Failed to emit alert acknowledged',
+        {
+          service: 'RealtimeGateway',
+          operation: 'emitAlertAcknowledged',
+          hospitalId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 
-  emitAlertResolved(hospitalId: number, encounterId: number, payload: AlertResolvedPayload): void {
+  async emitAlertResolved(
+    hospitalId: number,
+    encounterId: number,
+    payload: AlertResolvedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
 
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertResolved, payload);
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to emit alert resolved',
-        hospitalId,
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      await this.loggingService.error(
+        'Failed to emit alert resolved',
+        {
+          service: 'RealtimeGateway',
+          operation: 'emitAlertResolved',
+          hospitalId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 

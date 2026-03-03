@@ -2,7 +2,13 @@
 
 ## Overview
 
-This guide explains how to extract logs, generate error reports, and query the logging system for debugging, auditing, and performance analysis. The Priage logging system provides multiple methods for accessing log data through REST APIs, making it easy to retrieve exactly the information you need.
+This guide explains how to extract logs, generate error reports, and query the logging system for debugging, auditing, and performance analysis. The Priage logging system now reads persisted log data and report snapshots from Postgres, so the results are not tied to a single backend process.
+
+## Current behavior
+
+- `/logging/correlation/:id` and `/logging/query` read persisted database rows
+- `/logging/error-reports/*` reads and stores report snapshots in Postgres
+- endpoints support pagination and only return sanitized persisted metadata
 
 ## Quick Reference
 
@@ -430,41 +436,30 @@ curl http://localhost:3000/logging/stats
 ```json
 {
   "totalLogs": 3247,
-  "byLevel": {
+  "totalReports": 18,
+  "countsByLevel": {
     "debug": 1823,
     "info": 1289,
     "warn": 112,
     "error": 23
   },
-  "byService": {
-    "EncountersService": 892,
-    "AlertsService": 456,
-    "MessagingService": 378,
-    "TriageService": 234,
-    "PrismaService": 189,
-    "AuthService": 167,
-    "EventsService": 145,
-    "JobsService": 98,
-    "IntakeService": 234,
-    "RealtimeGateway": 189,
-    "PatientsService": 89,
-    "UsersService": 123,
-    "HospitalsService": 53
-  },
   "oldestLog": "2026-01-19T14:32:15.234Z",
-  "newestLog": "2026-01-20T14:32:15.234Z",
-  "retentionHours": 24,
-  "memoryUsageMB": 4.2
+  "dbLoggingEnabled": true,
+  "dbMinLevel": "warn",
+  "retentionDays": 30,
+  "memoryUsage": {
+    "heapUsed": 44040192
+  }
 }
 ```
 
 ### Understanding Statistics
 
 **Total Logs:**
-Current number of logs in memory. Should be under 10,000 for production.
+Current number of persisted log rows in Postgres.
 
 **By Level:**
-Distribution of logs by severity. High error count indicates system issues.
+Counts for the recent reporting window returned by `/logging/stats`.
 
 **By Service:**
 Distribution of logs by service. Helps identify chattiest services.
@@ -614,7 +609,7 @@ curl "/logging/query?service=EncountersService"
 
 ### 3. Export for Long-Term Storage
 
-Error reports are only kept for 24 hours. Export important reports:
+Error reports are persisted in Postgres and follow the same retention window as log cleanup. Export important reports if you need to keep them longer than the configured retention:
 
 ```bash
 # First generate a report to get reportId
@@ -627,7 +622,7 @@ Check stats endpoint regularly to ensure healthy operation:
 
 ```bash
 # Add to monitoring dashboard
-*/5 * * * * curl http://localhost:3000/logging/stats | jq '.totalLogs,.byLevel.error'
+*/5 * * * * curl http://localhost:3000/logging/stats | jq '.totalLogs,.countsByLevel.error'
 ```
 
 ### 5. Use Text Export for Documentation
@@ -668,12 +663,12 @@ See attached error report: [error-report.txt]
 **Solutions:**
 1. Ensure correlation ID was passed through entire request flow
 2. Verify all services in the flow use LoggingService
-3. Check that error occurred recently (within 24 hours)
+3. Check that the correlation still falls within the configured retention window
 4. Confirm system metrics services are running (Prisma, Socket.IO)
 
 ### Memory Warnings
 
-**Problem:** Stats show totalLogs near 10,000 or memory usage high.
+**Problem:** Stats show unexpected persisted log growth or elevated memory usage.
 
 **Solutions:**
 1. Check if retention cleanup is running (should run hourly)

@@ -361,12 +361,19 @@ export class AssetsService {
       where: { id: assetId },
       select: {
         id: true,
+        context: true,
+        messageId: true,
         mimeType: true,
         sha256: true,
         updatedAt: true,
         storageKey: true,
         status: true,
         createdByPatientId: true,
+        message: {
+          select: {
+            isInternal: true,
+          },
+        },
         patientSession: {
           select: { patientId: true },
         },
@@ -380,13 +387,17 @@ export class AssetsService {
       throw new NotFoundException(`Asset ${assetId} not found`);
     }
 
-    const ownedByPatient = (
-      asset.createdByPatientId === patientId ||
-      asset.patientSession?.patientId === patientId ||
-      asset.encounter?.patientId === patientId
-    );
+    const uploadedByPatient =
+      asset.createdByPatientId === patientId || asset.patientSession?.patientId === patientId;
+    const belongsToPatientEncounter = asset.encounter?.patientId === patientId;
+    const isPatientVisibleEncounterAsset =
+      belongsToPatientEncounter &&
+      (
+        asset.context === AssetContext.INTAKE_IMAGE ||
+        (asset.messageId !== null && asset.message?.isInternal === false)
+      );
 
-    if (!ownedByPatient) {
+    if (!uploadedByPatient && !isPatientVisibleEncounterAsset) {
       throw new NotFoundException(`Asset ${assetId} not found`);
     }
 

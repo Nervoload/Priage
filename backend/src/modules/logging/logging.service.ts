@@ -1,106 +1,251 @@
 // backend/src/modules/logging/logging.service.ts
-// Centralized logging service with correlation support
+// Centralized logging service backed by Postgres via Prisma.
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
+import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
+
+import { PrismaService } from '../prisma/prisma.service';
+import { CorrelationLogBufferService } from './correlation-log-buffer.service';
 import { LogContext, LogEntry, LogLevel, LogQuery } from './types/log-entry.type';
 
-@Injectable()
-export class LoggingService {
-  private readonly logger = new Logger(LoggingService.name);
-  private readonly logs: Map<string, LogEntry[]> = new Map(); // In-memory store (dev mode)
-  private readonly maxLogsPerCorrelation = 1000;
-  private readonly maxTotalLogs = 10000;
-  private readonly retentionMs = 24 * 60 * 60 * 1000; // 24 hours
+type SanitizedContext = Pick<
+  LogContext,
+  'correlationId' | 'userId' | 'patientId' | 'hospitalId' | 'encounterId' | 'service' | 'operation'
+>;
 
-  constructor() {
+type QueryResult = {
+  count: number;
+  logs: LogEntry[];
+  meta: {
+    limit: number;
+    offset: number;
+  };
+};
+
+type DbLogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+type SanitizedData = Record<string, boolean | number | string | Array<number | string>>;
+
+type LogRecordRow = {
+  id: number;
+  createdAt: Date;
+  level: DbLogLevel;
+  message: string;
+  correlationId: string | null;
+  service: string;
+  operation: string;
+  userId: number | null;
+  patientId: number | null;
+  hospitalId: number | null;
+  encounterId: number | null;
+  data: Prisma.JsonValue | null;
+  errorMessage: string | null;
+  errorStack: string | null;
+  errorCode: string | null;
+};
+
+type LoggingPrismaClient = PrismaService & {
+  logRecord: {
+    create(args: unknown): Promise<LogRecordRow>;
+    count(args?: unknown): Promise<number>;
+    findMany(args?: unknown): Promise<LogRecordRow[]>;
+    findFirst(args?: unknown): Promise<{ createdAt: Date } | null>;
+    groupBy(args: unknown): Promise<Array<{ level: DbLogLevel; _count: { _all: number } }>>;
+    deleteMany(args?: unknown): Promise<{ count: number }>;
+  };
+  errorReportSnapshot: {
+    count(args?: unknown): Promise<number>;
+    deleteMany(args?: unknown): Promise<{ count: number }>;
+  };
+};
+
+const LEVEL_ORDER: Record<LogLevel, number> = {
+  [LogLevel.DEBUG]: 10,
+  [LogLevel.INFO]: 20,
+  [LogLevel.WARN]: 30,
+  [LogLevel.ERROR]: 40,
+};
+
+const SAFE_STRING_KEYS = new Set([
+  'queue',
+  'jobName',
+  'senderType',
+  'role',
+  'interval',
+  'status',
+  'encounterStatus',
+  'severity',
+  'type',
+  'eventType',
+  'method',
+  'path',
+  'loginMethod',
+]);
+
+const SAFE_NUMERIC_KEYS = new Set([
+  'attempt',
+  'maxAttempts',
+  'thresholdMinutes',
+  'durationMs',
+  'ttlSeconds',
+  'page',
+  'limit',
+  'offset',
+  'poolSize',
+  'idleConnections',
+  'waitingClients',
+  'totalConnections',
+  'attachmentCount',
+]);
+
+@Injectable()
+export class LoggingService implements OnModuleInit {
+  private readonly logger = new Logger(LoggingService.name);
+  private prisma: PrismaService | null = null;
+  private readonly logDbEnabled = this.parseBooleanEnv(process.env.LOG_DB_ENABLED, true);
+  private readonly logDbMinLevel = this.parseDbMinLevel(process.env.LOG_DB_MIN_LEVEL);
+  private readonly logRetentionDays = this.parseNumberEnv(process.env.LOG_RETENTION_DAYS, 30);
+  private readonly logQueryDefaultLimit = this.parseNumberEnv(
+    process.env.LOG_QUERY_DEFAULT_LIMIT,
+    100,
+  );
+  private readonly logQueryMaxLimit = this.parseNumberEnv(process.env.LOG_QUERY_MAX_LIMIT, 500);
+
+  constructor(
+    private readonly moduleRef: ModuleRef,
+    private readonly correlationBuffer: CorrelationLogBufferService,
+  ) {
     this.logger.log('LoggingService initialized');
-    
-    // Cleanup old logs periodically
-    setInterval(() => this.cleanupOldLogs(), 60 * 60 * 1000); // Every hour
   }
 
-  /**
-   * Log an operation with full context and correlation
-   * CRITICAL: This method MUST NOT throw - logging failures should never crash the app
-   */
-  logOperation(
+  onModuleInit() {
+    this.prisma = this.resolvePrisma();
+  }
+
+  async logOperation(
     level: LogLevel,
     message: string,
     context: LogContext,
-    data?: any,
+    data?: unknown,
     error?: Error,
-  ): LogEntry | null {
+  ): Promise<LogEntry | null> {
     try {
-      const entry: LogEntry = {
-        id: randomUUID(),
-        timestamp: new Date(),
-        level,
-        message,
-        context: { ...context },
-        data: this.sanitizeData(data),
-      };
+      const sanitizedContext = this.sanitizePersistedContext(context);
+      const sanitizedData = this.sanitizePersistedData(
+        data,
+        sanitizedContext.service,
+        sanitizedContext.operation,
+      );
 
-      if (error) {
-        entry.error = {
-          message: error.message,
-          stack: error.stack,
-          code: (error as any).code,
-        };
+      const fallbackEntry = this.buildLogEntry(level, message, sanitizedContext, sanitizedData, error);
+      this.logToConsole(level, message, sanitizedContext, sanitizedData, error);
+
+      const correlationId = sanitizedContext.correlationId;
+      const shouldPersist = this.shouldPersistLevel(level);
+      const isPromoted =
+        !!correlationId && this.correlationBuffer.isEnabled()
+          ? await this.correlationBuffer.isPromoted(correlationId)
+          : false;
+
+      if (correlationId && isPromoted) {
+        await this.correlationBuffer.touchPromotion(correlationId);
       }
 
-      // Store by correlation ID for quick lookup
-      const correlationId = context.correlationId || 'uncorrelated';
-      if (!this.logs.has(correlationId)) {
-        this.logs.set(correlationId, []);
+      if (
+        correlationId &&
+        !isPromoted &&
+        !shouldPersist &&
+        level !== LogLevel.WARN &&
+        level !== LogLevel.ERROR
+      ) {
+        await this.correlationBuffer.append(fallbackEntry);
+        return fallbackEntry;
       }
 
-      const correlationLogs = this.logs.get(correlationId)!;
-      correlationLogs.push(entry);
-
-      // Limit logs per correlation to prevent memory issues
-      if (correlationLogs.length > this.maxLogsPerCorrelation) {
-        correlationLogs.shift();
+      if (correlationId && !isPromoted && (level === LogLevel.WARN || level === LogLevel.ERROR)) {
+        await this.correlationBuffer.promote(correlationId);
       }
 
-      // Also log to NestJS logger for console output
-      this.logToConsole(level, message, context, error);
+      const shouldPersistEntry =
+        shouldPersist ||
+        (!!correlationId &&
+          this.correlationBuffer.isEnabled() &&
+          (isPromoted || level === LogLevel.WARN || level === LogLevel.ERROR));
 
-      // Cleanup if total logs exceed limit
-      if (this.getTotalLogCount() > this.maxTotalLogs) {
-        this.cleanupOldestCorrelation();
+      if (!shouldPersistEntry) {
+        return fallbackEntry;
       }
 
-      return entry;
+      const created = await this.persistEntry(fallbackEntry);
+
+      if (correlationId && (isPromoted || level === LogLevel.WARN || level === LogLevel.ERROR)) {
+        if (level === LogLevel.WARN || level === LogLevel.ERROR) {
+          await this.flushCorrelation(correlationId);
+        }
+      }
+
+      return created ?? fallbackEntry;
     } catch (loggingError) {
-      // CRITICAL: Logging failure should never crash the app
-      // Log to console as last resort, but don't throw
       try {
         console.error('[LoggingService] CRITICAL: Logging operation failed', {
           originalMessage: message,
-          loggingError: loggingError instanceof Error ? loggingError.message : String(loggingError),
-          context,
+          loggingError:
+            loggingError instanceof Error ? loggingError.message : String(loggingError),
+          service: context.service,
+          operation: context.operation,
+          correlationId: context.correlationId,
         });
       } catch {
-        // Even console.error failed - silent fail to keep app running
+        // Silent fail is preferable to breaking the request path.
       }
       return null;
     }
   }
 
-  /**
-   * Convenience methods for different log levels
-   * These wrap logOperation with error handling
-   */
-  debug(message: string, context: LogContext, data?: any): LogEntry | null {
+  async flushCorrelation(correlationId: string): Promise<void> {
+    if (!correlationId || !this.correlationBuffer.isEnabled()) {
+      return;
+    }
+
+    const [isPromoted, hasProcessingEntries] = await Promise.all([
+      this.correlationBuffer.isPromoted(correlationId),
+      this.correlationBuffer.hasProcessingEntries(correlationId),
+    ]);
+
+    if (!isPromoted && !hasProcessingEntries) {
+      return;
+    }
+
+    try {
+      await this.correlationBuffer.flush(correlationId, async (entries) => {
+        if (entries.length === 0) {
+          return;
+        }
+
+        await this.persistBufferedEntries(entries);
+      });
+    } catch (error) {
+      try {
+        console.error('[LoggingService] Failed to flush correlation logs', {
+          correlationId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        // Silent fallback to avoid breaking request paths.
+      }
+    }
+  }
+
+  debug(message: string, context: LogContext, data?: unknown): Promise<LogEntry | null> {
     return this.logOperation(LogLevel.DEBUG, message, context, data);
   }
 
-  info(message: string, context: LogContext, data?: any): LogEntry | null {
+  info(message: string, context: LogContext, data?: unknown): Promise<LogEntry | null> {
     return this.logOperation(LogLevel.INFO, message, context, data);
   }
 
-  warn(message: string, context: LogContext, data?: any): LogEntry | null {
+  warn(message: string, context: LogContext, data?: unknown): Promise<LogEntry | null> {
     return this.logOperation(LogLevel.WARN, message, context, data);
   }
 
@@ -108,100 +253,328 @@ export class LoggingService {
     message: string,
     context: LogContext,
     error?: Error,
-    data?: any,
-  ): LogEntry | null {
+    data?: unknown,
+  ): Promise<LogEntry | null> {
     return this.logOperation(LogLevel.ERROR, message, context, data, error);
   }
 
-  /**
-   * Get all logs for a specific correlation ID
-   */
-  getLogsByCorrelationId(correlationId: string): LogEntry[] {
-    return this.logs.get(correlationId) || [];
+  async getLogsByCorrelationId(
+    correlationId: string,
+    options?: { limit?: number; offset?: number },
+  ): Promise<QueryResult> {
+    const { limit, offset } = this.normalizePagination(options?.limit, options?.offset);
+    await this.flushCorrelation(correlationId);
+
+    const prisma = this.getPrismaOrThrow();
+    const where = { correlationId };
+
+    const [count, rows] = await prisma.$transaction([
+      prisma.logRecord.count({ where }),
+      prisma.logRecord.findMany({
+        where,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        skip: offset,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      count,
+      logs: rows.map((row) => this.mapRecordToLogEntry(row)),
+      meta: { limit, offset },
+    };
   }
 
-  /**
-   * Query logs with filters
-   */
-  queryLogs(query: LogQuery): LogEntry[] {
-    let results: LogEntry[] = [];
-
-    // If correlation ID provided, only search that
+  async queryLogs(query: LogQuery): Promise<QueryResult> {
+    const { limit, offset } = this.normalizePagination(query.limit, query.offset);
     if (query.correlationId) {
-      results = this.logs.get(query.correlationId) || [];
-    } else {
-      // Search all logs
-      for (const logs of this.logs.values()) {
-        results.push(...logs);
-      }
+      await this.flushCorrelation(query.correlationId);
+    }
+    const prisma = this.getPrismaOrThrow();
+    const where = {
+      correlationId: query.correlationId,
+      service: query.service,
+      userId: query.userId,
+      patientId: query.patientId,
+      hospitalId: query.hospitalId,
+      encounterId: query.encounterId,
+      level: query.level ? this.mapLevelToRecordLevel(query.level) : undefined,
+      createdAt:
+        query.startTime || query.endTime
+          ? {
+              gte: query.startTime,
+              lte: query.endTime,
+            }
+          : undefined,
+    };
+
+    const [count, rows] = await prisma.$transaction([
+      prisma.logRecord.count({ where }),
+      prisma.logRecord.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      count,
+      logs: rows.map((row) => this.mapRecordToLogEntry(row)),
+      meta: { limit, offset },
+    };
+  }
+
+  async getErrorLogs(correlationId: string): Promise<LogEntry[]> {
+    await this.flushCorrelation(correlationId);
+    const prisma = this.getPrismaOrThrow();
+    const rows = await prisma.logRecord.findMany({
+      where: {
+        correlationId,
+        level: 'ERROR' as const,
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+
+    return rows.map((row) => this.mapRecordToLogEntry(row));
+  }
+
+  async hasErrors(correlationId: string): Promise<boolean> {
+    await this.flushCorrelation(correlationId);
+    const prisma = this.getPrismaOrThrow();
+    const count = await prisma.logRecord.count({
+      where: {
+        correlationId,
+        level: 'ERROR' as const,
+      },
+    });
+
+    return count > 0;
+  }
+
+  async getStats() {
+    const prisma = this.getPrismaOrThrow();
+    const recentWindowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [totalLogs, totalReports, oldestLog, recentCounts] = await Promise.all([
+      prisma.logRecord.count(),
+      prisma.errorReportSnapshot.count(),
+      prisma.logRecord.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      }),
+      prisma.logRecord.groupBy({
+        by: ['level'],
+        where: {
+          createdAt: {
+            gte: recentWindowStart,
+          },
+        },
+        _count: {
+          _all: true,
+        },
+      }),
+    ]);
+
+    const countsByLevel = {
+      debug: 0,
+      info: 0,
+      warn: 0,
+      error: 0,
+    };
+
+    for (const row of recentCounts) {
+      countsByLevel[this.mapRecordLevelToLogLevel(row.level)] = row._count._all;
     }
 
-    // Apply filters
-    return results.filter((log) => {
-      if (query.level && log.level !== query.level) return false;
-      if (query.service && log.context.service !== query.service) return false;
-      if (query.userId && log.context.userId !== query.userId) return false;
-      if (query.hospitalId && log.context.hospitalId !== query.hospitalId) return false;
-      if (query.encounterId && log.context.encounterId !== query.encounterId) return false;
-      if (query.startTime && log.timestamp < query.startTime) return false;
-      if (query.endTime && log.timestamp > query.endTime) return false;
-      return true;
-    });
-  }
-
-  /**
-   * Get error logs for a correlation ID
-   */
-  getErrorLogs(correlationId: string): LogEntry[] {
-    const logs = this.getLogsByCorrelationId(correlationId);
-    return logs.filter((log) => log.level === LogLevel.ERROR);
-  }
-
-  /**
-   * Check if a correlation ID has errors
-   */
-  hasErrors(correlationId: string): boolean {
-    const errors = this.getErrorLogs(correlationId);
-    return errors.length > 0;
-  }
-
-  /**
-   * Get statistics about stored logs
-   */
-  getStats() {
     return {
-      totalCorrelations: this.logs.size,
-      totalLogs: this.getTotalLogCount(),
-      oldestLog: this.getOldestLogTimestamp(),
+      totalLogs,
+      totalReports,
+      oldestLog: oldestLog?.createdAt ?? null,
+      dbLoggingEnabled: this.logDbEnabled,
+      dbMinLevel: this.logDbMinLevel,
+      retentionDays: this.logRetentionDays,
+      countsByLevel,
+      buffer: this.correlationBuffer.getStats(),
       memoryUsage: process.memoryUsage(),
     };
   }
 
-  /**
-   * Clear all logs (for testing or manual cleanup)
-   */
-  clearAll() {
-    this.logs.clear();
-    this.logger.warn('All logs cleared');
+  sanitizePersistedContext(context: LogContext): SanitizedContext {
+    return {
+      correlationId: context.correlationId,
+      userId: context.userId,
+      patientId: context.patientId,
+      hospitalId: context.hospitalId,
+      encounterId: context.encounterId,
+      service: context.service,
+      operation: context.operation,
+    };
   }
 
-  /**
-   * Clear logs for a specific correlation ID
-   */
-  clearCorrelation(correlationId: string) {
-    this.logs.delete(correlationId);
+  sanitizePersistedData(data: unknown, _service: string, _operation: string) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return undefined;
+    }
+
+    const sanitized: Record<string, boolean | number | string | Array<number | string>> = {};
+
+    for (const [key, value] of Object.entries(data)) {
+      const normalized = this.normalizeSafeValue(key, value);
+      if (normalized !== undefined) {
+        sanitized[key] = normalized;
+      }
+    }
+
+    return Object.keys(sanitized).length > 0 ? sanitized : undefined;
   }
 
-  // Private helper methods
+  shouldPersistLevel(level: LogLevel): boolean {
+    if (!this.logDbEnabled) {
+      return false;
+    }
 
-  private logToConsole(level: LogLevel, message: string, context: LogContext, error?: Error) {
+    return LEVEL_ORDER[level] >= LEVEL_ORDER[this.logDbMinLevel];
+  }
+
+  async purgeOlderThan(cutoff: Date) {
+    const prisma = this.getPrismaOrThrow();
+
+    const [deletedLogs, deletedReports] = await prisma.$transaction([
+      prisma.logRecord.deleteMany({
+        where: {
+          createdAt: { lt: cutoff },
+        },
+      }),
+      prisma.errorReportSnapshot.deleteMany({
+        where: {
+          generatedAt: { lt: cutoff },
+        },
+      }),
+    ]);
+
+    return {
+      deletedLogs: deletedLogs.count,
+      deletedReports: deletedReports.count,
+      cutoff,
+    };
+  }
+
+  private async persistEntry(entry: LogEntry): Promise<LogEntry | null> {
+    const prisma = this.getPrisma();
+    if (!prisma) {
+      return entry;
+    }
+
+    const created = await prisma.logRecord.create({
+      data: this.buildCreateInput(entry),
+    });
+
+    return this.mapRecordToLogEntry(created);
+  }
+
+  private async persistBufferedEntries(entries: LogEntry[]): Promise<void> {
+    const prisma = this.getPrisma();
+    if (!prisma || entries.length === 0) {
+      return;
+    }
+
+    await prisma.$transaction(
+      entries.map((entry) =>
+        prisma.logRecord.create({
+          data: this.buildCreateInput(entry),
+        }),
+      ),
+    );
+  }
+
+  private buildCreateInput(entry: LogEntry) {
+    return {
+      createdAt: entry.timestamp,
+      level: this.mapLevelToRecordLevel(entry.level),
+      message: entry.message,
+      correlationId: entry.context.correlationId,
+      service: entry.context.service,
+      operation: entry.context.operation,
+      userId: entry.context.userId,
+      patientId: entry.context.patientId,
+      hospitalId: entry.context.hospitalId,
+      encounterId: entry.context.encounterId,
+      data: entry.data as Prisma.InputJsonValue | undefined,
+      errorMessage: entry.error?.message,
+      errorStack: entry.level === LogLevel.ERROR ? entry.error?.stack : undefined,
+      errorCode: entry.error?.code,
+    };
+  }
+
+  private buildLogEntry(
+    level: LogLevel,
+    message: string,
+    context: SanitizedContext,
+    data?: SanitizedData,
+    error?: Error,
+  ): LogEntry {
+    return {
+      id: randomUUID(),
+      timestamp: new Date(),
+      level,
+      message,
+      context,
+      data,
+      error: error
+        ? {
+            message: error.message,
+            stack: level === LogLevel.ERROR ? error.stack : undefined,
+            code: this.getErrorCode(error),
+          }
+        : undefined,
+    };
+  }
+
+  private mapRecordToLogEntry(
+    row: LogRecordRow,
+  ): LogEntry {
+    return {
+      id: String(row.id),
+      timestamp: row.createdAt,
+      level: this.mapRecordLevelToLogLevel(row.level),
+      message: row.message,
+      context: {
+        correlationId: row.correlationId ?? undefined,
+        userId: row.userId ?? undefined,
+        patientId: row.patientId ?? undefined,
+        hospitalId: row.hospitalId ?? undefined,
+        encounterId: row.encounterId ?? undefined,
+        service: row.service,
+        operation: row.operation,
+      },
+      data:
+        row.data && typeof row.data === 'object' && !Array.isArray(row.data)
+          ? (row.data as Record<string, unknown>)
+          : undefined,
+      error:
+        row.errorMessage || row.errorStack || row.errorCode
+          ? {
+              message: row.errorMessage ?? row.message,
+              stack: row.errorStack ?? undefined,
+              code: row.errorCode ?? undefined,
+            }
+          : undefined,
+    };
+  }
+
+  private logToConsole(
+    level: LogLevel,
+    message: string,
+    context: SanitizedContext,
+    data?: Record<string, boolean | number | string | Array<number | string>>,
+    error?: Error,
+  ) {
     try {
       const logData = {
         ...context,
         message,
-        correlationId: context.correlationId,
-        service: context.service,
-        operation: context.operation,
+        data,
       };
 
       switch (level) {
@@ -219,118 +592,193 @@ export class LoggingService {
           break;
       }
     } catch (consoleError) {
-      // Even console logging failed - use basic console.error as absolute fallback
       try {
         console.error('[LoggingService] Console logging failed', {
           level,
           message,
-          error: consoleError,
+          error: consoleError instanceof Error ? consoleError.message : String(consoleError),
         });
       } catch {
-        // Absolute worst case - silent fail
+        // Silent fail as absolute fallback.
       }
     }
   }
 
-  private sanitizeData(data: any): any {
-    if (!data) return undefined;
+  private normalizeSafeValue(
+    key: string,
+    value: unknown,
+  ): boolean | number | string | Array<number | string> | undefined {
+    if (!this.isAllowedDataKey(key)) {
+      return undefined;
+    }
 
-    // Remove sensitive fields
-    const sensitive = ['password', 'token', 'secret', 'apiKey', 'authorization'];
-    
-    const sanitize = (obj: any): any => {
-      if (typeof obj !== 'object' || obj === null) return obj;
-      
-      if (Array.isArray(obj)) {
-        return obj.map(sanitize);
-      }
+    if (typeof value === 'boolean') {
+      return value;
+    }
 
-      const sanitized: any = {};
-      for (const [key, value] of Object.entries(obj)) {
-        if (sensitive.some(s => key.toLowerCase().includes(s))) {
-          sanitized[key] = '[REDACTED]';
-        } else if (typeof value === 'object') {
-          sanitized[key] = sanitize(value);
-        } else {
-          sanitized[key] = value;
-        }
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : undefined;
+    }
+
+    if (typeof value === 'string') {
+      if (!this.isAllowedStringValue(key, value)) {
+        return undefined;
       }
-      return sanitized;
+      return value;
+    }
+
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    if (Array.isArray(value) && this.isAllowedArrayKey(key)) {
+      const normalized = value
+        .map((item) => {
+          if (typeof item === 'number' && Number.isFinite(item)) {
+            return item;
+          }
+          if (typeof item === 'string' && item.length <= 100) {
+            return item;
+          }
+          return undefined;
+        })
+        .filter((item): item is number | string => item !== undefined);
+
+      return normalized.length > 0 ? normalized : undefined;
+    }
+
+    return undefined;
+  }
+
+  private isAllowedDataKey(key: string): boolean {
+    if (SAFE_STRING_KEYS.has(key) || SAFE_NUMERIC_KEYS.has(key)) {
+      return true;
+    }
+
+    if (/^(has|is|can|should)[A-Z]/.test(key)) {
+      return true;
+    }
+
+    if (/(Id|Ids|Count|Ms|Seconds|Minutes|Page|Limit|Offset|Attempts|Size|Connections)$/.test(key)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private isAllowedStringValue(key: string, value: string): boolean {
+    if (value.length > 120) {
+      return false;
+    }
+
+    return SAFE_STRING_KEYS.has(key) || /(Id|Ids|Status|Type|Role)$/.test(key);
+  }
+
+  private isAllowedArrayKey(key: string): boolean {
+    return /(Ids|Statuses|Types)$/.test(key);
+  }
+
+  private parseBooleanEnv(raw: string | undefined, fallback: boolean) {
+    if (raw === undefined) {
+      return fallback;
+    }
+
+    return raw.toLowerCase() !== 'false';
+  }
+
+  private parseDbMinLevel(raw: string | undefined): LogLevel {
+    switch ((raw ?? LogLevel.WARN).toLowerCase()) {
+      case LogLevel.DEBUG:
+        return LogLevel.DEBUG;
+      case LogLevel.INFO:
+        return LogLevel.INFO;
+      case LogLevel.ERROR:
+        return LogLevel.ERROR;
+      case LogLevel.WARN:
+      default:
+        return LogLevel.WARN;
+    }
+  }
+
+  private parseNumberEnv(raw: string | undefined, fallback: number) {
+    if (!raw) {
+      return fallback;
+    }
+
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private normalizePagination(limit?: number, offset?: number) {
+    const normalizedLimit =
+      typeof limit === 'number' && Number.isFinite(limit) && limit > 0
+        ? Math.min(Math.trunc(limit), this.logQueryMaxLimit)
+        : this.logQueryDefaultLimit;
+    const normalizedOffset =
+      typeof offset === 'number' && Number.isFinite(offset) && offset >= 0
+        ? Math.trunc(offset)
+        : 0;
+
+    return {
+      limit: normalizedLimit,
+      offset: normalizedOffset,
     };
-
-    return sanitize(data);
   }
 
-  private getTotalLogCount(): number {
-    let count = 0;
-    for (const logs of this.logs.values()) {
-      count += logs.length;
-    }
-    return count;
-  }
-
-  private getOldestLogTimestamp(): Date | null {
-    let oldest: Date | null = null;
-    for (const logs of this.logs.values()) {
-      if (logs.length > 0) {
-        const firstLog = logs[0];
-        if (!oldest || firstLog.timestamp < oldest) {
-          oldest = firstLog.timestamp;
-        }
-      }
-    }
-    return oldest;
-  }
-
-  private cleanupOldLogs() {
-    const cutoff = new Date(Date.now() - this.retentionMs);
-    let removed = 0;
-
-    for (const [correlationId, logs] of this.logs.entries()) {
-      // Remove old logs from this correlation
-      const filtered = logs.filter(log => log.timestamp > cutoff);
-      
-      if (filtered.length === 0) {
-        // All logs are old, remove the entire correlation
-        this.logs.delete(correlationId);
-        removed += logs.length;
-      } else if (filtered.length < logs.length) {
-        // Some logs removed
-        this.logs.set(correlationId, filtered);
-        removed += logs.length - filtered.length;
-      }
-    }
-
-    if (removed > 0) {
-      this.logger.log({
-        message: 'Cleaned up old logs',
-        removed,
-        remainingCorrelations: this.logs.size,
-        remainingLogs: this.getTotalLogCount(),
-      });
+  private resolvePrisma() {
+    try {
+      return this.moduleRef.get(PrismaService, { strict: false });
+    } catch {
+      return null;
     }
   }
 
-  private cleanupOldestCorrelation() {
-    let oldestCorrelationId: string | null = null;
-    let oldestTimestamp: Date | null = null;
-
-    for (const [correlationId, logs] of this.logs.entries()) {
-      if (logs.length > 0) {
-        const firstLog = logs[0];
-        if (!oldestTimestamp || firstLog.timestamp < oldestTimestamp) {
-          oldestTimestamp = firstLog.timestamp;
-          oldestCorrelationId = correlationId;
-        }
-      }
+  private getPrisma() {
+    if (!this.prisma) {
+      this.prisma = this.resolvePrisma();
     }
 
-    if (oldestCorrelationId) {
-      this.logs.delete(oldestCorrelationId);
-      this.logger.warn({
-        message: 'Removed oldest correlation due to memory limit',
-        correlationId: oldestCorrelationId,
-      });
+    return this.prisma;
+  }
+
+  private getPrismaOrThrow(): LoggingPrismaClient {
+    const prisma = this.getPrisma();
+    if (!prisma) {
+      throw new Error('PrismaService is not available for log queries');
     }
+    return prisma as LoggingPrismaClient;
+  }
+
+  private mapLevelToRecordLevel(level: LogLevel): DbLogLevel {
+    switch (level) {
+      case LogLevel.DEBUG:
+        return 'DEBUG';
+      case LogLevel.INFO:
+        return 'INFO';
+      case LogLevel.ERROR:
+        return 'ERROR';
+      case LogLevel.WARN:
+      default:
+        return 'WARN';
+    }
+  }
+
+  private mapRecordLevelToLogLevel(level: DbLogLevel): LogLevel {
+    switch (level) {
+      case 'DEBUG':
+        return LogLevel.DEBUG;
+      case 'INFO':
+        return LogLevel.INFO;
+      case 'ERROR':
+        return LogLevel.ERROR;
+      case 'WARN':
+      default:
+        return LogLevel.WARN;
+    }
+  }
+
+  private getErrorCode(error?: Error) {
+    const code = error && 'code' in error ? (error as Error & { code?: unknown }).code : undefined;
+    return typeof code === 'string' ? code : undefined;
   }
 }

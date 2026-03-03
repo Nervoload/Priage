@@ -6,6 +6,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 
 import { EventsService } from '../../events/events.service';
+import { LoggingService } from '../../logging/logging.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const IMMEDIATE_DISPATCH_GRACE_MS = 10_000;
@@ -17,6 +18,7 @@ export class EventsProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
+    private readonly loggingService: LoggingService,
   ) {
     super();
     this.logger.log('EventsProcessor initialized');
@@ -25,12 +27,19 @@ export class EventsProcessor extends WorkerHost {
   async process(job: Job<any, any, string>): Promise<void> {
     const startTime = Date.now();
     
-    this.logger.debug({
-      message: 'Processing job',
-      jobId: job.id,
-      jobName: job.name,
-      attemptsMade: job.attemptsMade,
-    });
+    await this.loggingService.debug(
+      'Processing events job',
+      {
+        service: 'EventsProcessor',
+        operation: 'process',
+        correlationId: undefined,
+      },
+      {
+        jobId: job.id ? String(job.id) : undefined,
+        jobName: job.name,
+        attemptsMade: job.attemptsMade,
+      },
+    );
 
     try {
       switch (job.name) {
@@ -41,39 +50,66 @@ export class EventsProcessor extends WorkerHost {
           await this.handleDispatch(job as Job<{ eventId: number }>);
           break;
         default:
-          this.logger.error({
-            message: 'Unknown job name',
-            jobId: job.id,
-            jobName: job.name,
-          });
+          await this.loggingService.error(
+            'Unknown events job name',
+            {
+              service: 'EventsProcessor',
+              operation: 'process',
+              correlationId: undefined,
+            },
+            new Error(`Unknown job name: ${job.name}`),
+            {
+              jobId: job.id ? String(job.id) : undefined,
+              jobName: job.name,
+            },
+          );
           throw new Error(`Unknown job name: ${job.name}`);
       }
 
       const duration = Date.now() - startTime;
-      // Only log completion in debug mode to reduce noise
-      this.logger.debug({
-        message: 'Job completed successfully',
-        jobId: job.id,
-        jobName: job.name,
-        durationMs: duration,
-      });
+      await this.loggingService.debug(
+        'Events job completed successfully',
+        {
+          service: 'EventsProcessor',
+          operation: 'process',
+          correlationId: undefined,
+        },
+        {
+          jobId: job.id ? String(job.id) : undefined,
+          jobName: job.name,
+          durationMs: duration,
+        },
+      );
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.logger.error({
-        message: 'Job processing failed',
-        jobId: job.id,
-        jobName: job.name,
-        attemptsMade: job.attemptsMade,
-        durationMs: duration,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Events job processing failed',
+        {
+          service: 'EventsProcessor',
+          operation: 'process',
+          correlationId: undefined,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          jobId: job.id ? String(job.id) : undefined,
+          jobName: job.name,
+          attemptsMade: job.attemptsMade,
+          durationMs: duration,
+        },
+      );
       throw error;
     }
   }
 
   private async handlePoll(): Promise<void> {
-    this.logger.debug('Polling for unprocessed events');
+    await this.loggingService.debug(
+      'Polling for unprocessed events',
+      {
+        service: 'EventsProcessor',
+        operation: 'handlePoll',
+        correlationId: undefined,
+      },
+    );
 
     try {
       const fallbackCutoff = new Date(Date.now() - IMMEDIATE_DISPATCH_GRACE_MS);
@@ -89,16 +125,30 @@ export class EventsProcessor extends WorkerHost {
       if (events.length === 0) {
         // Silently return when no events - reduces log noise
         // Set LOG_LEVEL=debug to see these messages
-        this.logger.debug('No unprocessed events found');
+        await this.loggingService.debug(
+          'No unprocessed events found',
+          {
+            service: 'EventsProcessor',
+            operation: 'handlePoll',
+            correlationId: undefined,
+          },
+        );
         return;
       }
 
-      this.logger.log({
-        message: 'Found unprocessed events',
-        count: events.length,
-        oldestEventId: events[0]?.id,
-        newestEventId: events[events.length - 1]?.id,
-      });
+      await this.loggingService.info(
+        'Found unprocessed events',
+        {
+          service: 'EventsProcessor',
+          operation: 'handlePoll',
+          correlationId: undefined,
+        },
+        {
+          count: events.length,
+          oldestEventId: events[0]?.id,
+          newestEventId: events[events.length - 1]?.id,
+        },
+      );
 
       let successCount = 0;
       let failureCount = 0;
@@ -113,26 +163,46 @@ export class EventsProcessor extends WorkerHost {
           }
         } catch (error) {
           failureCount++;
-          this.logger.error({
-            message: 'Failed to dispatch event during poll',
-            eventId: event.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          await this.loggingService.error(
+            'Failed to dispatch event during poll',
+            {
+              service: 'EventsProcessor',
+              operation: 'handlePoll',
+              correlationId: undefined,
+              encounterId: event.encounterId,
+              hospitalId: event.hospitalId,
+            },
+            error instanceof Error ? error : new Error(String(error)),
+            {
+              eventId: event.id,
+            },
+          );
         }
       }
 
-      this.logger.log({
-        message: 'Event poll completed',
-        totalEvents: events.length,
-        successCount,
-        failureCount,
-      });
+      await this.loggingService.info(
+        'Event poll completed',
+        {
+          service: 'EventsProcessor',
+          operation: 'handlePoll',
+          correlationId: undefined,
+        },
+        {
+          totalEvents: events.length,
+          successCount,
+          failureCount,
+        },
+      );
     } catch (error) {
-      this.logger.error({
-        message: 'Event polling failed',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Event polling failed',
+        {
+          service: 'EventsProcessor',
+          operation: 'handlePoll',
+          correlationId: undefined,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
       throw error;
     }
   }
@@ -140,10 +210,17 @@ export class EventsProcessor extends WorkerHost {
   private async handleDispatch(job: Job<{ eventId: number }>): Promise<void> {
     const { eventId } = job.data;
     
-    this.logger.debug({
-      message: 'Dispatching specific event',
-      eventId,
-    });
+    await this.loggingService.debug(
+      'Dispatching specific event',
+      {
+        service: 'EventsProcessor',
+        operation: 'handleDispatch',
+        correlationId: undefined,
+      },
+      {
+        eventId,
+      },
+    );
 
     try {
       const dispatched = await this.events.dispatchEncounterEventById(eventId);
@@ -151,17 +228,30 @@ export class EventsProcessor extends WorkerHost {
         throw new Error(`Failed to dispatch event ${eventId}`);
       }
 
-      this.logger.log({
-        message: 'Event dispatched and marked as processed',
-        eventId,
-      });
+      await this.loggingService.info(
+        'Event dispatched and marked as processed',
+        {
+          service: 'EventsProcessor',
+          operation: 'handleDispatch',
+          correlationId: undefined,
+        },
+        {
+          eventId,
+        },
+      );
     } catch (error) {
-      this.logger.error({
-        message: 'Event dispatch failed',
-        eventId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Event dispatch failed',
+        {
+          service: 'EventsProcessor',
+          operation: 'handleDispatch',
+          correlationId: undefined,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          eventId,
+        },
+      );
       throw error;
     }
   }

@@ -105,7 +105,7 @@ export class MessagingService {
         },
       };
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to list messages',
         {
           service: 'MessagingService',
@@ -218,7 +218,7 @@ export class MessagingService {
         throw error;
       }
 
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to create message',
         {
           service: 'MessagingService',
@@ -341,7 +341,7 @@ export class MessagingService {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to mark message as read',
         {
           service: 'MessagingService',
@@ -427,28 +427,47 @@ export class MessagingService {
       },
     );
 
-    const encounter = await this.prisma.encounter.findUnique({
-      where: { id: encounterId },
-      select: { patientId: true, hospitalId: true },
-    });
-    if (!encounter) {
-      throw new NotFoundException(`Encounter ${encounterId} not found`);
-    }
-    if (encounter.patientId !== patientId) {
-      throw new ForbiddenException('You can only view messages on your own encounters');
-    }
+    try {
+      const encounter = await this.prisma.encounter.findUnique({
+        where: { id: encounterId },
+        select: { patientId: true, hospitalId: true },
+      });
+      if (!encounter) {
+        throw new NotFoundException(`Encounter ${encounterId} not found`);
+      }
+      if (encounter.patientId !== patientId) {
+        throw new ForbiddenException('You can only view messages on your own encounters');
+      }
 
-    const messages = await this.prisma.message.findMany({
-      where: {
-        encounterId,
-        hospitalId: encounter.hospitalId,
-        isInternal: false,
-      },
-      orderBy: { createdAt: 'asc' },
-      select: messageWithAssetsSelect,
-    });
+      const messages = await this.prisma.message.findMany({
+        where: {
+          encounterId,
+          hospitalId: encounter.hospitalId,
+          isInternal: false,
+        },
+        orderBy: { createdAt: 'asc' },
+        select: messageWithAssetsSelect,
+      });
 
-    return messages.map((message) => this.serializeMessage(message, 'patient'));
+      return messages.map((message) => this.serializeMessage(message, 'patient'));
+    } catch (error) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+        throw error;
+      }
+
+      await this.loggingService.error(
+        'Failed to list patient messages',
+        {
+          service: 'MessagingService',
+          operation: 'listMessagesForPatient',
+          correlationId,
+          encounterId,
+          patientId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      throw error;
+    }
   }
 
   async createPatientMessage(
@@ -474,81 +493,109 @@ export class MessagingService {
       },
     );
 
-    const encounter = await this.prisma.encounter.findUnique({
-      where: { id: encounterId },
-      select: { id: true, patientId: true, hospitalId: true },
-    });
-    if (!encounter) {
-      throw new NotFoundException(`Encounter ${encounterId} not found`);
-    }
-    if (encounter.patientId !== patientId) {
-      throw new ForbiddenException('You can only send messages on your own encounters');
-    }
-
-    const { message, event, alertEvent } = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.message.create({
-        data: {
-          senderType: SenderType.PATIENT,
-          createdByPatientId: patientId,
-          content,
-          isInternal: false,
-          encounterId: encounter.id,
-          hospitalId: encounter.hospitalId,
-        },
-        select: messageWithAssetsSelect,
+    try {
+      const encounter = await this.prisma.encounter.findUnique({
+        where: { id: encounterId },
+        select: { id: true, patientId: true, hospitalId: true },
       });
-
-      const attachments = await this.assetsService.attachAssetsToMessage(
-        tx,
-        assetIds,
-        created.id,
-        encounter.id,
-        { actorPatientId: patientId },
-        'patient',
-      );
-
-      const createdEvent = await this.events.emitEncounterEventTx(tx, {
-        encounterId: encounter.id,
-        hospitalId: encounter.hospitalId,
-        type: EventType.MESSAGE_CREATED,
-        metadata: {
-          messageId: created.id,
-          senderType: SenderType.PATIENT,
-          isInternal: false,
-          attachmentCount: attachments.length,
-        },
-        actor: { actorPatientId: patientId },
-      });
-
-      let createdAlertEvent = null;
-      if (dto.isWorsening) {
-        const createdAlert = await this.alerts.createAlertTx(tx, {
-          encounterId: encounter.id,
-          hospitalId: encounter.hospitalId,
-          type: 'PATIENT_WORSENING',
-          severity: 'HIGH',
-          metadata: { messageId: created.id },
-          actor: { actorPatientId: patientId },
-        });
-        createdAlertEvent = createdAlert.event;
+      if (!encounter) {
+        throw new NotFoundException(`Encounter ${encounterId} not found`);
+      }
+      if (encounter.patientId !== patientId) {
+        throw new ForbiddenException('You can only send messages on your own encounters');
       }
 
-      return {
-        message: {
-          ...created,
-          attachments,
+      const { message, event, alertEvent } = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.message.create({
+          data: {
+            senderType: SenderType.PATIENT,
+            createdByPatientId: patientId,
+            content,
+            isInternal: false,
+            encounterId: encounter.id,
+            hospitalId: encounter.hospitalId,
+          },
+          select: messageWithAssetsSelect,
+        });
+
+        const attachments = await this.assetsService.attachAssetsToMessage(
+          tx,
+          assetIds,
+          created.id,
+          encounter.id,
+          { actorPatientId: patientId },
+          'patient',
+        );
+
+        const createdEvent = await this.events.emitEncounterEventTx(tx, {
+          encounterId: encounter.id,
+          hospitalId: encounter.hospitalId,
+          type: EventType.MESSAGE_CREATED,
+          metadata: {
+            messageId: created.id,
+            senderType: SenderType.PATIENT,
+            isInternal: false,
+            attachmentCount: attachments.length,
+          },
+          actor: { actorPatientId: patientId },
+        });
+
+        let createdAlertEvent = null;
+        if (dto.isWorsening) {
+          const createdAlert = await this.alerts.createAlertTx(tx, {
+            encounterId: encounter.id,
+            hospitalId: encounter.hospitalId,
+            type: 'PATIENT_WORSENING',
+            severity: 'HIGH',
+            metadata: { messageId: created.id },
+            actor: { actorPatientId: patientId },
+          });
+          createdAlertEvent = createdAlert.event;
+        }
+
+        return {
+          message: {
+            ...created,
+            attachments,
+          },
+          event: createdEvent,
+          alertEvent: createdAlertEvent,
+        };
+      });
+
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
+      if (alertEvent) {
+        void this.events.dispatchEncounterEventAndMarkProcessed(alertEvent);
+      }
+
+      return message;
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+
+      await this.loggingService.error(
+        'Failed to create patient message',
+        {
+          service: 'MessagingService',
+          operation: 'createPatientMessage',
+          correlationId,
+          encounterId,
+          patientId,
         },
-        event: createdEvent,
-        alertEvent: createdAlertEvent,
-      };
-    });
-
-    void this.events.dispatchEncounterEventAndMarkProcessed(event);
-    if (alertEvent) {
-      void this.events.dispatchEncounterEventAndMarkProcessed(alertEvent);
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          isWorsening: dto.isWorsening,
+          attachmentCount: assetIds.length,
+          senderType: SenderType.PATIENT,
+        },
+      );
+      throw error;
     }
-
-    return message;
   }
 
   private normalizePayload(content?: string, assetIds?: number[]): { content: string; assetIds: number[] } {

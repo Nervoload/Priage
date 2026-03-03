@@ -3,10 +3,16 @@
 ## ✅ What's Been Implemented
 
 1. **CorrelationMiddleware** - Automatic correlation ID for every HTTP request
-2. **LoggingService** - Centralized log aggregation with correlation support
-3. **ErrorReportService** - Generate user-exportable error reports
+2. **LoggingService** - Postgres-backed log persistence for `warn`/`error` with promoted-correlation flushing
+3. **ErrorReportService** - Generate user-exportable error reports from persisted logs
 4. **REST API** - Query logs and generate error reports
 5. **TypeScript Types** - Full type safety for logging structures
+
+## Storage defaults
+
+- `warn` and `error` logs persist to Postgres through Prisma
+- `info` and `debug` stay console-only unless `LOG_DB_MIN_LEVEL` is lowered or a correlation is promoted by `warn`/`error`
+- retention defaults to 30 days and is cleaned up by the BullMQ `logging` queue
 
 ## 🚀 Quick Start
 
@@ -53,7 +59,7 @@ export class YourController {
 # Generate error report
 curl http://localhost:3000/logging/error-reports/generate?correlationId=xxx
 
-# Get all logs for a correlation
+# Get logs for a failing/promoted correlation
 curl http://localhost:3000/logging/correlation/xxx
 
 # Query logs
@@ -109,7 +115,7 @@ async processData(data: any, correlationId?: string) {
 
     return result;
   } catch (error) {
-    this.loggingService.error('Processing failed', {
+    await this.loggingService.error('Processing failed', {
       correlationId,
       service: 'MyService',
       operation: 'processData',
@@ -143,6 +149,8 @@ curl -i http://localhost:3000/api/encounters
 ```bash
 curl http://localhost:3000/logging/correlation/xxx-xxx-xxx
 ```
+
+This is most useful for failing/promoted correlations. Success-only request chains may not persist any rows.
 
 ### 5. If an error occurred, generate report
 ```bash
@@ -204,8 +212,12 @@ curl http://localhost:3000/logging/stats
 Returns:
 ```json
 {
-  "totalCorrelations": 150,
   "totalLogs": 3452,
+  "totalReports": 18,
+  "countsByLevel": { "debug": 0, "info": 0, "warn": 112, "error": 23 },
+  "dbLoggingEnabled": true,
+  "dbMinLevel": "warn",
+  "retentionDays": 30,
   "oldestLog": "2026-01-20T10:00:00Z",
   "memoryUsage": { ... }
 }
@@ -235,10 +247,10 @@ curl http://localhost:3000/logging/query?service=EncountersService
 
 ## ⚠️ Important Notes
 
-1. **In-Memory Storage**: Current implementation stores logs in memory (development mode)
-   - Automatic cleanup after 24 hours
-   - Max 10,000 total logs
-   - For production, consider external storage (Elasticsearch, CloudWatch, etc.)
+1. **Database-Backed Storage**: `warn` and `error` logs persist to Postgres
+   - `info` and `debug` stay console-only by default unless a failing correlation is promoted and flushed
+   - Retention is controlled by `LOG_RETENTION_DAYS` and cleaned up by BullMQ
+   - Query/report endpoints now read persisted rows and report snapshots
 
 2. **Performance**: Minimal impact (~<1ms per log operation)
 
