@@ -1,288 +1,331 @@
-// Dashboard — patient home screen.
-// Shows greeting, active encounters, and quick action to start Priage AI.
-
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../shared/hooks/useAuth';
-import { listMyEncounters } from '../shared/api/encounters';
-import type { EncounterSummary } from '../shared/types/domain';
 
-const STATUS_COLORS: Record<string, { bg: string; color: string; label: string }> = {
-  EXPECTED:   { bg: '#eff6ff',  color: '#2563eb', label: 'Expected' },
-  ADMITTED:   { bg: '#f0fdf4',  color: '#16a34a', label: 'Checked In' },
-  TRIAGE:     { bg: '#fffbeb',  color: '#d97706', label: 'In Triage' },
-  WAITING:    { bg: '#f5f3ff',  color: '#7c3aed', label: 'Waiting' },
-  COMPLETE:   { bg: '#ecfdf5',  color: '#059669', label: 'Complete' },
-  CANCELLED:  { bg: '#fef2f2',  color: '#dc2626', label: 'Cancelled' },
-  UNRESOLVED: { bg: '#fef2f2',  color: '#dc2626', label: 'Unresolved' },
-};
+import { listMyEncounters } from '../shared/api/encounters';
+import { ENCOUNTER_STATUS_META, isActiveEncounter } from '../shared/encounters';
+import { useDemo } from '../shared/demo';
+import { useAuth } from '../shared/hooks/useAuth';
+import { useGuestSession } from '../shared/hooks/useGuestSession';
+import type { EncounterSummary } from '../shared/types/domain';
+import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
+import { useToast } from '../shared/ui/ToastContext';
 
 export function DashboardPage() {
-  const { patient } = useAuth();
   const navigate = useNavigate();
+  const { patient, logout } = useAuth();
+  const { clearSession } = useGuestSession();
+  const { showToast } = useToast();
+  const { selectedScenario } = useDemo();
   const [encounters, setEncounters] = useState<EncounterSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    async function fetch() {
+    async function load() {
       try {
         const data = await listMyEncounters();
-        if (!cancelled) setEncounters(data);
+        if (!cancelled) {
+          setEncounters(data);
+        }
       } catch {
-        // silent
+        if (!cancelled) {
+          showToast('Could not load visit summary.');
+        }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
-    fetch();
-    return () => { cancelled = true; };
-  }, []);
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
 
-  const activeEncounters = encounters.filter(e =>
-    !['COMPLETE', 'CANCELLED', 'UNRESOLVED'].includes(e.status)
-  );
-  const pastEncounters = encounters.filter(e =>
-    ['COMPLETE', 'CANCELLED', 'UNRESOLVED'].includes(e.status)
-  );
+  const [activeEncounter, pastEncounters] = useMemo(() => {
+    const active = encounters.find((encounter) => isActiveEncounter(encounter.status)) ?? null;
+    const past = encounters.filter((encounter) => !isActiveEncounter(encounter.status)).slice(0, 3);
+    return [active, past];
+  }, [encounters]);
 
-  const greeting = getGreeting();
-  const displayName = patient?.firstName || 'there';
+  const displayName = patient?.firstName || patient?.email?.split('@')[0] || 'Patient';
 
-  return (
-    <div style={styles.container}>
-      {/* Header */}
-      <div style={styles.header}>
-        <h1 style={styles.greeting}>{greeting}, {displayName}!</h1>
-        <p style={styles.subGreeting}>How are you feeling today?</p>
-      </div>
-
-      {/* Quick Action */}
-      <button
-        style={styles.priageCard}
-        onClick={() => navigate('/priage')}
-      >
-        <div style={styles.priageIcon}>🩺</div>
-        <div style={styles.priageContent}>
-          <h3 style={styles.priageTitle}>Start Priage Assessment</h3>
-          <p style={styles.priageDesc}>
-            Talk to our AI to assess your symptoms and get connected with care
-          </p>
-        </div>
-        <div style={styles.priageArrow}>→</div>
-      </button>
-
-      {/* Active Encounters */}
-      {activeEncounters.length > 0 && (
-        <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Active Visits</h2>
-          {activeEncounters.map(enc => (
-            <EncounterCard
-              key={enc.id}
-              encounter={enc}
-              onClick={() => navigate(`/messages/${enc.id}`)}
-            />
-          ))}
-        </section>
-      )}
-
-      {/* Past Encounters */}
-      {pastEncounters.length > 0 && (
-        <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Past Visits</h2>
-          {pastEncounters.slice(0, 5).map(enc => (
-            <EncounterCard
-              key={enc.id}
-              encounter={enc}
-              onClick={() => navigate(`/messages/${enc.id}`)}
-            />
-          ))}
-        </section>
-      )}
-
-      {/* Empty state */}
-      {!loading && encounters.length === 0 && (
-        <div style={styles.emptyState}>
-          <div style={styles.emptyIcon}>🏥</div>
-          <p style={styles.emptyText}>No visits yet.</p>
-          <p style={styles.emptySubtext}>
-            Start a Priage assessment to check in to a hospital.
-          </p>
-        </div>
-      )}
-
-      {loading && (
-        <div style={styles.loadingContainer}>
-          <p style={styles.loadingText}>Loading visits…</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EncounterCard({ encounter, onClick }: { encounter: EncounterSummary; onClick: () => void }) {
-  const status = STATUS_COLORS[encounter.status] ?? STATUS_COLORS.EXPECTED;
-  const date = new Date(encounter.createdAt).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  async function handleRestartDemo() {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      await logout().catch(() => undefined);
+      clearSession();
+      navigate('/welcome', { replace: true });
+    } finally {
+      setRestarting(false);
+    }
+  }
 
   return (
-    <button style={styles.encounterCard} onClick={onClick}>
-      <div style={styles.encounterLeft}>
-        <p style={styles.encounterComplaint}>
-          {encounter.chiefComplaint || 'Visit'}
+    <main style={styles.page}>
+      <section style={styles.hero}>
+        <div style={styles.heroTop}>
+          <span style={styles.badge}>Patient Home</span>
+          <button style={styles.restartButton} onClick={handleRestartDemo} disabled={restarting}>
+            {restarting ? 'Restarting…' : 'Restart Demo'}
+          </button>
+        </div>
+        <h1 style={styles.title}>Welcome back, {displayName}</h1>
+        <p style={styles.subtitle}>
+          {loading
+            ? 'Loading your visit summary...'
+            : 'Use this dashboard to start new visits, review care updates, and prepare for your hospital arrival.'}
         </p>
-        <p style={styles.encounterDate}>{date}</p>
-      </div>
-      <span style={{ ...styles.encounterBadge, background: status.bg, color: status.color }}>
-        {status.label}
-      </span>
-    </button>
-  );
-}
+      </section>
 
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 18) return 'Good afternoon';
-  return 'Good evening';
+      <section style={styles.section}>
+        <article style={styles.heroCard}>
+          <h2 style={styles.heroCardTitle}>Start New Visit</h2>
+          <p style={styles.heroCardText}>
+            Launch the Priage intake assistant with prefilled demo prompts from <strong>{selectedScenario.label}</strong>.
+          </p>
+          <button style={styles.primaryButton} onClick={() => navigate('/priage')}>
+            Start New Visit
+          </button>
+        </article>
+      </section>
+
+      {activeEncounter && (
+        <section style={styles.section}>
+          <h2 style={styles.sectionTitle}>Active Visit</h2>
+          <button style={styles.visitCard} onClick={() => navigate(`/encounters/${activeEncounter.id}/current`)}>
+            <div>
+              <strong style={styles.visitTitle}>{activeEncounter.chiefComplaint || 'Visit in progress'}</strong>
+              <p style={styles.visitMeta}>
+                Opened {new Date(activeEncounter.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              </p>
+            </div>
+            <span
+              style={{
+                ...styles.statusPill,
+                color: ENCOUNTER_STATUS_META[activeEncounter.status].color,
+                background: ENCOUNTER_STATUS_META[activeEncounter.status].bg,
+                borderColor: ENCOUNTER_STATUS_META[activeEncounter.status].border,
+              }}
+            >
+              {ENCOUNTER_STATUS_META[activeEncounter.status].shortLabel}
+            </span>
+          </button>
+        </section>
+      )}
+
+      <section style={styles.section}>
+        <h2 style={styles.sectionTitle}>Quick Actions</h2>
+        <div style={styles.grid}>
+          <button style={styles.quickCard} onClick={() => navigate('/messages')}>
+            <strong>Messages</strong>
+            <span>Open all care-team conversations</span>
+          </button>
+          <button style={styles.quickCard} onClick={() => navigate('/settings')}>
+            <strong>Profile & Settings</strong>
+            <span>Update demographics and preferences</span>
+          </button>
+          <button style={styles.quickCard} onClick={() => navigate('/priage')}>
+            <strong>AI Assessment</strong>
+            <span>Prefilled symptom prompts for demo speed</span>
+          </button>
+        </div>
+      </section>
+
+      <section style={styles.section}>
+        <h2 style={styles.sectionTitle}>Recent Visits</h2>
+        {pastEncounters.length === 0 ? (
+          <p style={styles.mutedText}>No past visits available yet.</p>
+        ) : (
+          <div style={styles.pastStack}>
+            {pastEncounters.map((encounter) => (
+              <button
+                key={encounter.id}
+                style={styles.pastCard}
+                onClick={() => navigate(`/encounters/${encounter.id}/current`)}
+              >
+                <strong style={styles.pastTitle}>{encounter.chiefComplaint || 'Visit record'}</strong>
+                <span style={styles.pastMeta}>
+                  {new Date(encounter.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    padding: '1rem',
-    paddingBottom: '80px',
-    maxWidth: '500px',
-    margin: '0 auto',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  page: {
+    minHeight: 'calc(100vh - 64px)',
+    padding: '1rem 1rem 5.5rem',
+    background: heroBackdrop,
+    fontFamily: patientTheme.fonts.body,
+    color: patientTheme.colors.ink,
   },
-  header: {
-    marginBottom: '1.25rem',
+  hero: {
+    maxWidth: '760px',
+    margin: '0 auto 0.95rem',
   },
-  greeting: {
-    fontSize: '1.5rem',
-    fontWeight: 800,
-    color: '#0f172a',
-    margin: 0,
-  },
-  subGreeting: {
-    fontSize: '0.95rem',
-    color: '#64748b',
-    margin: '0.25rem 0 0',
-  },
-  priageCard: {
-    width: '100%',
+  heroTop: {
     display: 'flex',
     alignItems: 'center',
-    gap: '1rem',
-    padding: '1.25rem',
-    background: 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)',
-    borderRadius: '16px',
-    border: 'none',
+    justifyContent: 'space-between',
+    gap: '0.65rem',
+    flexWrap: 'wrap',
+  },
+  badge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '0.3rem 0.72rem',
+    borderRadius: '999px',
+    border: panelBorder,
+    background: '#e9f1ff',
+    color: patientTheme.colors.accentStrong,
+    fontSize: '0.74rem',
+    fontWeight: 700,
+  },
+  restartButton: {
+    border: '1px solid #fecaca',
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff1f2',
+    color: '#9f1239',
+    fontWeight: 700,
+    fontSize: '0.76rem',
+    padding: '0.45rem 0.7rem',
     cursor: 'pointer',
-    textAlign: 'left',
-    color: '#fff',
-    marginBottom: '1.5rem',
-    fontFamily: 'inherit',
+    fontFamily: patientTheme.fonts.body,
   },
-  priageIcon: {
-    fontSize: '2rem',
-    flexShrink: 0,
-  },
-  priageContent: {
-    flex: 1,
-  },
-  priageTitle: {
-    fontSize: '1.05rem',
-    fontWeight: 700,
-    margin: 0,
-  },
-  priageDesc: {
-    fontSize: '0.8rem',
-    margin: '0.25rem 0 0',
-    opacity: 0.85,
-  },
-  priageArrow: {
+  title: {
+    margin: '0.72rem 0 0',
+    fontFamily: patientTheme.fonts.heading,
     fontSize: '1.5rem',
-    fontWeight: 700,
-    flexShrink: 0,
+  },
+  subtitle: {
+    margin: '0.35rem 0 0',
+    color: patientTheme.colors.inkMuted,
+    lineHeight: 1.45,
   },
   section: {
-    marginBottom: '1.5rem',
+    maxWidth: '760px',
+    margin: '0 auto 0.95rem',
+  },
+  heroCard: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.lg,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.panel,
+    padding: '1rem',
+  },
+  heroCardTitle: {
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.1rem',
+  },
+  heroCardText: {
+    margin: '0.35rem 0 0',
+    color: patientTheme.colors.inkMuted,
+    lineHeight: 1.45,
+  },
+  primaryButton: {
+    marginTop: '0.85rem',
+    border: 'none',
+    borderRadius: patientTheme.radius.sm,
+    padding: '0.72rem 1rem',
+    background: patientTheme.colors.accent,
+    color: '#fff',
+    fontWeight: 700,
+    fontFamily: patientTheme.fonts.body,
+    cursor: 'pointer',
   },
   sectionTitle: {
-    fontSize: '1rem',
-    fontWeight: 700,
-    color: '#334155',
-    margin: '0 0 0.75rem',
-  },
-  encounterCard: {
-    width: '100%',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '1rem',
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-    borderRadius: '12px',
-    cursor: 'pointer',
-    marginBottom: '0.5rem',
-    fontFamily: 'inherit',
-    textAlign: 'left',
-  },
-  encounterLeft: {
-    flex: 1,
-    minWidth: 0,
-  },
-  encounterComplaint: {
+    margin: '0 0 0.5rem',
+    fontFamily: patientTheme.fonts.heading,
     fontSize: '0.95rem',
-    fontWeight: 600,
-    color: '#0f172a',
-    margin: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
+    textTransform: 'uppercase',
+    letterSpacing: '0.02em',
+    color: patientTheme.colors.inkMuted,
+  },
+  visitCard: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.card,
+    width: '100%',
+    textAlign: 'left',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.8rem',
+    padding: '0.82rem 0.9rem',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  visitTitle: {
+    display: 'block',
+    fontSize: '0.94rem',
+  },
+  visitMeta: {
+    margin: '0.25rem 0 0',
+    fontSize: '0.79rem',
+    color: patientTheme.colors.inkMuted,
+  },
+  statusPill: {
+    border: '1px solid',
+    borderRadius: '999px',
+    padding: '0.22rem 0.58rem',
+    fontSize: '0.7rem',
+    fontWeight: 700,
     whiteSpace: 'nowrap',
   },
-  encounterDate: {
-    fontSize: '0.8rem',
-    color: '#94a3b8',
-    margin: '0.15rem 0 0',
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '0.55rem',
   },
-  encounterBadge: {
-    padding: '0.3rem 0.75rem',
-    borderRadius: '20px',
-    fontSize: '0.75rem',
-    fontWeight: 600,
-    flexShrink: 0,
-    marginLeft: '0.5rem',
+  quickCard: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.card,
+    padding: '0.72rem 0.75rem',
+    textAlign: 'left',
+    display: 'grid',
+    gap: '0.2rem',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
   },
-  emptyState: {
-    textAlign: 'center',
-    padding: '3rem 1rem',
-  },
-  emptyIcon: {
-    fontSize: '3rem',
-    marginBottom: '1rem',
-  },
-  emptyText: {
-    fontSize: '1.1rem',
-    fontWeight: 600,
-    color: '#334155',
+  mutedText: {
     margin: 0,
-  },
-  emptySubtext: {
+    color: patientTheme.colors.inkMuted,
     fontSize: '0.9rem',
-    color: '#94a3b8',
-    margin: '0.5rem 0 0',
   },
-  loadingContainer: {
-    textAlign: 'center',
-    padding: '2rem',
+  pastStack: {
+    display: 'grid',
+    gap: '0.45rem',
   },
-  loadingText: {
-    color: '#94a3b8',
-    fontSize: '0.9rem',
+  pastCard: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fffdf8',
+    padding: '0.62rem 0.68rem',
+    textAlign: 'left',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  pastTitle: {
+    display: 'block',
+    fontSize: '0.89rem',
+  },
+  pastMeta: {
+    display: 'block',
+    marginTop: '0.2rem',
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.77rem',
   },
 };

@@ -1,7 +1,8 @@
-// Patient signup page.
+import { useEffect, useState } from 'react';
 
-import { useState } from 'react';
 import { useAuth } from '../shared/hooks/useAuth';
+import { useDemo } from '../shared/demo';
+import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
 interface SignupPageProps {
@@ -11,6 +12,7 @@ interface SignupPageProps {
 export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const { register } = useAuth();
   const { showToast } = useToast();
+  const { selectedScenario } = useDemo();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -20,8 +22,40 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const [phone, setPhone] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function applyDemoDefaults() {
+    const defaults = selectedScenario.signupDefaults;
+    if (!defaults) {
+      showToast('No signup defaults for this scenario.');
+      return;
+    }
+    setFirstName(defaults.firstName);
+    setLastName(defaults.lastName);
+    setEmail(defaults.email);
+    setPhone(defaults.phone);
+    setPassword(defaults.password);
+    setConfirmPassword(defaults.password);
+  }
+
+  function clearFields() {
+    setFirstName('');
+    setLastName('');
+    setEmail('');
+    setPhone('');
+    setPassword('');
+    setConfirmPassword('');
+  }
+
+  useEffect(() => {
+    if (firstName || lastName || email || phone || password || confirmPassword) {
+      return;
+    }
+    applyDemoDefaults();
+    // Autofill defaults on scenario changes for demo speed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedScenario.id]);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
 
     if (!email.trim()) {
       showToast('Please enter your email.');
@@ -45,232 +79,235 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
         lastName: lastName.trim() || undefined,
         phone: phone.trim() || undefined,
       });
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Registration failed');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Registration failed');
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <div style={styles.logoContainer}>
-          <h1 style={styles.logo}>Priage</h1>
-          <p style={styles.tagline}>Your AI-powered health companion</p>
+    <main style={styles.page}>
+      <section style={styles.card}>
+        <header style={styles.header}>
+          <span style={styles.badge}>Create Account</span>
+          <h1 style={styles.title}>Set up your patient profile</h1>
+          <p style={styles.subtitle}>
+            Scenario defaults are editable and optimized for fast demo walkthroughs.
+          </p>
+        </header>
+
+        <div style={styles.presetRow}>
+          <button type="button" style={styles.secondaryButton} onClick={applyDemoDefaults}>
+            Use demo defaults
+          </button>
+          <button type="button" style={styles.secondaryButton} onClick={clearFields}>
+            Clear
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} style={styles.form}>
-          <h2 style={styles.title}>Create your account</h2>
-          <p style={styles.subtitle}>Get started with Priage today</p>
-
-          <div style={styles.row}>
-            <div style={styles.field}>
-              <label style={styles.label}>First Name</label>
+          <div style={styles.twoCol}>
+            <label style={styles.fieldLabel}>
+              First name
               <input
-                type="text"
                 value={firstName}
-                onChange={e => setFirstName(e.target.value)}
-                placeholder="John"
+                onChange={(event) => setFirstName(event.target.value)}
                 style={styles.input}
                 autoComplete="given-name"
               />
-            </div>
-            <div style={styles.field}>
-              <label style={styles.label}>Last Name</label>
+            </label>
+            <label style={styles.fieldLabel}>
+              Last name
               <input
-                type="text"
                 value={lastName}
-                onChange={e => setLastName(e.target.value)}
-                placeholder="Doe"
+                onChange={(event) => setLastName(event.target.value)}
                 style={styles.input}
                 autoComplete="family-name"
               />
-            </div>
+            </label>
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Email *</label>
+          <label style={styles.fieldLabel}>
+            Email *
             <input
               type="email"
               value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              onChange={(event) => setEmail(event.target.value)}
               style={styles.input}
               autoComplete="email"
-              autoFocus
               required
             />
-          </div>
+          </label>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Phone</label>
+          <label style={styles.fieldLabel}>
+            Phone
             <input
               type="tel"
               value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="(555) 123-4567"
+              onChange={(event) => setPhone(event.target.value)}
               style={styles.input}
               autoComplete="tel"
             />
-          </div>
+          </label>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Password *</label>
+          <label style={styles.fieldLabel}>
+            Password *
             <input
               type="password"
               value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="Min. 6 characters"
+              onChange={(event) => setPassword(event.target.value)}
               style={styles.input}
               autoComplete="new-password"
               required
             />
-          </div>
+          </label>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Confirm Password *</label>
+          <label style={styles.fieldLabel}>
+            Confirm password *
             <input
               type="password"
               value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter password"
+              onChange={(event) => setConfirmPassword(event.target.value)}
               style={styles.input}
               autoComplete="new-password"
               required
             />
-          </div>
+          </label>
 
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{
-              ...styles.submitBtn,
-              opacity: submitting ? 0.7 : 1,
-            }}
-          >
-            {submitting ? 'Creating account…' : 'Create Account'}
+          <button style={styles.primaryButton} type="submit" disabled={submitting}>
+            {submitting ? 'Creating account…' : 'Create account'}
           </button>
         </form>
 
-        <div style={styles.switchContainer}>
-          <span style={styles.switchText}>Already have an account? </span>
-          <button style={styles.switchBtn} onClick={onSwitchToLogin}>
-            Sign In
+        <div style={styles.switchRow}>
+          <span>Already have an account?</span>
+          <button style={styles.switchButton} onClick={onSwitchToLogin}>
+            Sign in
           </button>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
 
+const sharedInput: React.CSSProperties = {
+  width: '100%',
+  border: panelBorder,
+  borderRadius: patientTheme.radius.sm,
+  background: '#fff',
+  color: patientTheme.colors.ink,
+  padding: '0.68rem 0.74rem',
+  fontSize: '0.92rem',
+  fontFamily: patientTheme.fonts.body,
+  boxSizing: 'border-box',
+};
+
 const styles: Record<string, React.CSSProperties> = {
-  container: {
+  page: {
     minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)',
+    display: 'grid',
+    placeItems: 'center',
+    background: heroBackdrop,
     padding: '1rem',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontFamily: patientTheme.fonts.body,
   },
   card: {
     width: '100%',
-    maxWidth: '440px',
-    background: '#ffffff',
-    borderRadius: '20px',
-    padding: '2rem',
-    boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
-    maxHeight: '90vh',
-    overflowY: 'auto',
+    maxWidth: '580px',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.xl,
+    background: 'rgba(255, 253, 248, 0.98)',
+    boxShadow: patientTheme.shadows.panel,
+    padding: '1rem',
+    display: 'grid',
+    gap: '0.76rem',
   },
-  logoContainer: {
-    textAlign: 'center',
-    marginBottom: '1.5rem',
+  header: {
+    display: 'grid',
+    gap: '0.3rem',
   },
-  logo: {
-    fontSize: '2rem',
-    fontWeight: 800,
-    color: '#1e3a5f',
-    margin: 0,
-    letterSpacing: '-0.5px',
-  },
-  tagline: {
-    color: '#64748b',
-    fontSize: '0.85rem',
-    margin: '0.25rem 0 0',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.85rem',
+  badge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    width: 'fit-content',
+    border: panelBorder,
+    borderRadius: '999px',
+    background: '#e9f1ff',
+    color: patientTheme.colors.accentStrong,
+    padding: '0.28rem 0.72rem',
+    fontSize: '0.74rem',
+    fontWeight: 700,
   },
   title: {
-    fontSize: '1.4rem',
-    fontWeight: 700,
-    color: '#0f172a',
     margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.3rem',
   },
   subtitle: {
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
     fontSize: '0.9rem',
-    color: '#64748b',
-    margin: '-0.4rem 0 0.3rem',
+    lineHeight: 1.45,
   },
-  row: {
+  presetRow: {
     display: 'flex',
-    gap: '0.75rem',
+    gap: '0.45rem',
+    flexWrap: 'wrap',
   },
-  field: {
-    display: 'flex',
-    flexDirection: 'column',
+  secondaryButton: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.45rem 0.72rem',
+    fontWeight: 700,
+    fontSize: '0.78rem',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  form: {
+    display: 'grid',
+    gap: '0.68rem',
+  },
+  twoCol: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '0.5rem',
+  },
+  fieldLabel: {
+    display: 'grid',
     gap: '0.3rem',
-    flex: 1,
+    fontSize: '0.8rem',
+    fontWeight: 700,
+    color: patientTheme.colors.ink,
   },
-  label: {
-    fontSize: '0.75rem',
-    fontWeight: 600,
-    color: '#334155',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-  },
-  input: {
-    padding: '0.7rem 0.85rem',
-    border: '2px solid #e2e8f0',
-    borderRadius: '12px',
-    fontSize: '0.95rem',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-    fontFamily: 'inherit',
-  },
-  submitBtn: {
-    padding: '0.85rem',
-    background: '#1e3a5f',
-    color: '#ffffff',
+  input: sharedInput,
+  primaryButton: {
     border: 'none',
-    borderRadius: '12px',
-    fontSize: '1rem',
+    borderRadius: patientTheme.radius.sm,
+    background: patientTheme.colors.accent,
+    color: '#fff',
+    padding: '0.72rem 0.9rem',
     fontWeight: 700,
     cursor: 'pointer',
-    marginTop: '0.3rem',
-    fontFamily: 'inherit',
+    fontFamily: patientTheme.fonts.body,
   },
-  switchContainer: {
-    textAlign: 'center',
-    marginTop: '1.25rem',
-    paddingTop: '1rem',
-    borderTop: '1px solid #f1f5f9',
+  switchRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTop: panelBorder,
+    paddingTop: '0.62rem',
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.84rem',
   },
-  switchText: {
-    color: '#64748b',
-    fontSize: '0.9rem',
-  },
-  switchBtn: {
-    background: 'none',
+  switchButton: {
     border: 'none',
-    color: '#2563eb',
+    background: 'transparent',
+    color: patientTheme.colors.accent,
     fontWeight: 700,
-    fontSize: '0.9rem',
     cursor: 'pointer',
-    fontFamily: 'inherit',
+    fontFamily: patientTheme.fonts.body,
   },
 };

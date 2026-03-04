@@ -26,6 +26,13 @@ export async function getQueueInfo(id: number): Promise<QueueInfo> {
   return client<QueueInfo>(`/patient/encounters/${id}/queue`);
 }
 
+/** POST /patient/encounters/:id/cancel — cancel own encounter */
+export async function cancelMyEncounter(id: number): Promise<Encounter> {
+  return client<Encounter>(`/patient/encounters/${id}/cancel`, {
+    method: 'POST',
+  });
+}
+
 // ─── Messaging ──────────────────────────────────────────────────────────────
 
 /** GET /patient/encounters/:encounterId/messages */

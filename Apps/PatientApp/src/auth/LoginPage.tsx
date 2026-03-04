@@ -1,7 +1,7 @@
-// Patient login page.
-
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../shared/hooks/useAuth';
+import { useDemo } from '../shared/demo';
+import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
 interface LoginPageProps {
@@ -11,13 +11,31 @@ interface LoginPageProps {
 export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
   const { login } = useAuth();
   const { showToast } = useToast();
+  const { selectedScenario, scenarios, setSelectedScenarioId } = useDemo();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function applyScenarioDefaults() {
+    setEmail(selectedScenario.authEmail ?? 'diana@patient.dev');
+    setPassword(selectedScenario.authPassword ?? 'password123');
+  }
+
+  function clearFields() {
+    setEmail('');
+    setPassword('');
+  }
+
+  useEffect(() => {
+    if (email || password) return;
+    applyScenarioDefaults();
+    // Default autofill should react to scenario changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedScenario.id]);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     if (!email.trim() || !password) {
       showToast('Please enter your email and password.');
       return;
@@ -26,173 +44,238 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
     setSubmitting(true);
     try {
       await login({ email: email.trim().toLowerCase(), password });
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Login failed');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Login failed');
     } finally {
       setSubmitting(false);
     }
   }
 
+  const authScenarios = scenarios.filter((scenario) => scenario.persona === 'authenticated');
+
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <div style={styles.logoContainer}>
-          <h1 style={styles.logo}>Priage</h1>
-          <p style={styles.tagline}>Your AI-powered health companion</p>
+    <main style={styles.page}>
+      <section style={styles.card}>
+        <header style={styles.header}>
+          <span style={styles.badge}>Sign In</span>
+          <h1 style={styles.title}>Continue with your patient account</h1>
+          <p style={styles.subtitle}>
+            Current scenario: <strong>{selectedScenario.label}</strong>. Use defaults for a seeded demo login.
+          </p>
+        </header>
+
+        <div style={styles.presetRow}>
+          <button type="button" style={styles.secondaryButton} onClick={applyScenarioDefaults}>
+            Use demo defaults
+          </button>
+          <button type="button" style={styles.secondaryButton} onClick={clearFields}>
+            Clear
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} style={styles.form}>
-          <h2 style={styles.title}>Welcome back</h2>
-          <p style={styles.subtitle}>Sign in to your account</p>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Email</label>
+          <label style={styles.fieldLabel}>
+            Email
             <input
               type="email"
               value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              onChange={(event) => setEmail(event.target.value)}
               style={styles.input}
               autoComplete="email"
               autoFocus
+              placeholder="patient@example.com"
             />
-          </div>
+          </label>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Password</label>
+          <label style={styles.fieldLabel}>
+            Password
             <input
               type="password"
               value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••"
+              onChange={(event) => setPassword(event.target.value)}
               style={styles.input}
               autoComplete="current-password"
+              placeholder="••••••••"
             />
-          </div>
+          </label>
 
-          <button
-            type="submit"
-            disabled={submitting}
-            style={{
-              ...styles.submitBtn,
-              opacity: submitting ? 0.7 : 1,
-            }}
-          >
-            {submitting ? 'Signing in…' : 'Sign In'}
+          <button style={styles.primaryButton} type="submit" disabled={submitting}>
+            {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
 
-        <div style={styles.switchContainer}>
-          <span style={styles.switchText}>Don&apos;t have an account? </span>
-          <button style={styles.switchBtn} onClick={onSwitchToSignup}>
-            Sign Up
+        <article style={styles.seedCard}>
+          <h2 style={styles.seedTitle}>Seeded account launchers</h2>
+          <div style={styles.seedGrid}>
+            {authScenarios.map((scenario) => (
+              <button
+                key={scenario.id}
+                type="button"
+                style={styles.seedButton}
+                onClick={() => {
+                  setSelectedScenarioId(scenario.id);
+                  setEmail(scenario.authEmail ?? '');
+                  setPassword(scenario.authPassword ?? 'password123');
+                }}
+              >
+                <strong>{scenario.label}</strong>
+                <span>{scenario.authEmail ?? 'seeded account'}</span>
+              </button>
+            ))}
+          </div>
+        </article>
+
+        <div style={styles.switchRow}>
+          <span>Need an account?</span>
+          <button style={styles.switchButton} onClick={onSwitchToSignup}>
+            Create one
           </button>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
 
+const sharedInput: React.CSSProperties = {
+  width: '100%',
+  border: panelBorder,
+  borderRadius: patientTheme.radius.sm,
+  background: '#fff',
+  color: patientTheme.colors.ink,
+  padding: '0.68rem 0.74rem',
+  fontSize: '0.92rem',
+  fontFamily: patientTheme.fonts.body,
+  boxSizing: 'border-box',
+};
+
 const styles: Record<string, React.CSSProperties> = {
-  container: {
+  page: {
     minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)',
+    display: 'grid',
+    placeItems: 'center',
+    background: heroBackdrop,
     padding: '1rem',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontFamily: patientTheme.fonts.body,
   },
   card: {
     width: '100%',
-    maxWidth: '400px',
-    background: '#ffffff',
-    borderRadius: '20px',
-    padding: '2rem',
-    boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+    maxWidth: '560px',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.xl,
+    background: 'rgba(255, 253, 248, 0.98)',
+    boxShadow: patientTheme.shadows.panel,
+    padding: '1rem',
+    display: 'grid',
+    gap: '0.76rem',
   },
-  logoContainer: {
-    textAlign: 'center',
-    marginBottom: '1.5rem',
+  header: {
+    display: 'grid',
+    gap: '0.3rem',
   },
-  logo: {
-    fontSize: '2rem',
-    fontWeight: 800,
-    color: '#1e3a5f',
-    margin: 0,
-    letterSpacing: '-0.5px',
-  },
-  tagline: {
-    color: '#64748b',
-    fontSize: '0.85rem',
-    margin: '0.25rem 0 0',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1rem',
+  badge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    width: 'fit-content',
+    border: panelBorder,
+    borderRadius: '999px',
+    background: '#e9f1ff',
+    color: patientTheme.colors.accentStrong,
+    padding: '0.28rem 0.72rem',
+    fontSize: '0.74rem',
+    fontWeight: 700,
   },
   title: {
-    fontSize: '1.4rem',
-    fontWeight: 700,
-    color: '#0f172a',
     margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.3rem',
   },
   subtitle: {
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
+    lineHeight: 1.45,
     fontSize: '0.9rem',
-    color: '#64748b',
-    margin: '-0.5rem 0 0.5rem',
   },
-  field: {
+  presetRow: {
     display: 'flex',
-    flexDirection: 'column',
-    gap: '0.35rem',
+    flexWrap: 'wrap',
+    gap: '0.45rem',
   },
-  label: {
+  secondaryButton: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.45rem 0.72rem',
+    fontWeight: 700,
+    fontSize: '0.78rem',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  form: {
+    display: 'grid',
+    gap: '0.68rem',
+  },
+  fieldLabel: {
+    display: 'grid',
+    gap: '0.3rem',
     fontSize: '0.8rem',
-    fontWeight: 600,
-    color: '#334155',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
+    fontWeight: 700,
+    color: patientTheme.colors.ink,
   },
-  input: {
-    padding: '0.75rem 1rem',
-    border: '2px solid #e2e8f0',
-    borderRadius: '12px',
-    fontSize: '1rem',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-    fontFamily: 'inherit',
-  },
-  submitBtn: {
-    padding: '0.85rem',
-    background: '#1e3a5f',
-    color: '#ffffff',
+  input: sharedInput,
+  primaryButton: {
     border: 'none',
-    borderRadius: '12px',
-    fontSize: '1rem',
+    borderRadius: patientTheme.radius.sm,
+    background: patientTheme.colors.accent,
+    color: '#fff',
+    padding: '0.72rem 0.9rem',
     fontWeight: 700,
     cursor: 'pointer',
-    marginTop: '0.5rem',
-    fontFamily: 'inherit',
+    fontFamily: patientTheme.fonts.body,
   },
-  switchContainer: {
-    textAlign: 'center',
-    marginTop: '1.5rem',
-    paddingTop: '1rem',
-    borderTop: '1px solid #f1f5f9',
+  seedCard: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fff',
+    padding: '0.72rem',
+    display: 'grid',
+    gap: '0.48rem',
   },
-  switchText: {
-    color: '#64748b',
-    fontSize: '0.9rem',
+  seedTitle: {
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '0.93rem',
   },
-  switchBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#2563eb',
-    fontWeight: 700,
-    fontSize: '0.9rem',
+  seedGrid: {
+    display: 'grid',
+    gap: '0.42rem',
+  },
+  seedButton: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fffdf8',
+    padding: '0.55rem 0.62rem',
+    textAlign: 'left',
     cursor: 'pointer',
-    fontFamily: 'inherit',
+    display: 'grid',
+    gap: '0.12rem',
+    fontFamily: patientTheme.fonts.body,
+  },
+  switchRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTop: panelBorder,
+    paddingTop: '0.62rem',
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.84rem',
+  },
+  switchButton: {
+    border: 'none',
+    background: 'transparent',
+    color: patientTheme.colors.accent,
+    fontWeight: 700,
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
   },
 };

@@ -103,6 +103,8 @@ const SAFE_NUMERIC_KEYS = new Set([
 export class LoggingService implements OnModuleInit {
   private readonly logger = new Logger(LoggingService.name);
   private prisma: PrismaService | null = null;
+  /** Guards against recursive persist calls (e.g. Prisma error → log → persist → Prisma error → …) */
+  private persisting = false;
   private readonly logDbEnabled = this.parseBooleanEnv(process.env.LOG_DB_ENABLED, true);
   private readonly logDbMinLevel = this.parseDbMinLevel(process.env.LOG_DB_MIN_LEVEL);
   private readonly logRetentionDays = this.parseNumberEnv(process.env.LOG_RETENTION_DAYS, 30);
@@ -461,31 +463,49 @@ export class LoggingService implements OnModuleInit {
   }
 
   private async persistEntry(entry: LogEntry): Promise<LogEntry | null> {
+    if (this.persisting) {
+      return entry; // prevent recursive persistence
+    }
+
     const prisma = this.getPrisma();
     if (!prisma) {
       return entry;
     }
 
-    const created = await prisma.logRecord.create({
-      data: this.buildCreateInput(entry),
-    });
+    this.persisting = true;
+    try {
+      const created = await prisma.logRecord.create({
+        data: this.buildCreateInput(entry),
+      });
 
-    return this.mapRecordToLogEntry(created);
+      return this.mapRecordToLogEntry(created);
+    } finally {
+      this.persisting = false;
+    }
   }
 
   private async persistBufferedEntries(entries: LogEntry[]): Promise<void> {
+    if (this.persisting) {
+      return; // prevent recursive persistence
+    }
+
     const prisma = this.getPrisma();
     if (!prisma || entries.length === 0) {
       return;
     }
 
-    await prisma.$transaction(
-      entries.map((entry) =>
-        prisma.logRecord.create({
-          data: this.buildCreateInput(entry),
-        }),
-      ),
-    );
+    this.persisting = true;
+    try {
+      await prisma.$transaction(
+        entries.map((entry) =>
+          prisma.logRecord.create({
+            data: this.buildCreateInput(entry),
+          }),
+        ),
+      );
+    } finally {
+      this.persisting = false;
+    }
   }
 
   private buildCreateInput(entry: LogEntry) {

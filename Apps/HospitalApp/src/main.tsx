@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './index.css';
 import { AuthProvider } from './auth/AuthContext';
 import { ToastProvider } from './shared/ui/ToastContext';
 import { HospitalApp } from './app/HospitalApp';

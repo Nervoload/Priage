@@ -70,7 +70,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   ) {}
 
   async afterInit(server: Server) {
-    await this.realtimeRedisAdapter.attach(server);
+    try {
+      await this.realtimeRedisAdapter.attach(server);
+    } catch (error) {
+      this.logger.error(
+        'Failed to attach Redis adapter, falling back to default in-memory adapter',
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
     this.logger.log('WebSocket Gateway initialized');
     this.logger.log('CORS enabled for all origins');
 

@@ -13,10 +13,18 @@ export class RealtimeRedisAdapterService implements OnModuleInit, OnModuleDestro
   private subClient?: Redis;
   private attached = false;
 
+  /** Resolves once onModuleInit finishes (success or failure). */
+  private readonly initialized: Promise<void>;
+  private resolveInitialized!: () => void;
+
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly loggingService: LoggingService,
-  ) {}
+  ) {
+    this.initialized = new Promise<void>((resolve) => {
+      this.resolveInitialized = resolve;
+    });
+  }
 
   async onModuleInit(): Promise<void> {
     this.pubClient = this.redis.duplicate();
@@ -52,21 +60,27 @@ export class RealtimeRedisAdapterService implements OnModuleInit, OnModuleDestro
         error instanceof Error ? error : new Error(String(error)),
       );
       throw error;
+    } finally {
+      // Always resolve so attach() unblocks even on failure
+      this.resolveInitialized();
     }
   }
 
   async attach(server: Server): Promise<void> {
+    // Wait for onModuleInit to complete before checking clients
+    await this.initialized;
+
     if (!this.pubClient || !this.subClient) {
-      await this.loggingService.error(
-        'Socket.IO Redis adapter attach attempted before initialization',
+      this.logger.warn('Socket.IO Redis adapter not available — using default in-memory adapter');
+      await this.loggingService.warn(
+        'Socket.IO Redis adapter not available — using default in-memory adapter',
         {
           service: 'RealtimeRedisAdapterService',
           operation: 'attach',
           correlationId: undefined,
         },
-        new Error('Socket.IO Redis adapter clients are not initialized'),
       );
-      throw new Error('Socket.IO Redis adapter clients are not initialized');
+      return;
     }
 
     if (this.attached) {

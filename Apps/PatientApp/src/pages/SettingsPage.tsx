@@ -1,12 +1,16 @@
-// Settings page — profile editing + logout.
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-import { useState, useEffect } from 'react';
-import { useAuth } from '../shared/hooks/useAuth';
 import { updateProfile } from '../shared/api/auth';
+import { useDemo } from '../shared/demo';
+import { useAuth } from '../shared/hooks/useAuth';
+import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
 export function SettingsPage() {
+  const navigate = useNavigate();
   const { patient, logout, refreshProfile } = useAuth();
+  const { selectedScenario } = useDemo();
   const { showToast } = useToast();
 
   const [firstName, setFirstName] = useState('');
@@ -22,7 +26,6 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  // Populate from current patient profile
   useEffect(() => {
     if (!patient) return;
     setFirstName(patient.firstName ?? '');
@@ -36,6 +39,33 @@ export function SettingsPage() {
     setConditions(patient.conditions ?? '');
     setPreferredLanguage(patient.preferredLanguage ?? '');
   }, [patient]);
+
+  function applyDemoDefaults() {
+    const defaults = selectedScenario.signupDefaults;
+    setFirstName(defaults?.firstName ?? 'Maya');
+    setLastName(defaults?.lastName ?? 'Coleman');
+    setPhone(defaults?.phone ?? '555-0200');
+    setAge('39');
+    setGender('female');
+    setHeightCm('167');
+    setWeightKg('63');
+    setAllergies('Penicillin');
+    setConditions('Mild asthma');
+    setPreferredLanguage('English');
+  }
+
+  function clearLocalFields() {
+    setFirstName('');
+    setLastName('');
+    setPhone('');
+    setAge('');
+    setGender('');
+    setHeightCm('');
+    setWeightKg('');
+    setAllergies('');
+    setConditions('');
+    setPreferredLanguage('');
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -53,9 +83,9 @@ export function SettingsPage() {
         preferredLanguage: preferredLanguage || undefined,
       });
       await refreshProfile();
-      showToast('Profile updated!', 'success');
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to save');
+      showToast('Profile updated.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to save profile.');
     } finally {
       setSaving(false);
     }
@@ -66,86 +96,88 @@ export function SettingsPage() {
     try {
       await logout();
     } catch {
-      // even if API fails, auth context clears local state
+      // Auth context will still clear local session state.
+    } finally {
+      setLoggingOut(false);
     }
   }
 
   return (
-    <div style={styles.container}>
-      <h2 style={styles.pageTitle}>Settings</h2>
+    <main style={styles.page}>
+      <section style={styles.container}>
+        <header style={styles.header}>
+          <span style={styles.badge}>Profile</span>
+          <h1 style={styles.title}>Patient information and settings</h1>
+          <p style={styles.subtitle}>Scenario preset: <strong>{selectedScenario.label}</strong></p>
+        </header>
 
-      {/* Profile card */}
-      <div style={styles.profileCard}>
-        <div style={styles.avatar}>
-          {(patient?.firstName?.[0] ?? patient?.email?.[0] ?? '?').toUpperCase()}
+        <div style={styles.presetRow}>
+          <button style={styles.secondaryButton} onClick={applyDemoDefaults}>
+            Use demo defaults
+          </button>
+          <button style={styles.secondaryButton} onClick={clearLocalFields}>
+            Clear
+          </button>
         </div>
-        <div>
-          <p style={styles.profileName}>
-            {[patient?.firstName, patient?.lastName].filter(Boolean).join(' ') || 'Patient'}
-          </p>
-          <p style={styles.profileEmail}>{patient?.email}</p>
-        </div>
-      </div>
 
-      {/* Form */}
-      <div style={styles.section}>
-        <h3 style={styles.sectionTitle}>Personal Information</h3>
-
-        <div style={styles.row}>
-          <Field label="First Name" value={firstName} onChange={setFirstName} />
-          <Field label="Last Name" value={lastName} onChange={setLastName} />
-        </div>
-        <Field label="Phone" value={phone} onChange={setPhone} type="tel" />
-        <div style={styles.row}>
-          <Field label="Age" value={age} onChange={setAge} type="number" />
-          <div style={styles.fieldWrap}>
-            <label style={styles.label}>Gender</label>
-            <select
-              value={gender}
-              onChange={e => setGender(e.target.value)}
-              style={styles.input}
-            >
-              <option value="">—</option>
-              <option value="male">Male</option>
-              <option value="female">Female</option>
-              <option value="other">Other</option>
-            </select>
+        <article style={styles.profileCard}>
+          <div style={styles.avatar}>
+            {(patient?.firstName?.[0] ?? patient?.email?.[0] ?? '?').toUpperCase()}
           </div>
-        </div>
-      </div>
+          <div>
+            <p style={styles.profileName}>
+              {[patient?.firstName, patient?.lastName].filter(Boolean).join(' ') || 'Patient'}
+            </p>
+            <p style={styles.profileEmail}>{patient?.email}</p>
+          </div>
+        </article>
 
-      <div style={styles.section}>
-        <h3 style={styles.sectionTitle}>Health Information</h3>
+        <section style={styles.section}>
+          <h2 style={styles.sectionTitle}>Personal</h2>
+          <div style={styles.twoCol}>
+            <Field label="First Name" value={firstName} onChange={setFirstName} />
+            <Field label="Last Name" value={lastName} onChange={setLastName} />
+          </div>
+          <Field label="Phone" value={phone} onChange={setPhone} type="tel" />
+          <div style={styles.twoCol}>
+            <Field label="Age" value={age} onChange={setAge} type="number" />
+            <label style={styles.fieldLabel}>
+              Gender
+              <select value={gender} onChange={(event) => setGender(event.target.value)} style={styles.input}>
+                <option value="">—</option>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+          </div>
+        </section>
 
-        <div style={styles.row}>
-          <Field label="Height (cm)" value={heightCm} onChange={setHeightCm} type="number" />
-          <Field label="Weight (kg)" value={weightKg} onChange={setWeightKg} type="number" />
-        </div>
-        <Field label="Allergies" value={allergies} onChange={setAllergies} placeholder="e.g. Penicillin, Peanuts" />
-        <Field label="Conditions" value={conditions} onChange={setConditions} placeholder="e.g. Asthma, Diabetes" />
-        <Field label="Preferred Language" value={preferredLanguage} onChange={setPreferredLanguage} placeholder="e.g. English" />
-      </div>
+        <section style={styles.section}>
+          <h2 style={styles.sectionTitle}>Health</h2>
+          <div style={styles.twoCol}>
+            <Field label="Height (cm)" value={heightCm} onChange={setHeightCm} type="number" />
+            <Field label="Weight (kg)" value={weightKg} onChange={setWeightKg} type="number" />
+          </div>
+          <Field label="Allergies" value={allergies} onChange={setAllergies} />
+          <Field label="Conditions" value={conditions} onChange={setConditions} />
+          <Field label="Preferred Language" value={preferredLanguage} onChange={setPreferredLanguage} />
+        </section>
 
-      {/* Save */}
-      <button
-        style={styles.saveBtn}
-        onClick={handleSave}
-        disabled={saving}
-      >
-        {saving ? 'Saving…' : 'Save Changes'}
-      </button>
+        <section style={styles.actionRow}>
+          <button style={styles.primaryButton} onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+          <button style={styles.secondaryButton} onClick={() => navigate('/priage')}>
+            Start new visit
+          </button>
+        </section>
 
-      {/* Logout */}
-      <button
-        style={styles.logoutBtn}
-        onClick={handleLogout}
-        disabled={loggingOut}
-      >
-        {loggingOut ? 'Logging out…' : 'Log Out'}
-      </button>
-
-      <p style={styles.version}>Priage Patient App v1.0.0</p>
-    </div>
+        <button style={styles.logoutButton} onClick={handleLogout} disabled={loggingOut}>
+          {loggingOut ? 'Logging out…' : 'Log out'}
+        </button>
+      </section>
+    </main>
   );
 }
 
@@ -154,141 +186,176 @@ function Field({
   value,
   onChange,
   type = 'text',
-  placeholder,
 }: {
   label: string;
   value: string;
-  onChange: (v: string) => void;
+  onChange: (value: string) => void;
   type?: string;
-  placeholder?: string;
 }) {
   return (
-    <div style={styles.fieldWrap}>
-      <label style={styles.label}>{label}</label>
+    <label style={styles.fieldLabel}>
+      {label}
       <input
         type={type}
         value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
         style={styles.input}
       />
-    </div>
+    </label>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    maxWidth: '500px',
-    margin: '0 auto',
-    padding: '1rem 1rem 6rem',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  page: {
+    minHeight: 'calc(100vh - 64px)',
+    padding: '1rem 1rem 5.5rem',
+    background: heroBackdrop,
+    fontFamily: patientTheme.fonts.body,
+    color: patientTheme.colors.ink,
   },
-  pageTitle: {
-    fontSize: '1.35rem',
+  container: {
+    maxWidth: '760px',
+    margin: '0 auto',
+    display: 'grid',
+    gap: '0.72rem',
+  },
+  header: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.lg,
+    background: 'rgba(255, 253, 248, 0.98)',
+    boxShadow: patientTheme.shadows.card,
+    padding: '0.82rem',
+    display: 'grid',
+    gap: '0.3rem',
+  },
+  badge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    width: 'fit-content',
+    border: panelBorder,
+    borderRadius: '999px',
+    background: '#e9f1ff',
+    color: patientTheme.colors.accentStrong,
+    padding: '0.26rem 0.72rem',
+    fontSize: '0.74rem',
     fontWeight: 700,
-    color: '#0f172a',
-    margin: '0 0 1rem',
+  },
+  title: {
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.25rem',
+  },
+  subtitle: {
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.88rem',
+  },
+  presetRow: {
+    display: 'flex',
+    gap: '0.45rem',
+    flexWrap: 'wrap',
   },
   profileCard: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.card,
+    padding: '0.75rem',
     display: 'flex',
     alignItems: 'center',
-    gap: '0.85rem',
-    padding: '1rem',
-    background: '#fff',
-    borderRadius: '16px',
-    border: '1px solid #f1f5f9',
-    marginBottom: '1.25rem',
+    gap: '0.62rem',
   },
   avatar: {
-    width: '48px',
-    height: '48px',
+    width: '46px',
+    height: '46px',
     borderRadius: '50%',
-    background: 'linear-gradient(135deg, #1e3a5f, #3b82f6)',
+    background: 'linear-gradient(135deg, #1949b8 0%, #3b82f6 100%)',
     color: '#fff',
-    display: 'flex',
+    display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontSize: '1.2rem',
-    fontWeight: 700,
-    flexShrink: 0,
+    fontWeight: 800,
   },
   profileName: {
-    fontSize: '1rem',
-    fontWeight: 700,
-    color: '#0f172a',
     margin: 0,
+    fontWeight: 700,
+    fontSize: '0.94rem',
   },
   profileEmail: {
-    fontSize: '0.8rem',
-    color: '#94a3b8',
-    margin: '0.1rem 0 0',
+    margin: '0.15rem 0 0',
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.78rem',
   },
   section: {
-    marginBottom: '1.25rem',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.card,
+    padding: '0.75rem',
+    display: 'grid',
+    gap: '0.52rem',
   },
   sectionTitle: {
-    fontSize: '0.8rem',
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '0.92rem',
+  },
+  twoCol: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '0.48rem',
+  },
+  fieldLabel: {
+    display: 'grid',
+    gap: '0.28rem',
+    fontSize: '0.79rem',
     fontWeight: 700,
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-    color: '#94a3b8',
-    margin: '0 0 0.6rem',
-  },
-  row: {
-    display: 'flex',
-    gap: '0.5rem',
-  },
-  fieldWrap: {
-    flex: 1,
-    marginBottom: '0.5rem',
-  },
-  label: {
-    display: 'block',
-    fontSize: '0.78rem',
-    fontWeight: 600,
-    color: '#475569',
-    marginBottom: '0.2rem',
+    color: patientTheme.colors.ink,
   },
   input: {
     width: '100%',
-    padding: '0.55rem 0.7rem',
-    border: '2px solid #e2e8f0',
-    borderRadius: '10px',
-    fontSize: '0.88rem',
-    outline: 'none',
-    fontFamily: 'inherit',
-    boxSizing: 'border-box' as const,
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
     background: '#fff',
-  },
-  saveBtn: {
-    width: '100%',
-    padding: '0.8rem',
-    background: '#1e3a5f',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '14px',
-    fontSize: '0.95rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    marginBottom: '0.75rem',
-    fontFamily: 'inherit',
-  },
-  logoutBtn: {
-    width: '100%',
-    padding: '0.75rem',
-    background: '#fff',
-    color: '#dc2626',
-    border: '2px solid #fecaca',
-    borderRadius: '14px',
+    color: patientTheme.colors.ink,
+    padding: '0.64rem 0.72rem',
     fontSize: '0.9rem',
+    fontFamily: patientTheme.fonts.body,
+    boxSizing: 'border-box',
+  },
+  actionRow: {
+    display: 'flex',
+    gap: '0.48rem',
+    flexWrap: 'wrap',
+  },
+  primaryButton: {
+    border: 'none',
+    borderRadius: patientTheme.radius.sm,
+    background: patientTheme.colors.accent,
+    color: '#fff',
+    padding: '0.72rem 0.9rem',
     fontWeight: 700,
     cursor: 'pointer',
-    fontFamily: 'inherit',
+    fontFamily: patientTheme.fonts.body,
   },
-  version: {
-    textAlign: 'center',
-    color: '#cbd5e1',
-    fontSize: '0.72rem',
-    marginTop: '1.5rem',
+  secondaryButton: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.72rem 0.9rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  logoutButton: {
+    border: '1px solid #fecaca',
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff1f2',
+    color: '#9f1239',
+    padding: '0.7rem 0.9rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
   },
 };

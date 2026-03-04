@@ -29,6 +29,9 @@ export interface PatientSummary {
   age: number | null;
   gender?: string | null;
   preferredLanguage?: string;
+  allergies?: string | null;
+  conditions?: string | null;
+  optionalHealthInfo?: Record<string, unknown> | null;
 }
 
 // ─── Patient helpers ────────────────────────────────────────────────────────

@@ -1,7 +1,10 @@
+import { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../shared/hooks/useAuth';
 import { useGuestSession } from '../shared/hooks/useGuestSession';
 import { BottomNav } from '../shared/ui/BottomNav';
+import { isActiveEncounter } from '../shared/encounters';
+import { listMyEncounters } from '../shared/api/encounters';
 import { LoginPage } from '../auth/LoginPage';
 import { SignupPage } from '../auth/SignupPage';
 import { DashboardPage } from '../pages/DashboardPage';
@@ -13,6 +16,8 @@ import { WelcomePage } from './WelcomePage';
 import { Login as GuestCheckInStart } from './Login';
 import { PreTriage } from '../features/pre-triage/PreTriage';
 import { Enroute } from '../features/enroute/Enroute';
+import { EncounterWorkspace } from '../features/encounter-workspace/EncounterWorkspace';
+import type { EncounterSummary } from '../shared/types/domain';
 
 export function PatientApp() {
   const { session, loading } = useAuth();
@@ -60,6 +65,10 @@ export function PatientApp() {
         element={session ? <Navigate to="/" replace /> : guestSession?.encounterId ? <Enroute /> : <Navigate to="/guest/start" replace />}
       />
       <Route
+        path="/encounters/:id/*"
+        element={session || guestSession?.encounterId ? <EncounterWorkspace /> : <Navigate to={guestPath} replace />}
+      />
+      <Route
         path="/"
         element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
       />
@@ -89,7 +98,7 @@ function AuthenticatedShell() {
     <div style={styles.appContainer}>
       <div style={styles.routeArea}>
         <Routes>
-          <Route path="/" element={<DashboardPage />} />
+          <Route path="/" element={<HomeRoute />} />
           <Route path="/priage" element={<PriagePage />} />
           <Route path="/messages" element={<MessagesPage />} />
           <Route path="/messages/:id" element={<ChatPage />} />
@@ -110,6 +119,52 @@ function LoginRoute() {
 function SignupRoute() {
   const navigate = useNavigate();
   return <SignupPage onSwitchToLogin={() => navigate('/auth/login')} />;
+}
+
+function HomeRoute() {
+  const [loading, setLoading] = useState(true);
+  const [activeEncounterId, setActiveEncounterId] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function resolveHomeDestination() {
+      try {
+        const encounters = await listMyEncounters();
+        if (cancelled) return;
+        const active = encounters.find((encounter: EncounterSummary) => isActiveEncounter(encounter.status));
+        setActiveEncounterId(active?.id ?? null);
+      } catch {
+        if (!cancelled) {
+          setActiveEncounterId(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void resolveHomeDestination();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={styles.loadingContainer}>
+        <div style={styles.spinner} />
+        <p style={styles.loadingText}>Loading dashboard…</p>
+      </div>
+    );
+  }
+
+  if (activeEncounterId) {
+    return <Navigate to={`/encounters/${activeEncounterId}/current`} replace />;
+  }
+
+  return <DashboardPage />;
 }
 
 const styles: Record<string, React.CSSProperties> = {

@@ -1,264 +1,285 @@
-// Messages page — lists encounters with messaging.
-// Each encounter card navigates to /messages/:id for chat view.
-
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
 import { listMyEncounters } from '../shared/api/encounters';
-import { useToast } from '../shared/ui/ToastContext';
+import { ENCOUNTER_STATUS_META, isActiveEncounter } from '../shared/encounters';
+import { useDemo } from '../shared/demo';
 import type { EncounterSummary } from '../shared/types/domain';
-
-const STATUS_LABELS: Record<string, string> = {
-  EXPECTED: 'Expected',
-  ADMITTED: 'Checked In',
-  TRIAGE: 'In Triage',
-  WAITING: 'In Waiting Room',
-  COMPLETE: 'Complete',
-  CANCELLED: 'Cancelled',
-  UNRESOLVED: 'Unresolved',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  EXPECTED: '#6366f1',
-  ADMITTED: '#16a34a',
-  TRIAGE: '#3b82f6',
-  WAITING: '#f59e0b',
-  COMPLETE: '#64748b',
-  CANCELLED: '#94a3b8',
-  UNRESOLVED: '#dc2626',
-};
+import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
+import { useToast } from '../shared/ui/ToastContext';
 
 export function MessagesPage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const { selectedScenario } = useDemo();
   const [encounters, setEncounters] = useState<EncounterSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function load() {
       try {
         const data = await listMyEncounters();
-        setEncounters(data);
-      } catch (err) {
-        showToast('Failed to load conversations');
+        if (!cancelled) {
+          setEncounters(data);
+        }
+      } catch {
+        if (!cancelled) {
+          showToast('Failed to load conversations.');
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
-    load();
-  }, []);
 
-  const active = encounters.filter(e =>
-    ['EXPECTED', 'ADMITTED', 'TRIAGE', 'WAITING'].includes(e.status)
-  );
-  const past = encounters.filter(e =>
-    ['COMPLETE', 'CANCELLED', 'UNRESOLVED'].includes(e.status)
-  );
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
 
-  function formatDate(d: string) {
-    return new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
+  const [active, past] = useMemo(() => {
+    const activeEncounters = encounters.filter((encounter) => isActiveEncounter(encounter.status));
+    const pastEncounters = encounters.filter((encounter) => !isActiveEncounter(encounter.status));
+    return [activeEncounters, pastEncounters];
+  }, [encounters]);
 
   if (loading) {
     return (
       <div style={styles.center}>
+        <div style={styles.spinner} />
         <p style={styles.loadingText}>Loading conversations…</p>
       </div>
     );
   }
 
   return (
-    <div style={styles.container}>
-      <h2 style={styles.pageTitle}>Messages</h2>
+    <main style={styles.page}>
+      <section style={styles.hero}>
+        <span style={styles.badge}>Messages</span>
+        <h1 style={styles.title}>Care-team conversations</h1>
+        <p style={styles.subtitle}>
+          Open any encounter to continue messaging. The selected demo scenario is <strong>{selectedScenario.label}</strong>.
+        </p>
+      </section>
 
       {encounters.length === 0 ? (
-        <div style={styles.emptyState}>
-          <p style={styles.emptyIcon}>💬</p>
-          <p style={styles.emptyTitle}>No conversations yet</p>
-          <p style={styles.emptyDesc}>
-            Start a Priage assessment to get checked in and
-            begin messaging with your care team.
+        <section style={styles.emptyCard}>
+          <h2 style={styles.emptyTitle}>No visit threads yet</h2>
+          <p style={styles.emptyBody}>
+            Start a visit from Priage AI and this area will show your active care conversations.
           </p>
-          <button
-            style={styles.ctaBtn}
-            onClick={() => navigate('/priage')}
-          >
-            Start Assessment
+          <button style={styles.primaryButton} onClick={() => navigate('/priage')}>
+            Start New Visit
           </button>
-        </div>
+        </section>
       ) : (
         <>
           {active.length > 0 && (
-            <section>
-              <h3 style={styles.sectionTitle}>Active Visits</h3>
-              {active.map(enc => (
-                <EncounterCard
-                  key={enc.id}
-                  encounter={enc}
-                  formatDate={formatDate}
-                  onClick={() => navigate(`/messages/${enc.id}`)}
-                />
-              ))}
+            <section style={styles.section}>
+              <h2 style={styles.sectionTitle}>Active Visits</h2>
+              <div style={styles.cardStack}>
+                {active.map((encounter) => (
+                  <EncounterCard key={encounter.id} encounter={encounter} onOpen={() => navigate(`/encounters/${encounter.id}/chat`)} />
+                ))}
+              </div>
             </section>
           )}
 
           {past.length > 0 && (
-            <section style={{ marginTop: '1.5rem' }}>
-              <h3 style={styles.sectionTitle}>Past Visits</h3>
-              {past.slice(0, 10).map(enc => (
-                <EncounterCard
-                  key={enc.id}
-                  encounter={enc}
-                  formatDate={formatDate}
-                  onClick={() => navigate(`/messages/${enc.id}`)}
-                />
-              ))}
+            <section style={styles.section}>
+              <h2 style={styles.sectionTitle}>Past Visits</h2>
+              <div style={styles.cardStack}>
+                {past.map((encounter) => (
+                  <EncounterCard key={encounter.id} encounter={encounter} onOpen={() => navigate(`/encounters/${encounter.id}/current`)} />
+                ))}
+              </div>
             </section>
           )}
         </>
       )}
-    </div>
+    </main>
   );
 }
 
 function EncounterCard({
-  encounter: enc,
-  formatDate,
-  onClick,
+  encounter,
+  onOpen,
 }: {
   encounter: EncounterSummary;
-  formatDate: (d: string) => string;
-  onClick: () => void;
+  onOpen: () => void;
 }) {
+  const statusMeta = ENCOUNTER_STATUS_META[encounter.status] ?? ENCOUNTER_STATUS_META.EXPECTED;
+
   return (
-    <div style={styles.card} onClick={onClick}>
-      <div style={styles.cardLeft}>
-        <p style={styles.cardTitle}>
-          {enc.chiefComplaint || 'Visit'}
+    <button style={styles.card} onClick={onOpen}>
+      <div style={styles.cardBody}>
+        <div style={styles.cardTitleRow}>
+          <strong style={styles.cardTitle}>{encounter.chiefComplaint || 'Visit'}</strong>
+          <span style={{ ...styles.statusPill, color: statusMeta.color, background: statusMeta.bg, borderColor: statusMeta.border }}>
+            {statusMeta.shortLabel}
+          </span>
+        </div>
+        <p style={styles.cardDate}>
+          Opened {new Date(encounter.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
         </p>
-        <p style={styles.cardDate}>{formatDate(enc.createdAt)}</p>
       </div>
-      <div style={styles.cardRight}>
-        <span
-          style={{
-            ...styles.statusBadge,
-            background: `${STATUS_COLORS[enc.status] ?? '#94a3b8'}18`,
-            color: STATUS_COLORS[enc.status] ?? '#94a3b8',
-          }}
-        >
-          {STATUS_LABELS[enc.status] ?? enc.status}
-        </span>
-        <span style={styles.chevron}>›</span>
-      </div>
-    </div>
+      <span style={styles.chevron}>→</span>
+    </button>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    maxWidth: '500px',
-    margin: '0 auto',
-    padding: '1rem',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  page: {
+    minHeight: 'calc(100vh - 64px)',
+    padding: '1rem 1rem 5.5rem',
+    background: heroBackdrop,
+    fontFamily: patientTheme.fonts.body,
   },
   center: {
+    minHeight: 'calc(100vh - 64px)',
     display: 'flex',
+    flexDirection: 'column',
+    gap: '0.8rem',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 'calc(100vh - 64px)',
+    background: heroBackdrop,
+    fontFamily: patientTheme.fonts.body,
+  },
+  spinner: {
+    width: '36px',
+    height: '36px',
+    borderRadius: '50%',
+    border: '4px solid #dbe3f3',
+    borderTopColor: patientTheme.colors.accent,
+    animation: 'spin 0.9s linear infinite',
   },
   loadingText: {
-    color: '#94a3b8',
-    fontSize: '0.9rem',
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
   },
-  pageTitle: {
-    fontSize: '1.35rem',
+  hero: {
+    maxWidth: '720px',
+    margin: '0 auto 0.95rem',
+  },
+  badge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '0.28rem 0.72rem',
+    borderRadius: '999px',
+    border: panelBorder,
+    background: '#e9f1ff',
+    color: patientTheme.colors.accentStrong,
+    fontSize: '0.75rem',
     fontWeight: 700,
-    color: '#0f172a',
-    margin: '0 0 1rem',
+  },
+  title: {
+    margin: '0.7rem 0 0',
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.45rem',
+  },
+  subtitle: {
+    margin: '0.3rem 0 0',
+    color: patientTheme.colors.inkMuted,
+    lineHeight: 1.45,
+    fontSize: '0.93rem',
+  },
+  section: {
+    maxWidth: '720px',
+    margin: '0 auto 1rem',
   },
   sectionTitle: {
-    fontSize: '0.8rem',
-    fontWeight: 700,
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-    color: '#94a3b8',
     margin: '0 0 0.5rem',
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '0.96rem',
+    letterSpacing: '0.02em',
+    color: patientTheme.colors.inkMuted,
+    textTransform: 'uppercase',
+  },
+  cardStack: {
+    display: 'grid',
+    gap: '0.55rem',
   },
   card: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.card,
+    display: 'grid',
+    gridTemplateColumns: '1fr auto',
+    gap: '0.7rem',
+    textAlign: 'left',
+    padding: '0.8rem 0.85rem',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  cardBody: {
+    display: 'grid',
+    gap: '0.35rem',
+  },
+  cardTitleRow: {
     display: 'flex',
     alignItems: 'center',
-    padding: '0.85rem 1rem',
-    background: '#fff',
-    borderRadius: '14px',
-    border: '1px solid #f1f5f9',
-    marginBottom: '0.5rem',
-    cursor: 'pointer',
-    transition: 'box-shadow 0.15s',
-  },
-  cardLeft: {
-    flex: 1,
-    minWidth: 0,
+    justifyContent: 'space-between',
+    gap: '0.5rem',
   },
   cardTitle: {
-    fontSize: '0.95rem',
-    fontWeight: 600,
-    color: '#0f172a',
-    margin: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
+    fontSize: '0.94rem',
+    color: patientTheme.colors.ink,
   },
   cardDate: {
-    fontSize: '0.75rem',
-    color: '#94a3b8',
-    margin: '0.15rem 0 0',
+    margin: 0,
+    fontSize: '0.8rem',
+    color: patientTheme.colors.inkMuted,
   },
-  cardRight: {
-    display: 'flex',
+  statusPill: {
+    display: 'inline-flex',
     alignItems: 'center',
-    gap: '0.5rem',
-    flexShrink: 0,
-  },
-  statusBadge: {
-    padding: '0.2rem 0.6rem',
-    borderRadius: '10px',
+    border: '1px solid',
+    borderRadius: '999px',
+    padding: '0.22rem 0.58rem',
     fontSize: '0.7rem',
     fontWeight: 700,
+    whiteSpace: 'nowrap',
   },
   chevron: {
-    color: '#cbd5e1',
-    fontSize: '1.2rem',
-    fontWeight: 700,
+    alignSelf: 'center',
+    color: patientTheme.colors.accent,
+    fontWeight: 900,
   },
-  emptyState: {
+  emptyCard: {
+    maxWidth: '640px',
+    margin: '0.4rem auto 0',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.lg,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.panel,
+    padding: '1.3rem',
     textAlign: 'center',
-    padding: '3rem 1rem',
-  },
-  emptyIcon: {
-    fontSize: '2.5rem',
-    margin: '0 0 0.5rem',
   },
   emptyTitle: {
-    fontSize: '1.1rem',
-    fontWeight: 700,
-    color: '#1e293b',
-    margin: '0 0 0.25rem',
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.2rem',
   },
-  emptyDesc: {
-    fontSize: '0.85rem',
-    color: '#94a3b8',
-    lineHeight: 1.5,
-    margin: '0 0 1.25rem',
+  emptyBody: {
+    margin: '0.4rem 0 0',
+    color: patientTheme.colors.inkMuted,
+    lineHeight: 1.45,
+    fontSize: '0.92rem',
   },
-  ctaBtn: {
-    padding: '0.7rem 1.5rem',
-    background: '#1e3a5f',
-    color: '#fff',
+  primaryButton: {
+    marginTop: '0.9rem',
     border: 'none',
-    borderRadius: '12px',
-    fontSize: '0.9rem',
+    borderRadius: patientTheme.radius.sm,
+    padding: '0.72rem 1.1rem',
+    background: patientTheme.colors.accent,
+    color: '#fff',
     fontWeight: 700,
+    fontFamily: patientTheme.fonts.body,
     cursor: 'pointer',
-    fontFamily: 'inherit',
   },
 };

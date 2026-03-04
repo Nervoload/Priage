@@ -2,19 +2,22 @@
 // Main app component with simple routing.
 // Fetches real encounters from the backend API and listens for Socket.IO updates.
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { LoginPage } from '../auth/Login/LoginPage';
 import { useAuth } from '../auth/AuthContext';
 import { useToast } from '../shared/ui/ToastContext';
 import { AdmitView } from '../features/admit/AdmitView';
 import { TriageView } from '../features/triage/TriageView';
 import { WaitingRoomView } from '../features/waitingroom/WaitingRoomView';
+import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
+import { SettingsPage } from '../features/settings/SettingsPage';
 import { listEncounters, startExam, confirmEncounter } from '../shared/api/encounters';
 import { ApiError } from '../shared/api/client';
 import { getSocket, sendMessageViaSocket } from '../shared/realtime/socket';
 import { useAlerts } from '../shared/api/useAlerts';
 import { AlertsBanner } from '../features/alerts/AlertsBanner';
 import { listMessages } from '../shared/api/messaging';
+import type { View } from '../shared/ui/NavBar';
 
 // Re-export domain types so existing component imports keep working
 export type { PatientSummary as Patient, ChatMessage, Encounter } from '../shared/types/domain';
@@ -23,7 +26,7 @@ export { patientName } from '../shared/types/domain';
 import type { Encounter, ChatMessage, EncounterStatus, Message } from '../shared/types/domain';
 import { RealtimeEvents, messageToChatMessage } from '../shared/types/domain';
 
-type View = 'admit' | 'triage' | 'waiting';
+// View type imported from NavBar
 
 export function HospitalApp() {
   const { user, initializing, logout } = useAuth();
@@ -34,6 +37,8 @@ export function HospitalApp() {
   const [loadingEncounters, setLoadingEncounters] = useState(false);
   const isMounted = useRef(true);
   const loadedMessageEncounters = useRef<Set<number>>(new Set());
+  const loadingMessageEncounters = useRef<Set<number>>(new Set());
+  const messageRetryAt = useRef<Map<number, number>>(new Map());
 
   // ─── Alerts (derived + server) ────────────────────────────────────────────
 
@@ -78,9 +83,17 @@ export function HospitalApp() {
   }, []);
 
   const fetchMessagesForEncounter = useCallback(async (encounterId: number) => {
+    const now = Date.now();
+    const retryAt = messageRetryAt.current.get(encounterId) ?? 0;
+    if (loadingMessageEncounters.current.has(encounterId) || now < retryAt) {
+      return;
+    }
+
+    loadingMessageEncounters.current.add(encounterId);
     try {
-      const res = await listMessages(encounterId, { limit: 200 });
+      const res = await listMessages(encounterId, { limit: 100 });
       loadedMessageEncounters.current.add(encounterId);
+      messageRetryAt.current.delete(encounterId);
       setChatMessages((prev) => ({
         ...prev,
         [encounterId]: res.data.map(messageToChatMessage),
@@ -88,7 +101,14 @@ export function HospitalApp() {
     } catch (err) {
       console.error(`[HospitalApp] Failed to fetch messages for encounter ${encounterId}:`, err);
       if (err instanceof ApiError && err.status === 401) return;
+      if (err instanceof ApiError && err.status === 429) {
+        messageRetryAt.current.set(encounterId, Date.now() + 10_000);
+        return;
+      }
+      messageRetryAt.current.set(encounterId, Date.now() + 5_000);
       showToast('Failed to load messages. Please try again.', 'error');
+    } finally {
+      loadingMessageEncounters.current.delete(encounterId);
     }
   }, [showToast]);
 
@@ -124,6 +144,44 @@ export function HospitalApp() {
       socket.off(RealtimeEvents.MessageCreated, handleMessageCreated);
     };
   }, [user, fetchEncounters, fetchMessagesForEncounter]);
+
+  const handleSendMessage = useCallback(async (encounterId: number, text: string) => {
+    try {
+      const created = await sendMessageViaSocket(encounterId, text);
+      upsertChatMessage(created);
+    } catch (err) {
+      console.error('[HospitalApp] Failed to send message:', err);
+      showToast('Failed to send message. Please try again.', 'error');
+      throw err;
+    }
+  }, [showToast, upsertChatMessage]);
+
+  // Admittance shows EXPECTED and ADMITTED patients
+  const admitEncounters = useMemo(
+    () => encounters.filter((e) => e.status === 'EXPECTED' || e.status === 'ADMITTED'),
+    [encounters],
+  );
+
+  // Triage shows TRIAGE patients
+  const triageEncounters = useMemo(
+    () => encounters.filter((e) => e.status === 'TRIAGE'),
+    [encounters],
+  );
+
+  // Waiting room shows all patients that have been admitted (TRIAGE, WAITING, COMPLETE)
+  const waitingEncounters = useMemo(
+    () => encounters.filter((e) => e.status === 'TRIAGE' || e.status === 'WAITING' || e.status === 'COMPLETE'),
+    [encounters],
+  );
+
+  useEffect(() => {
+    if (currentView !== 'waiting') return;
+    for (const encounter of waitingEncounters) {
+      if (!loadedMessageEncounters.current.has(encounter.id)) {
+        void fetchMessagesForEncounter(encounter.id);
+      }
+    }
+  }, [currentView, waitingEncounters, fetchMessagesForEncounter]);
 
   // ─── Show loading spinner while checking stored token ───────────────────
 
@@ -177,101 +235,19 @@ export function HospitalApp() {
     }
   };
 
-  const handleSendMessage = useCallback(async (encounterId: number, text: string) => {
-    try {
-      const created = await sendMessageViaSocket(encounterId, text);
-      upsertChatMessage(created);
-    } catch (err) {
-      console.error('[HospitalApp] Failed to send message:', err);
-      showToast('Failed to send message. Please try again.', 'error');
-      throw err;
-    }
-  }, [showToast, upsertChatMessage]);
-
-  // Admittance shows EXPECTED and ADMITTED patients
-  const admitEncounters = encounters.filter(
-    e => e.status === 'EXPECTED' || e.status === 'ADMITTED'
-  );
-
-  // Triage shows TRIAGE patients
-  const triageEncounters = encounters.filter(e => e.status === 'TRIAGE');
-
-  // Waiting room shows all patients that have been admitted (TRIAGE, WAITING, COMPLETE)
-  const waitingEncounters = encounters.filter(
-    e => e.status === 'TRIAGE' || e.status === 'WAITING' || e.status === 'COMPLETE'
-  );
-
-  useEffect(() => {
-    if (currentView !== 'waiting') return;
-    for (const encounter of waitingEncounters) {
-      if (!loadedMessageEncounters.current.has(encounter.id)) {
-        void fetchMessagesForEncounter(encounter.id);
-      }
-    }
-  }, [currentView, waitingEncounters, fetchMessagesForEncounter]);
+  const userInfo = user ? { email: user.email, role: user.role } : null;
 
   return (
     <>
-      {/* ── User info pill (top-left) ─── */}
-      {/* Phase 6.4: Make this pill clickable to open a profile page/modal where
-          staff can edit their display name, avatar, department, and specialization.
-          Replace the email initial circle with an avatar image once the profile
-          module provides avatarUrl. Link to PATCH /users/me for saving changes. */}
-      <div
-        style={{
-          position: 'fixed',
-          top: '1rem',
-          left: '1rem',
-          zIndex: 900,
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          backgroundColor: 'white',
-          padding: '0.4rem 0.85rem',
-          borderRadius: '10px',
-          boxShadow: '0 1px 6px rgba(0,0,0,0.1)',
-          fontSize: '0.8rem',
-          color: '#374151',
-        }}
-      >
-        <div
-          style={{
-            width: '24px',
-            height: '24px',
-            borderRadius: '50%',
-            backgroundColor: '#7c3aed',
-            color: 'white',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '0.65rem',
-            fontWeight: 700,
-          }}
-        >
-          {user.email[0].toUpperCase()}
-        </div>
-        <span style={{ fontWeight: 500 }}>{user.email}</span>
-        <span
-          style={{
-            padding: '0.1rem 0.4rem',
-            borderRadius: '4px',
-            backgroundColor: '#7c3aed20',
-            color: '#7c3aed',
-            fontSize: '0.65rem',
-            fontWeight: 600,
-            textTransform: 'uppercase',
-          }}
-        >
-          {user.role}
-        </span>
-      </div>
-
-      <AlertsBanner
-        alerts={alerts}
-        unacknowledgedCount={unacknowledgedCount}
-        onAcknowledge={acknowledge}
-        severityColors={severityColors}
-      />
+      {/* AlertsBanner only shows on old-style views (admit, triage) */}
+      {(currentView === 'admit' || currentView === 'triage') && (
+        <AlertsBanner
+          alerts={alerts}
+          unacknowledgedCount={unacknowledgedCount}
+          onAcknowledge={acknowledge}
+          severityColors={severityColors}
+        />
+      )}
       {currentView === 'admit' && (
         <AdmitView
           onBack={handleBack}
@@ -280,6 +256,7 @@ export function HospitalApp() {
           onAdmit={handleAdmit}
           loading={loadingEncounters}
           onRefresh={fetchEncounters}
+          user={userInfo}
         />
       )}
       {currentView === 'triage' && (
@@ -289,6 +266,7 @@ export function HospitalApp() {
           encounters={triageEncounters}
           loading={loadingEncounters}
           onRefresh={fetchEncounters}
+          user={userInfo}
         />
       )}
       {currentView === 'waiting' && (
@@ -300,6 +278,21 @@ export function HospitalApp() {
           onSendMessage={handleSendMessage}
           loading={loadingEncounters}
           onRefresh={fetchEncounters}
+          user={userInfo}
+        />
+      )}
+      {currentView === 'analytics' && (
+        <AnalyticsPage
+          onNavigate={handleNavigate}
+          onLogout={handleBack}
+          user={userInfo}
+        />
+      )}
+      {currentView === 'settings' && (
+        <SettingsPage
+          onNavigate={handleNavigate}
+          onLogout={handleBack}
+          user={userInfo}
         />
       )}
     </>

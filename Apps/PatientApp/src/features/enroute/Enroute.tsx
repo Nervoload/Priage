@@ -1,122 +1,110 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 
-import type { Encounter, QueueInfo } from '../../shared/types/domain';
-import { getMyEncounter, getQueueInfo } from '../../shared/api/encounters';
+import { cancelMyEncounter, getMyEncounter, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
 import { sendLocationPing } from '../../shared/api/intake';
+import { ENCOUNTER_STATUS_META } from '../../shared/encounters';
+import { useDemo } from '../../shared/demo';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
+import type { Encounter, Message } from '../../shared/types/domain';
+import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
-import { MessagePanel } from './MessagePanel';
 
-const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
-  EXPECTED: { label: 'On the way', color: '#2563eb', bg: '#eff6ff' },
-  ADMITTED: { label: 'Checked in', color: '#16a34a', bg: '#f0fdf4' },
-  TRIAGE: { label: 'Being assessed', color: '#d97706', bg: '#fffbeb' },
-  WAITING: { label: 'In waiting room', color: '#7c3aed', bg: '#f5f3ff' },
-  COMPLETE: { label: 'Visit complete', color: '#059669', bg: '#ecfdf5' },
-  CANCELLED: { label: 'Cancelled', color: '#dc2626', bg: '#fef2f2' },
-  UNRESOLVED: { label: 'Visit incomplete', color: '#dc2626', bg: '#fef2f2' },
-};
+const ENCOUNTER_POLL_MS = 10_000;
+const MESSAGES_POLL_MS = 5_000;
 
-const TERMINAL_STATUSES = ['COMPLETE', 'CANCELLED', 'UNRESOLVED'];
+function formatHospitalName(slug: string | null | undefined): string {
+  if (!slug) return 'Priage General Hospital';
+  return slug
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 export function Enroute() {
   const { encounterId: encounterIdParam } = useParams<{ encounterId: string }>();
   const navigate = useNavigate();
   const { session, clearSession } = useGuestSession();
   const { showToast } = useToast();
+  const {
+    selectedScenario,
+    getEncounterDraft,
+    updateEncounterDraft,
+    getCareTeamMember,
+  } = useDemo();
 
   const [encounter, setEncounter] = useState<Encounter | null>(null);
-  const [queue, setQueue] = useState<QueueInfo | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [locationSharing, setLocationSharing] = useState(false);
-  const [showChat, setShowChat] = useState(false);
+  const [arrivalSubmitting, setArrivalSubmitting] = useState(false);
+  const [restartingDemo, setRestartingDemo] = useState(false);
+  const [transportNote, setTransportNote] = useState('');
   const locationWatchRef = useRef<number | null>(null);
 
   const encounterId = Number(encounterIdParam);
+  const hospitalName = formatHospitalName(session?.hospitalSlug ?? selectedScenario.hospitalSlug);
+  const statusMeta = ENCOUNTER_STATUS_META[encounter?.status ?? 'EXPECTED'];
+  const draft = useMemo(() => {
+    if (!encounterId || Number.isNaN(encounterId)) return null;
+    return getEncounterDraft(encounterId);
+  }, [encounterId, getEncounterDraft]);
+
+  useEffect(() => {
+    if (!draft) return;
+    setTransportNote(draft.transportNote);
+  }, [draft]);
 
   const handleExpired = useCallback(() => {
     clearSession();
     navigate('/welcome', { replace: true });
   }, [clearSession, navigate]);
 
-  const refreshEncounter = useCallback(async (suppressErrors = true) => {
-    if (!encounterId) return;
-
+  const refreshEncounter = useCallback(async (showFailure = false) => {
+    if (!encounterId || Number.isNaN(encounterId)) return;
     try {
-      const updated = await getMyEncounter(encounterId);
-      setEncounter(updated);
-    } catch {
-      if (!suppressErrors) {
-        showToast('Could not load your visit. Please start check-in again.');
-        handleExpired();
+      const detail = await getMyEncounter(encounterId);
+      setEncounter(detail);
+      if (detail.status !== 'EXPECTED') {
+        navigate(`/encounters/${detail.id}/current`, { replace: true });
       }
+    } catch {
+      if (showFailure) {
+        showToast('Could not load your active visit. Please restart check-in.');
+      }
+      handleExpired();
     } finally {
       setLoading(false);
     }
-  }, [encounterId, handleExpired, showToast]);
+  }, [encounterId, handleExpired, navigate, showToast]);
+
+  const refreshMessages = useCallback(async () => {
+    if (!encounterId || Number.isNaN(encounterId)) return;
+    try {
+      const next = await listMyMessages(encounterId);
+      setMessages(next);
+    } catch {
+      // Keep polling failures silent.
+    }
+  }, [encounterId]);
 
   useEffect(() => {
     if (!encounterId || !session) return;
 
-    let cancelled = false;
-    async function loadInitial() {
-      try {
-        const updated = await getMyEncounter(encounterId);
-        if (!cancelled) {
-          setEncounter(updated);
-        }
-      } catch {
-        if (!cancelled) {
-          showToast('Could not load your visit. Please start check-in again.');
-          handleExpired();
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadInitial();
-    const interval = setInterval(() => {
+    void refreshEncounter(true);
+    void refreshMessages();
+    const encounterTimer = setInterval(() => {
       void refreshEncounter();
-    }, 10_000);
+    }, ENCOUNTER_POLL_MS);
+    const messageTimer = setInterval(() => {
+      void refreshMessages();
+    }, MESSAGES_POLL_MS);
 
     return () => {
-      cancelled = true;
-      clearInterval(interval);
+      clearInterval(encounterTimer);
+      clearInterval(messageTimer);
     };
-  }, [encounterId, handleExpired, refreshEncounter, session, showToast]);
-
-  useEffect(() => {
-    if (!encounter || !['WAITING', 'TRIAGE'].includes(encounter.status)) {
-      setQueue(null);
-      return;
-    }
-
-    const activeEncounterId = encounter.id;
-    let cancelled = false;
-    async function fetchQueue() {
-      try {
-        const nextQueue = await getQueueInfo(activeEncounterId);
-        if (!cancelled) {
-          setQueue(nextQueue);
-        }
-      } catch {
-        if (!cancelled) {
-          setQueue(null);
-        }
-      }
-    }
-
-    fetchQueue();
-    const interval = setInterval(fetchQueue, 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [encounter]);
+  }, [encounterId, refreshEncounter, refreshMessages, session]);
 
   useEffect(() => {
     return () => {
@@ -130,8 +118,34 @@ export function Enroute() {
     return <Navigate to="/guest/start" replace />;
   }
 
-  if (!encounterId || (session.encounterId && encounterId !== session.encounterId)) {
-    return <Navigate to={session.encounterId ? `/guest/enroute/${session.encounterId}` : '/guest/pre-triage'} replace />;
+  if (!encounterId || Number.isNaN(encounterId)) {
+    return <Navigate to="/guest/start" replace />;
+  }
+
+  if (session.encounterId && encounterId !== session.encounterId) {
+    return <Navigate to={`/guest/enroute/${session.encounterId}`} replace />;
+  }
+
+  function saveTransportNote() {
+    updateEncounterDraft(encounterId, { transportNote });
+    showToast('Transport note saved locally for demo.', 'success');
+  }
+
+  async function sendArrivalNote() {
+    if (!encounter || arrivalSubmitting) return;
+    setArrivalSubmitting(true);
+    try {
+      const note = transportNote.trim()
+        ? `I have arrived at the hospital entrance. Note: ${transportNote.trim()}`
+        : 'I have arrived at the hospital entrance and am heading inside now.';
+      await sendPatientMessage(encounter.id, note, false);
+      await refreshMessages();
+      showToast('Arrival update sent to staff.', 'success');
+    } catch {
+      showToast('Could not send arrival update.');
+    } finally {
+      setArrivalSubmitting(false);
+    }
   }
 
   function toggleLocationSharing() {
@@ -146,7 +160,7 @@ export function Enroute() {
     }
 
     if (!navigator.geolocation) {
-      showToast('Geolocation is not supported by your browser.');
+      showToast('Geolocation is not supported by this browser.');
       return;
     }
 
@@ -158,319 +172,357 @@ export function Enroute() {
             longitude: position.coords.longitude,
           });
         } catch {
-          // Keep background location failures silent.
+          // Background failures are intentionally quiet.
         }
       },
       () => {
         setLocationSharing(false);
-        showToast('Could not get your location. Please enable GPS.');
+        showToast('Could not access location. Enable GPS permissions to share ETA.');
       },
       { enableHighAccuracy: true, maximumAge: 30_000, timeout: 15_000 },
     );
 
     locationWatchRef.current = watchId;
     setLocationSharing(true);
-    showToast('Sharing your location with the hospital.', 'success');
+    showToast('Now sharing live location with the hospital.', 'success');
   }
 
-  function handleReset() {
-    clearSession();
-    navigate('/welcome', { replace: true });
+  async function handleRestartDemo() {
+    if (restartingDemo) return;
+    setRestartingDemo(true);
+    try {
+      await cancelMyEncounter(encounterId).catch(() => undefined);
+      clearSession();
+      navigate('/welcome', { replace: true });
+    } finally {
+      setRestartingDemo(false);
+    }
   }
 
-  if (loading) {
+  if (loading || !encounter) {
     return (
-      <div style={styles.center}>
-        <p style={styles.loadingText}>Loading your visit…</p>
+      <div style={styles.loadingShell}>
+        <div style={styles.spinner} />
+        <p style={styles.loadingText}>Loading your arrival dashboard...</p>
       </div>
     );
   }
 
-  if (!encounter) {
-    return null;
-  }
-
-  const statusInfo = STATUS_LABELS[encounter.status] ?? STATUS_LABELS.EXPECTED;
-  const isTerminal = TERMINAL_STATUSES.includes(encounter.status);
-  const hospitalName = formatHospitalSlug(session.hospitalSlug);
-  const queueSummary = queue && queue.totalInQueue > 0
-    ? `~${queue.estimatedMinutes} min estimated wait`
-    : 'Queue estimate will appear once the hospital has you in line.';
+  const recentStaff = messages
+    .filter((message) => message.senderType === 'USER')
+    .slice(-3)
+    .reverse();
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <h1 style={styles.logo}>Priage</h1>
-        <p style={styles.hospitalName}>{hospitalName}</p>
-      </div>
-
-      <div style={{ ...styles.statusCard, background: statusInfo.bg, borderColor: statusInfo.color }}>
-        <div style={{ ...styles.statusDot, background: statusInfo.color }} />
-        <div>
-          <div style={{ ...styles.statusLabel, color: statusInfo.color }}>
-            {statusInfo.label}
-          </div>
-          {encounter.chiefComplaint && (
-            <div style={styles.complaint}>{encounter.chiefComplaint}</div>
-          )}
+    <main style={styles.page}>
+      <section style={styles.heroCard}>
+        <div style={styles.heroTop}>
+          <span style={styles.badge}>On your way</span>
+          <button style={styles.restartButton} onClick={handleRestartDemo} disabled={restartingDemo}>
+            {restartingDemo ? 'Restarting…' : 'Restart Demo'}
+          </button>
         </div>
-      </div>
+        <h1 style={styles.title}>{hospitalName}</h1>
+        <p style={styles.subtitle}>
+          We notified the ER team. This page will automatically move to your full visit workspace once staff admit you.
+        </p>
 
-      {!isTerminal && queue && (
-        <div style={styles.queueCard}>
-          <div style={styles.queueNumber}>{queue.position}</div>
-          <div>
-            <div style={styles.queueLabel}>Your position in queue</div>
-            <div style={styles.queueWait}>{queueSummary}</div>
-          </div>
+        <div style={styles.statusRow}>
+          <span style={{ ...styles.statusPill, color: statusMeta.color, background: statusMeta.bg, borderColor: statusMeta.border }}>
+            {statusMeta.label}
+          </span>
+          <span style={styles.timestamp}>Registered {new Date(encounter.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
         </div>
-      )}
+      </section>
 
-      {!isTerminal && (
-        <div style={styles.actions}>
-          {encounter.status === 'EXPECTED' && (
+      <section style={styles.grid}>
+        <article style={styles.card}>
+          <h2 style={styles.cardTitle}>Complaint summary</h2>
+          <p style={styles.bodyText}>{encounter.chiefComplaint ?? 'No complaint entered.'}</p>
+          <p style={styles.mutedText}>
+            Expected arrival: {encounter.expectedAt ? new Date(encounter.expectedAt).toLocaleString() : 'Pending'}
+          </p>
+        </article>
+
+        <article style={styles.card}>
+          <h2 style={styles.cardTitle}>Location and ETA</h2>
+          <div style={styles.buttonStack}>
             <button
-              style={{ ...styles.actionBtn, background: locationSharing ? '#dc2626' : '#2563eb' }}
+              style={{ ...styles.primaryButton, background: locationSharing ? '#9f1239' : patientTheme.colors.accent }}
               onClick={toggleLocationSharing}
             >
-              {locationSharing ? 'Stop Sharing Location' : 'Share My Location'}
+              {locationSharing ? 'Stop sharing location' : 'Share live location'}
             </button>
+            <button style={styles.secondaryButton} onClick={sendArrivalNote} disabled={arrivalSubmitting}>
+              {arrivalSubmitting ? 'Sending...' : "I'm here now"}
+            </button>
+          </div>
+        </article>
+      </section>
+
+      <section style={styles.grid}>
+        <article style={styles.card}>
+          <h2 style={styles.cardTitle}>Transport notes</h2>
+          <textarea
+            style={styles.textArea}
+            value={transportNote}
+            onChange={(event) => setTransportNote(event.target.value)}
+            placeholder="Example: parked in lot C, support person waiting at main entrance."
+          />
+          <button style={styles.secondaryButton} onClick={saveTransportNote}>
+            Save note
+          </button>
+        </article>
+
+        <article style={styles.card}>
+          <h2 style={styles.cardTitle}>Care-team preview</h2>
+          {recentStaff.length === 0 ? (
+            <p style={styles.mutedText}>No staff messages yet. Updates will appear here.</p>
+          ) : (
+            <div style={styles.messageStack}>
+              {recentStaff.map((message) => {
+                const sender = getCareTeamMember(message.createdByUserId);
+                return (
+                  <div key={message.id} style={styles.messageRow}>
+                    <div style={styles.messageMeta}>
+                      <strong>{sender ? sender.name : 'Care Team'}</strong>
+                      <span>{new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    </div>
+                    <p style={styles.messageBody}>{message.content}</p>
+                  </div>
+                );
+              })}
+            </div>
           )}
-
           <button
-            style={{ ...styles.actionBtn, background: '#1e3a5f' }}
-            onClick={() => setShowChat(prev => !prev)}
+            style={styles.primaryButton}
+            onClick={() => navigate(`/encounters/${encounter.id}/chat`)}
           >
-            {showChat ? 'Close Chat' : 'Message ER Staff'}
+            Open full message thread
           </button>
-        </div>
-      )}
+        </article>
+      </section>
 
-      {showChat && !isTerminal && (
-        <div style={styles.chatContainer}>
-          <MessagePanel encounterId={encounter.id} />
-        </div>
-      )}
-
-      {isTerminal && (
-        <div style={styles.terminalCard}>
-          <p style={styles.terminalText}>
-            This visit is no longer active. Start a new check-in when you need care again.
-          </p>
-          <button style={styles.resetBtn} onClick={handleReset}>
-            Start New Check-In
-          </button>
-        </div>
-      )}
-
-      <div style={styles.timeline}>
-        {encounter.expectedAt && (
-          <TimelineItem label="Registered" time={encounter.expectedAt} />
-        )}
-        {encounter.arrivedAt && (
-          <TimelineItem label="Arrived" time={encounter.arrivedAt} />
-        )}
-      </div>
-    </div>
+      <section style={styles.timelineCard}>
+        <h2 style={styles.cardTitle}>What happens next</h2>
+        <ol style={styles.timelineList}>
+          <li>Arrival confirmation and registration review</li>
+          <li>Triage nurse assessment</li>
+          <li>Queue placement and ongoing updates in your workspace</li>
+        </ol>
+      </section>
+    </main>
   );
-}
-
-function TimelineItem({ label, time }: { label: string; time: string }) {
-  return (
-    <div style={styles.timelineItem}>
-      <div style={styles.timelineDot} />
-      <span style={styles.timelineLabel}>{label}</span>
-      <span style={styles.timelineTime}>
-        {new Date(time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-      </span>
-    </div>
-  );
-}
-
-function formatHospitalSlug(hospitalSlug: string | null) {
-  if (!hospitalSlug) {
-    return 'Hospital selected';
-  }
-
-  return hospitalSlug
-    .split('-')
-    .filter(Boolean)
-    .map(part => part[0]?.toUpperCase() + part.slice(1))
-    .join(' ');
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
+  page: {
     minHeight: '100vh',
-    background: '#f8fafc',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     padding: '1rem',
-    maxWidth: '500px',
-    margin: '0 auto',
+    background: heroBackdrop,
+    fontFamily: patientTheme.fonts.body,
+    color: patientTheme.colors.ink,
+  },
+  loadingShell: {
+    minHeight: '100vh',
     display: 'flex',
     flexDirection: 'column',
-    gap: '1rem',
-  },
-  center: {
-    minHeight: '100vh',
-    display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: '#f8fafc',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    gap: '0.8rem',
+    background: heroBackdrop,
+    fontFamily: patientTheme.fonts.body,
+  },
+  spinner: {
+    width: '38px',
+    height: '38px',
+    borderRadius: '50%',
+    border: '4px solid #dbe3f3',
+    borderTopColor: patientTheme.colors.accent,
+    animation: 'spin 0.9s linear infinite',
   },
   loadingText: {
-    color: '#64748b',
-    fontSize: '0.95rem',
-  },
-  header: {
-    textAlign: 'center',
-    paddingTop: '0.5rem',
-  },
-  logo: {
-    fontSize: '1.5rem',
-    fontWeight: 800,
-    color: '#1e3a5f',
     margin: 0,
+    color: patientTheme.colors.inkMuted,
   },
-  hospitalName: {
-    fontSize: '0.85rem',
-    color: '#64748b',
-    margin: '0.15rem 0 0',
-  },
-  statusCard: {
-    display: 'flex',
-    gap: '0.85rem',
-    alignItems: 'flex-start',
-    border: '1px solid',
-    borderRadius: '18px',
+  heroCard: {
+    maxWidth: '960px',
+    margin: '0 auto 0.8rem',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.lg,
+    background: 'rgba(255, 253, 248, 0.98)',
+    boxShadow: patientTheme.shadows.panel,
     padding: '1rem',
-  },
-  statusDot: {
-    width: '0.75rem',
-    height: '0.75rem',
-    borderRadius: '999px',
-    marginTop: '0.35rem',
-    flexShrink: 0,
-  },
-  statusLabel: {
-    fontSize: '0.82rem',
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-  },
-  complaint: {
-    marginTop: '0.35rem',
-    fontSize: '1rem',
-    fontWeight: 600,
-    color: '#0f172a',
-  },
-  queueCard: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.85rem',
-    padding: '1rem',
-    borderRadius: '18px',
-    background: '#fff',
-    border: '1px solid #e2e8f0',
-  },
-  queueNumber: {
-    minWidth: '3rem',
-    height: '3rem',
-    borderRadius: '16px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#e0e7ff',
-    color: '#3730a3',
-    fontSize: '1.25rem',
-    fontWeight: 800,
-  },
-  queueLabel: {
-    fontSize: '0.82rem',
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-    color: '#64748b',
-  },
-  queueWait: {
-    marginTop: '0.25rem',
-    fontSize: '0.92rem',
-    color: '#0f172a',
-  },
-  actions: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.75rem',
-  },
-  actionBtn: {
-    padding: '0.9rem 1rem',
-    border: 'none',
-    borderRadius: '14px',
-    color: '#fff',
-    fontSize: '0.95rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  },
-  chatContainer: {
-    background: '#fff',
-    borderRadius: '18px',
-    border: '1px solid #e2e8f0',
-    minHeight: '26rem',
-    overflow: 'hidden',
-  },
-  terminalCard: {
-    background: '#fff',
-    borderRadius: '18px',
-    border: '1px solid #e2e8f0',
-    padding: '1rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.9rem',
-  },
-  terminalText: {
-    margin: 0,
-    color: '#334155',
-    lineHeight: 1.5,
-  },
-  resetBtn: {
-    padding: '0.9rem 1rem',
-    border: 'none',
-    borderRadius: '14px',
-    background: '#1e3a5f',
-    color: '#fff',
-    fontSize: '0.95rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  },
-  timeline: {
-    marginTop: '0.25rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.65rem',
-    padding: '0.75rem 0 1rem',
-  },
-  timelineItem: {
     display: 'grid',
-    gridTemplateColumns: '12px 1fr auto',
+    gap: '0.35rem',
+  },
+  heroTop: {
+    display: 'flex',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.55rem',
+    flexWrap: 'wrap',
+  },
+  badge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    width: 'fit-content',
+    border: panelBorder,
+    borderRadius: '999px',
+    background: '#e9f1ff',
+    color: patientTheme.colors.accentStrong,
+    padding: '0.28rem 0.72rem',
+    fontSize: '0.75rem',
+    fontWeight: 700,
+  },
+  restartButton: {
+    border: '1px solid #fecaca',
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff1f2',
+    color: '#9f1239',
+    fontWeight: 700,
+    fontSize: '0.75rem',
+    padding: '0.42rem 0.68rem',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  title: {
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.45rem',
+  },
+  subtitle: {
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.9rem',
+    lineHeight: 1.45,
+    maxWidth: '64ch',
+  },
+  statusRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: '0.5rem',
+    marginTop: '0.35rem',
+  },
+  statusPill: {
+    border: '1px solid',
+    borderRadius: '999px',
+    padding: '0.24rem 0.62rem',
+    fontSize: '0.74rem',
+    fontWeight: 700,
+  },
+  timestamp: {
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.8rem',
+  },
+  grid: {
+    maxWidth: '960px',
+    margin: '0 auto 0.8rem',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
     gap: '0.65rem',
   },
-  timelineDot: {
-    width: '0.65rem',
-    height: '0.65rem',
-    borderRadius: '999px',
-    background: '#94a3b8',
+  card: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: 'rgba(255, 253, 248, 0.98)',
+    boxShadow: patientTheme.shadows.card,
+    padding: '0.85rem',
+    display: 'grid',
+    gap: '0.5rem',
   },
-  timelineLabel: {
-    color: '#475569',
+  cardTitle: {
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1rem',
+  },
+  bodyText: {
+    margin: 0,
+    lineHeight: 1.45,
     fontSize: '0.9rem',
   },
-  timelineTime: {
-    color: '#94a3b8',
-    fontSize: '0.8rem',
-    fontVariantNumeric: 'tabular-nums',
+  mutedText: {
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.82rem',
+    lineHeight: 1.45,
+  },
+  buttonStack: {
+    display: 'grid',
+    gap: '0.48rem',
+  },
+  primaryButton: {
+    border: 'none',
+    borderRadius: patientTheme.radius.sm,
+    background: patientTheme.colors.accent,
+    color: '#fff',
+    padding: '0.7rem 0.82rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  secondaryButton: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.68rem 0.82rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  textArea: {
+    width: '100%',
+    minHeight: '90px',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.7rem 0.75rem',
+    fontSize: '0.9rem',
+    fontFamily: patientTheme.fonts.body,
+    resize: 'vertical',
+    boxSizing: 'border-box',
+  },
+  messageStack: {
+    display: 'grid',
+    gap: '0.45rem',
+  },
+  messageRow: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    padding: '0.58rem 0.62rem',
+  },
+  messageMeta: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+    fontSize: '0.75rem',
+    color: patientTheme.colors.inkMuted,
+    marginBottom: '0.2rem',
+  },
+  messageBody: {
+    margin: 0,
+    fontSize: '0.85rem',
+    lineHeight: 1.4,
+  },
+  timelineCard: {
+    maxWidth: '960px',
+    margin: '0 auto',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: 'rgba(255, 253, 248, 0.98)',
+    boxShadow: patientTheme.shadows.card,
+    padding: '0.85rem',
+  },
+  timelineList: {
+    margin: '0.45rem 0 0',
+    paddingLeft: '1.1rem',
+    color: patientTheme.colors.inkMuted,
+    lineHeight: 1.5,
+    fontSize: '0.86rem',
   },
 };

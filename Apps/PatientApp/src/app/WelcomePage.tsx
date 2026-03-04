@@ -1,45 +1,89 @@
 import { useNavigate } from 'react-router-dom';
 
+import { useDemo } from '../shared/demo';
+import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
+
 export function WelcomePage() {
   const navigate = useNavigate();
+  const {
+    scenarios,
+    selectedScenarioId,
+    setSelectedScenarioId,
+    selectedScenario,
+  } = useDemo();
+
+  const accountScenarios = scenarios.filter((scenario) => scenario.persona === 'authenticated');
 
   return (
-    <div style={styles.page}>
-      <div style={styles.hero}>
-        <div style={styles.badge}>Priage Patient</div>
-        <h1 style={styles.title}>Choose how you want to start.</h1>
-        <p style={styles.subtitle}>
-          Start a fast hospital check-in as a guest, or sign in to manage visits,
-          messages, and your profile.
-        </p>
-      </div>
+    <main style={styles.page}>
+      <section style={styles.mainArea}>
+        <div style={styles.brand}>
+          <span style={styles.badge}>Priage Patient</span>
+          <h1 style={styles.title}>How would you like to continue?</h1>
+        </div>
 
-      <div style={styles.actions}>
-        <button style={styles.primaryCard} onClick={() => navigate('/guest/start')}>
-          <span style={styles.cardIcon}>+</span>
-          <div>
-            <div style={styles.cardTitle}>Quick Check-In</div>
-            <div style={styles.cardBody}>
-              Start a guest intake flow and notify the hospital you are on the way.
-            </div>
-          </div>
-        </button>
+        <div style={styles.actions}>
+          <button style={styles.primaryAction} onClick={() => navigate('/guest/start')}>
+            <strong style={styles.actionTitle}>Quick Check-In</strong>
+            <span style={styles.actionBody}>Start as a guest and notify the hospital immediately.</span>
+          </button>
 
-        <button style={styles.secondaryCard} onClick={() => navigate('/auth/login')}>
-          <span style={styles.cardIcon}>→</span>
-          <div>
-            <div style={styles.cardTitle}>Sign In</div>
-            <div style={styles.cardBody}>
-              Access your dashboard, messages, Priage AI, and saved profile.
-            </div>
-          </div>
-        </button>
+          <button style={styles.secondaryAction} onClick={() => navigate('/auth/login')}>
+            <strong style={styles.actionTitle}>Sign In</strong>
+            <span style={styles.actionBody}>Open your account, active visit, and message history.</span>
+          </button>
 
-        <button style={styles.linkButton} onClick={() => navigate('/auth/signup')}>
-          Create Account
-        </button>
-      </div>
-    </div>
+          <button style={styles.linkAction} onClick={() => navigate('/auth/signup')}>
+            Create account
+          </button>
+        </div>
+      </section>
+
+      <section style={styles.demoTools}>
+        <header style={styles.toolsHeader}>
+          <h2 style={styles.toolsTitle}>Demo Tools</h2>
+          <p style={styles.toolsBody}>
+            Selected scenario: <strong>{selectedScenario.label}</strong>
+          </p>
+        </header>
+
+        <div style={styles.scenarioGrid}>
+          {scenarios.map((scenario) => {
+            const active = selectedScenarioId === scenario.id;
+            return (
+              <button
+                key={scenario.id}
+                style={{
+                  ...styles.scenarioChip,
+                  borderColor: active ? patientTheme.colors.accent : '#d7d1c3',
+                  background: active ? '#edf3ff' : 'transparent',
+                  color: active ? patientTheme.colors.accentStrong : patientTheme.colors.inkMuted,
+                }}
+                onClick={() => setSelectedScenarioId(scenario.id)}
+              >
+                {scenario.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={styles.accountGrid}>
+          {accountScenarios.map((scenario) => (
+            <button
+              key={scenario.id}
+              style={styles.accountCard}
+              onClick={() => {
+                setSelectedScenarioId(scenario.id);
+                navigate('/auth/login');
+              }}
+            >
+              <strong>{scenario.label}</strong>
+              <span>{scenario.authEmail ?? 'seeded account'}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -49,111 +93,156 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'space-between',
-    padding: '2rem 1.5rem',
-    background: 'linear-gradient(160deg, #f8fafc 0%, #dbeafe 48%, #eff6ff 100%)',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    padding: '1rem',
+    background: heroBackdrop,
+    color: patientTheme.colors.ink,
+    fontFamily: patientTheme.fonts.body,
   },
-  hero: {
-    maxWidth: '560px',
-    margin: '0 auto',
-    paddingTop: '2rem',
+  mainArea: {
+    flex: 1,
+    display: 'grid',
+    alignContent: 'center',
+    justifyItems: 'center',
+    gap: '1rem',
+  },
+  brand: {
+    textAlign: 'center',
+    display: 'grid',
+    gap: '0.45rem',
   },
   badge: {
     display: 'inline-flex',
     alignItems: 'center',
-    padding: '0.35rem 0.7rem',
+    justifySelf: 'center',
+    border: panelBorder,
     borderRadius: '999px',
-    background: '#dbeafe',
-    color: '#1d4ed8',
-    fontSize: '0.78rem',
+    background: '#e9f1ff',
+    color: patientTheme.colors.accentStrong,
+    padding: '0.3rem 0.72rem',
+    fontSize: '0.75rem',
     fontWeight: 700,
-    letterSpacing: '0.04em',
-    textTransform: 'uppercase',
+    letterSpacing: '0.02em',
   },
   title: {
-    margin: '1rem 0 0',
-    fontSize: '2.4rem',
-    lineHeight: 1.05,
-    color: '#0f172a',
-    letterSpacing: '-0.04em',
-  },
-  subtitle: {
-    margin: '1rem 0 0',
-    fontSize: '1rem',
-    lineHeight: 1.6,
-    color: '#475569',
-    maxWidth: '32rem',
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: 'clamp(1.45rem, 4vw, 2.15rem)',
+    lineHeight: 1.1,
+    letterSpacing: '-0.02em',
   },
   actions: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.9rem',
     width: '100%',
-    maxWidth: '560px',
-    margin: '2rem auto 0',
+    maxWidth: '500px',
+    display: 'grid',
+    gap: '0.58rem',
   },
-  primaryCard: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '0.9rem',
-    width: '100%',
-    padding: '1.2rem',
-    borderRadius: '20px',
+  primaryAction: {
     border: 'none',
-    cursor: 'pointer',
-    textAlign: 'left',
-    background: 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)',
+    borderRadius: patientTheme.radius.lg,
+    background: 'linear-gradient(132deg, #1b3f9f 0%, #2156d1 100%)',
     color: '#fff',
-    boxShadow: '0 18px 40px rgba(37, 99, 235, 0.22)',
-    fontFamily: 'inherit',
-  },
-  secondaryCard: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '0.9rem',
-    width: '100%',
-    padding: '1.2rem',
-    borderRadius: '20px',
-    border: '1px solid #cbd5e1',
-    cursor: 'pointer',
+    padding: '1rem',
     textAlign: 'left',
-    background: '#fff',
-    color: '#0f172a',
-    boxShadow: '0 12px 28px rgba(15, 23, 42, 0.08)',
-    fontFamily: 'inherit',
+    boxShadow: '0 16px 36px rgba(33, 86, 209, 0.28)',
+    cursor: 'pointer',
+    display: 'grid',
+    gap: '0.24rem',
+    fontFamily: patientTheme.fonts.body,
   },
-  cardIcon: {
-    width: '2rem',
-    height: '2rem',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: '999px',
-    background: 'rgba(255,255,255,0.18)',
-    fontWeight: 800,
-    fontSize: '1rem',
-    flexShrink: 0,
+  secondaryAction: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.lg,
+    background: '#fffdf8',
+    color: patientTheme.colors.ink,
+    padding: '1rem',
+    textAlign: 'left',
+    boxShadow: patientTheme.shadows.card,
+    cursor: 'pointer',
+    display: 'grid',
+    gap: '0.24rem',
+    fontFamily: patientTheme.fonts.body,
   },
-  cardTitle: {
-    fontSize: '1.05rem',
-    fontWeight: 700,
+  actionTitle: {
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.03rem',
   },
-  cardBody: {
-    marginTop: '0.25rem',
-    fontSize: '0.9rem',
-    lineHeight: 1.5,
+  actionBody: {
+    fontSize: '0.87rem',
+    lineHeight: 1.4,
     opacity: 0.9,
   },
-  linkButton: {
-    width: '100%',
-    padding: '0.95rem',
-    borderRadius: '14px',
+  linkAction: {
     border: 'none',
     background: 'transparent',
-    color: '#1d4ed8',
-    fontSize: '0.95rem',
+    color: patientTheme.colors.accent,
+    fontWeight: 700,
+    textAlign: 'center',
+    padding: '0.35rem',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+  },
+  demoTools: {
+    maxWidth: '980px',
+    margin: '0 auto',
+    width: '100%',
+    border: '1px dashed #cdc6b7',
+    borderRadius: patientTheme.radius.md,
+    background: 'rgba(255, 253, 248, 0.72)',
+    padding: '0.72rem',
+    display: 'grid',
+    gap: '0.55rem',
+  },
+  toolsHeader: {
+    display: 'flex',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: '0.6rem',
+    flexWrap: 'wrap',
+  },
+  toolsTitle: {
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '0.84rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    color: patientTheme.colors.inkMuted,
+  },
+  toolsBody: {
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.78rem',
+  },
+  scenarioGrid: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.42rem',
+  },
+  scenarioChip: {
+    border: '1px solid',
+    borderRadius: '999px',
+    background: 'transparent',
+    padding: '0.28rem 0.6rem',
+    fontSize: '0.75rem',
     fontWeight: 700,
     cursor: 'pointer',
-    fontFamily: 'inherit',
+    fontFamily: patientTheme.fonts.body,
+  },
+  accountGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '0.42rem',
+  },
+  accountCard: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: 'rgba(255,255,255,0.75)',
+    padding: '0.52rem 0.58rem',
+    textAlign: 'left',
+    cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
+    display: 'grid',
+    gap: '0.12rem',
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.76rem',
   },
 };

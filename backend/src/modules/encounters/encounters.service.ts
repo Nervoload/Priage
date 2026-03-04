@@ -258,6 +258,11 @@ export class EncountersService {
                 lastName: true,
                 phone: true,
                 age: true,
+                gender: true,
+                preferredLanguage: true,
+                allergies: true,
+                conditions: true,
+                optionalHealthInfo: true,
               },
             },
           },
@@ -794,6 +799,69 @@ export class EncountersService {
     });
 
     return encounters;
+  }
+
+  /**
+   * Cancel an encounter from patient context (used by patient demo restart flow).
+   * Enforces encounter ownership before running the standard cancel transition.
+   */
+  async cancelEncounterForPatient(
+    patientId: number,
+    encounterId: number,
+    hospitalId: number | null,
+    correlationId?: string,
+  ) {
+    this.loggingService.info(
+      'Patient requested encounter cancellation',
+      {
+        service: 'EncountersService',
+        operation: 'cancelEncounterForPatient',
+        correlationId,
+        encounterId,
+        patientId,
+      },
+      {
+        hospitalId,
+      },
+    );
+
+    const encounter = hospitalId
+      ? await this.prisma.encounter.findUnique({
+          where: {
+            id_hospitalId: {
+              id: encounterId,
+              hospitalId,
+            },
+          },
+          select: {
+            id: true,
+            hospitalId: true,
+            patientId: true,
+          },
+        })
+      : await this.prisma.encounter.findUnique({
+          where: { id: encounterId },
+          select: {
+            id: true,
+            hospitalId: true,
+            patientId: true,
+          },
+        });
+
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
+
+    if (encounter.patientId !== patientId) {
+      throw new ForbiddenException('You can only cancel your own encounter');
+    }
+
+    return this.cancel(
+      encounter.hospitalId,
+      encounter.id,
+      { actorPatientId: patientId },
+      correlationId,
+    );
   }
 
   // ─── Wait time estimation ───────────────────────────────────────────────────

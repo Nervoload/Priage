@@ -14,7 +14,8 @@
     "test:smoke": "node scripts/smoke-test-v2.js",
     "test:smoke:verbose": "node scripts/smoke-test-v2.js --verbose",
     "test:logging": "node scripts/test-logging.js",
-    "test:logging:db": "node scripts/test-logging.js"
+    "test:logging:db": "node scripts/test-logging.js",
+    "demo:seed": "node scripts/demo-seed.js"
   },
   "dependencies": {
     "@nestjs/bullmq": "11.0.4",
