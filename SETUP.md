@@ -30,7 +30,8 @@ Priage/
 ├── docker-compose.yml        # Postgres + Redis
 ├── backend/                  # NestJS API (port 3000)
 └── Apps/
-    └── HospitalApp/          # Vite + React frontend (port 5173)
+    ├── HospitalApp/          # Vite + React frontend (port 5173)
+    └── PatientApp/           # Vite + React frontend (port 5174)
 ```
 
 ---
@@ -180,9 +181,46 @@ npm run dev
 
 Open **http://localhost:5173** in your browser.
 
+## 5. Set Up the Patient App
+
+Open a **new terminal**:
+
+```bash
+cd Apps/PatientApp
+```
+
+### 5a. Install dependencies
+
+```bash
+npm install
+```
+
+### 5b. Create the `.env` file (optional)
+
+```bash
+cp .env.example .env
+```
+
+Like the Hospital App, the default API URL already points at `http://localhost:3000`.
+
+### 5c. Start the dev server
+
+```bash
+npm run dev
+```
+
+Open the printed local URL, typically **http://localhost:5174**.
+
+The Patient App supports two demo entry paths:
+
+| Entry | Purpose | Backend |
+|------|---------|---------|
+| **Quick Check-In** | Guest intake / fast hospital check-in | `/intake/*` |
+| **Sign In / Create Account** | Full patient dashboard/messages/profile flow | `/patient-auth/*`, `/patient/*` |
+
 ---
 
-## 5. Manual Testing Checklist
+## 6. Manual Testing Checklist
 
 Log in at http://localhost:5173 with `nurse@priage.dev` / `password123`.
 
@@ -206,7 +244,7 @@ Log in at http://localhost:5173 with `nurse@priage.dev` / `password123`.
 
 ---
 
-## 6. Smoke Test (Automated)
+## 7. Smoke Test (Automated)
 
 With the backend running, in the `backend/` directory:
 
@@ -226,7 +264,7 @@ node scripts/e2e-frontend-flows.js --seed --verbose
 
 ---
 
-## 7. Useful Commands
+## 8. Useful Commands
 
 ### Backend
 

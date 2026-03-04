@@ -1,13 +1,17 @@
 // Auth context — manages patient session state across the app.
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import type { PatientSession, PatientProfile, RegisterPayload, LoginPayload } from '../types/domain';
+import type {
+  AuthenticatedPatientSession,
+  PatientProfile,
+  RegisterPayload,
+  LoginPayload,
+} from '../types/domain';
 import { registerPatient, loginPatient, logout as logoutApi, getMe } from '../api/auth';
-
-const STORAGE_KEY = 'patientSession';
+import { clearAllPatientSessions, loadAuthSession, saveAuthSession } from '../session';
 
 interface AuthContextValue {
-  session: PatientSession | null;
+  session: AuthenticatedPatientSession | null;
   patient: PatientProfile | null;
   loading: boolean;
   login: (payload: LoginPayload) => Promise<void>;
@@ -19,26 +23,8 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function loadSession(): PatientSession | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
-    return null;
-  }
-}
-
-function saveSession(session: PatientSession | null) {
-  if (session) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  } else {
-    localStorage.removeItem(STORAGE_KEY);
-  }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<PatientSession | null>(loadSession);
+  const [session, setSession] = useState<AuthenticatedPatientSession | null>(loadAuthSession);
   const [patient, setPatient] = useState<PatientProfile | null>(session?.patient ?? null);
   const [loading, setLoading] = useState(!!session);
 
@@ -62,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           setSession(null);
           setPatient(null);
-          localStorage.removeItem(STORAGE_KEY);
+          clearAllPatientSessions();
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -74,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Persist session changes
   useEffect(() => {
-    saveSession(session);
+    saveAuthSession(session);
   }, [session]);
 
   // Listen for session-expired events
@@ -82,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     function handleExpired() {
       setSession(null);
       setPatient(null);
-      localStorage.removeItem(STORAGE_KEY);
+      clearAllPatientSessions();
     }
     window.addEventListener('patient-session-expired', handleExpired);
     return () => window.removeEventListener('patient-session-expired', handleExpired);
@@ -90,26 +76,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (payload: LoginPayload) => {
     const result = await loginPatient(payload);
-    const newSession: PatientSession = {
+    const newSession: AuthenticatedPatientSession = {
       sessionToken: result.sessionToken,
       patientId: result.patient.id,
       patient: result.patient,
     };
     // Persist to localStorage BEFORE setting state so child components
     // that mount during the re-render can read the token immediately.
-    saveSession(newSession);
+    saveAuthSession(newSession);
     setSession(newSession);
     setPatient(result.patient);
   }, []);
 
   const register = useCallback(async (payload: RegisterPayload) => {
     const result = await registerPatient(payload);
-    const newSession: PatientSession = {
+    const newSession: AuthenticatedPatientSession = {
       sessionToken: result.sessionToken,
       patientId: result.patient.id,
       patient: result.patient,
     };
-    saveSession(newSession);
+    saveAuthSession(newSession);
     setSession(newSession);
     setPatient(result.patient);
   }, []);
@@ -118,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await logoutApi();
     setSession(null);
     setPatient(null);
-    localStorage.removeItem(STORAGE_KEY);
+    saveAuthSession(null);
   }, []);
 
   const refreshProfile = useCallback(async () => {

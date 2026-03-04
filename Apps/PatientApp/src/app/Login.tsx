@@ -1,19 +1,14 @@
-// PatientApp/src/app/Login.tsx
-// Patient intake entry screen.
-// Step 1: Patient provides name + chief complaint → createIntent (public).
-// Step 2: On success, saves session and hands off to the pre-triage flow.
-
 import { useState } from 'react';
-import type { PatientSession } from '../shared/types/domain';
-import { createIntent } from '../shared/api/encounters';
+import { useNavigate } from 'react-router-dom';
+
+import { createIntent } from '../shared/api/intake';
+import { useGuestSession } from '../shared/hooks/useGuestSession';
 import { useToast } from '../shared/ui/ToastContext';
 
-interface LoginProps {
-  onSessionCreated: (session: PatientSession) => void;
-}
-
-export function Login({ onSessionCreated }: LoginProps) {
+export function Login() {
+  const navigate = useNavigate();
   const { showToast } = useToast();
+  const { setSession } = useGuestSession();
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -35,15 +30,13 @@ export function Login({ onSessionCreated }: LoginProps) {
         chiefComplaint: chiefComplaint.trim(),
       });
 
-      const session: PatientSession = {
+      setSession({
         sessionToken: result.sessionToken,
         patientId: result.patientId,
         encounterId: result.encounterId,
         hospitalSlug: null,
-      };
-
-      localStorage.setItem('patientSession', JSON.stringify(session));
-      onSessionCreated(session);
+      });
+      navigate('/guest/pre-triage');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Something went wrong');
     } finally {

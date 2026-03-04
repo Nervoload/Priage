@@ -1,85 +1,139 @@
-// PatientApp/src/features/enroute/Enroute.tsx
-// Patient "enroute / waiting" view — shown after the encounter is confirmed.
-// Displays: encounter status, estimated wait, location sharing, and chat.
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Encounter, QueueInfo, PatientSession } from '../../shared/types/domain';
-import {
-  getMyEncounter,
-  getQueueInfo,
-  sendLocationPing,
-} from '../../shared/api/encounters';
-import { MessagePanel } from './MessagePanel';
+import type { Encounter, QueueInfo } from '../../shared/types/domain';
+import { getMyEncounter, getQueueInfo } from '../../shared/api/encounters';
+import { sendLocationPing } from '../../shared/api/intake';
+import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import { useToast } from '../../shared/ui/ToastContext';
-
-interface EnrouteProps {
-  session: PatientSession;
-  encounter: Encounter;
-  onReset: () => void;
-}
+import { MessagePanel } from './MessagePanel';
 
 const STATUS_LABELS: Record<string, { label: string; color: string; bg: string }> = {
-  EXPECTED:   { label: 'On the way',        color: '#2563eb', bg: '#eff6ff'  },
-  ADMITTED:   { label: 'Arrived — Checked in', color: '#16a34a', bg: '#f0fdf4' },
-  TRIAGE:     { label: 'Being assessed',    color: '#d97706', bg: '#fffbeb'  },
-  WAITING:    { label: 'In waiting room',    color: '#7c3aed', bg: '#f5f3ff'  },
-  COMPLETE:   { label: 'Visit complete',     color: '#059669', bg: '#ecfdf5'  },
-  CANCELLED:  { label: 'Cancelled',          color: '#dc2626', bg: '#fef2f2'  },
-  UNRESOLVED: { label: 'Visit incomplete',   color: '#dc2626', bg: '#fef2f2'  },
+  EXPECTED: { label: 'On the way', color: '#2563eb', bg: '#eff6ff' },
+  ADMITTED: { label: 'Checked in', color: '#16a34a', bg: '#f0fdf4' },
+  TRIAGE: { label: 'Being assessed', color: '#d97706', bg: '#fffbeb' },
+  WAITING: { label: 'In waiting room', color: '#7c3aed', bg: '#f5f3ff' },
+  COMPLETE: { label: 'Visit complete', color: '#059669', bg: '#ecfdf5' },
+  CANCELLED: { label: 'Cancelled', color: '#dc2626', bg: '#fef2f2' },
+  UNRESOLVED: { label: 'Visit incomplete', color: '#dc2626', bg: '#fef2f2' },
 };
 
-export function Enroute({ session, encounter: initialEncounter, onReset }: EnrouteProps) {
+const TERMINAL_STATUSES = ['COMPLETE', 'CANCELLED', 'UNRESOLVED'];
+
+export function Enroute() {
+  const { encounterId: encounterIdParam } = useParams<{ encounterId: string }>();
+  const navigate = useNavigate();
+  const { session, clearSession } = useGuestSession();
   const { showToast } = useToast();
-  const [encounter, setEncounter] = useState(initialEncounter);
+
+  const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [queue, setQueue] = useState<QueueInfo | null>(null);
+  const [loading, setLoading] = useState(true);
   const [locationSharing, setLocationSharing] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const locationWatchRef = useRef<number | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
 
-  const encounterId = encounter.id;
+  const encounterId = Number(encounterIdParam);
 
-  // Poll encounter status every 10s
-  const refreshEncounter = useCallback(async () => {
+  const handleExpired = useCallback(() => {
+    clearSession();
+    navigate('/welcome', { replace: true });
+  }, [clearSession, navigate]);
+
+  const refreshEncounter = useCallback(async (suppressErrors = true) => {
+    if (!encounterId) return;
+
     try {
       const updated = await getMyEncounter(encounterId);
       setEncounter(updated);
     } catch {
-      // silent
+      if (!suppressErrors) {
+        showToast('Could not load your visit. Please start check-in again.');
+        handleExpired();
+      }
+    } finally {
+      setLoading(false);
     }
-  }, [encounterId]);
+  }, [encounterId, handleExpired, showToast]);
 
   useEffect(() => {
-    refreshEncounter();
-    pollRef.current = setInterval(refreshEncounter, 10_000);
-    return () => clearInterval(pollRef.current);
-  }, [refreshEncounter]);
+    if (!encounterId || !session) return;
 
-  // Fetch queue info when status is WAITING or TRIAGE
+    let cancelled = false;
+    async function loadInitial() {
+      try {
+        const updated = await getMyEncounter(encounterId);
+        if (!cancelled) {
+          setEncounter(updated);
+        }
+      } catch {
+        if (!cancelled) {
+          showToast('Could not load your visit. Please start check-in again.');
+          handleExpired();
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadInitial();
+    const interval = setInterval(() => {
+      void refreshEncounter();
+    }, 10_000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [encounterId, handleExpired, refreshEncounter, session, showToast]);
+
   useEffect(() => {
-    if (encounter.status !== 'WAITING' && encounter.status !== 'TRIAGE') {
+    if (!encounter || !['WAITING', 'TRIAGE'].includes(encounter.status)) {
       setQueue(null);
       return;
     }
 
+    const activeEncounterId = encounter.id;
     let cancelled = false;
     async function fetchQueue() {
       try {
-        const q = await getQueueInfo(encounterId);
-        if (!cancelled) setQueue(q);
+        const nextQueue = await getQueueInfo(activeEncounterId);
+        if (!cancelled) {
+          setQueue(nextQueue);
+        }
       } catch {
-        // silent
+        if (!cancelled) {
+          setQueue(null);
+        }
       }
     }
+
     fetchQueue();
     const interval = setInterval(fetchQueue, 30_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [encounterId, encounter.status]);
+  }, [encounter]);
 
-  // Location sharing
+  useEffect(() => {
+    return () => {
+      if (locationWatchRef.current !== null) {
+        navigator.geolocation.clearWatch(locationWatchRef.current);
+      }
+    };
+  }, []);
+
+  if (!session) {
+    return <Navigate to="/guest/start" replace />;
+  }
+
+  if (!encounterId || (session.encounterId && encounterId !== session.encounterId)) {
+    return <Navigate to={session.encounterId ? `/guest/enroute/${session.encounterId}` : '/guest/pre-triage'} replace />;
+  }
+
   function toggleLocationSharing() {
     if (locationSharing) {
       if (locationWatchRef.current !== null) {
@@ -97,19 +151,19 @@ export function Enroute({ session, encounter: initialEncounter, onReset }: Enrou
     }
 
     const watchId = navigator.geolocation.watchPosition(
-      async (pos) => {
+      async (position) => {
         try {
           await sendLocationPing({
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
           });
         } catch {
-          // silent
+          // Keep background location failures silent.
         }
       },
       () => {
-        showToast('Could not get your location. Please enable GPS.');
         setLocationSharing(false);
+        showToast('Could not get your location. Please enable GPS.');
       },
       { enableHighAccuracy: true, maximumAge: 30_000, timeout: 15_000 },
     );
@@ -119,29 +173,37 @@ export function Enroute({ session, encounter: initialEncounter, onReset }: Enrou
     showToast('Sharing your location with the hospital.', 'success');
   }
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (locationWatchRef.current !== null) {
-        navigator.geolocation.clearWatch(locationWatchRef.current);
-      }
-    };
-  }, []);
+  function handleReset() {
+    clearSession();
+    navigate('/welcome', { replace: true });
+  }
+
+  if (loading) {
+    return (
+      <div style={styles.center}>
+        <p style={styles.loadingText}>Loading your visit…</p>
+      </div>
+    );
+  }
+
+  if (!encounter) {
+    return null;
+  }
 
   const statusInfo = STATUS_LABELS[encounter.status] ?? STATUS_LABELS.EXPECTED;
-  const isTerminal = ['COMPLETE', 'CANCELLED', 'UNRESOLVED'].includes(encounter.status);
+  const isTerminal = TERMINAL_STATUSES.includes(encounter.status);
+  const hospitalName = formatHospitalSlug(session.hospitalSlug);
+  const queueSummary = queue && queue.totalInQueue > 0
+    ? `~${queue.estimatedMinutes} min estimated wait`
+    : 'Queue estimate will appear once the hospital has you in line.';
 
   return (
     <div style={styles.container}>
-      {/* Header */}
       <div style={styles.header}>
         <h1 style={styles.logo}>Priage</h1>
-        <p style={styles.hospitalName}>
-          {session.hospitalSlug ?? 'Hospital'}
-        </p>
+        <p style={styles.hospitalName}>{hospitalName}</p>
       </div>
 
-      {/* Status card */}
       <div style={{ ...styles.statusCard, background: statusInfo.bg, borderColor: statusInfo.color }}>
         <div style={{ ...styles.statusDot, background: statusInfo.color }} />
         <div>
@@ -149,87 +211,64 @@ export function Enroute({ session, encounter: initialEncounter, onReset }: Enrou
             {statusInfo.label}
           </div>
           {encounter.chiefComplaint && (
-            <div style={styles.complaint}>
-              {encounter.chiefComplaint}
-            </div>
+            <div style={styles.complaint}>{encounter.chiefComplaint}</div>
           )}
         </div>
       </div>
 
-      {/* Queue info */}
-      {queue && !isTerminal && (
+      {!isTerminal && queue && (
         <div style={styles.queueCard}>
           <div style={styles.queueNumber}>{queue.position}</div>
           <div>
             <div style={styles.queueLabel}>Your position in queue</div>
-            <div style={styles.queueWait}>
-              ~{queue.estimatedWaitMinutes} min estimated wait
-            </div>
+            <div style={styles.queueWait}>{queueSummary}</div>
           </div>
         </div>
       )}
 
-      {/* Actions */}
       {!isTerminal && (
         <div style={styles.actions}>
           {encounter.status === 'EXPECTED' && (
             <button
-              style={{
-                ...styles.actionBtn,
-                background: locationSharing ? '#dc2626' : '#2563eb',
-              }}
+              style={{ ...styles.actionBtn, background: locationSharing ? '#dc2626' : '#2563eb' }}
               onClick={toggleLocationSharing}
             >
-              {locationSharing ? '📍 Stop Sharing Location' : '📍 Share My Location'}
+              {locationSharing ? 'Stop Sharing Location' : 'Share My Location'}
             </button>
           )}
 
           <button
             style={{ ...styles.actionBtn, background: '#1e3a5f' }}
-            onClick={() => setShowChat(!showChat)}
+            onClick={() => setShowChat(prev => !prev)}
           >
-            {showChat ? '✕ Close Chat' : '💬 Message ER Staff'}
+            {showChat ? 'Close Chat' : 'Message ER Staff'}
           </button>
         </div>
       )}
 
-      {/* Chat panel */}
       {showChat && !isTerminal && (
         <div style={styles.chatContainer}>
-          <MessagePanel encounterId={encounterId} />
+          <MessagePanel encounterId={encounter.id} />
         </div>
       )}
 
-      {/* Terminal status */}
       {isTerminal && (
         <div style={styles.terminalCard}>
           <p style={styles.terminalText}>
-            {encounter.status === 'COMPLETE'
-              ? 'Your visit is complete. Thank you for using Priage!'
-              : 'This encounter has ended.'}
+            This visit is no longer active. Start a new check-in when you need care again.
           </p>
-          <button style={styles.resetBtn} onClick={onReset}>
+          <button style={styles.resetBtn} onClick={handleReset}>
             Start New Check-In
           </button>
         </div>
       )}
 
-      {/* Timestamps */}
       <div style={styles.timeline}>
         {encounter.expectedAt && (
           <TimelineItem label="Registered" time={encounter.expectedAt} />
         )}
         {encounter.arrivedAt && (
           <TimelineItem label="Arrived" time={encounter.arrivedAt} />
-        )}
-        {encounter.triagedAt && (
-          <TimelineItem label="Triage started" time={encounter.triagedAt} />
-        )}
-        {encounter.waitingAt && (
-          <TimelineItem label="Moved to waiting" time={encounter.waitingAt} />
-        )}
-        {encounter.departedAt && (
-          <TimelineItem label="Departed" time={encounter.departedAt} />
         )}
       </div>
     </div>
@@ -248,7 +287,17 @@ function TimelineItem({ label, time }: { label: string; time: string }) {
   );
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────────
+function formatHospitalSlug(hospitalSlug: string | null) {
+  if (!hospitalSlug) {
+    return 'Hospital selected';
+  }
+
+  return hospitalSlug
+    .split('-')
+    .filter(Boolean)
+    .map(part => part[0]?.toUpperCase() + part.slice(1))
+    .join(' ');
+}
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
@@ -261,6 +310,18 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: '1rem',
+  },
+  center: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#f8fafc',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+  loadingText: {
+    color: '#64748b',
+    fontSize: '0.95rem',
   },
   header: {
     textAlign: 'center',
@@ -279,125 +340,137 @@ const styles: Record<string, React.CSSProperties> = {
   },
   statusCard: {
     display: 'flex',
-    alignItems: 'center',
-    gap: '0.75rem',
-    padding: '1rem',
-    borderRadius: '14px',
+    gap: '0.85rem',
+    alignItems: 'flex-start',
     border: '1px solid',
+    borderRadius: '18px',
+    padding: '1rem',
   },
   statusDot: {
-    width: '12px',
-    height: '12px',
-    borderRadius: '50%',
+    width: '0.75rem',
+    height: '0.75rem',
+    borderRadius: '999px',
+    marginTop: '0.35rem',
     flexShrink: 0,
   },
   statusLabel: {
+    fontSize: '0.82rem',
     fontWeight: 700,
-    fontSize: '1rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
   },
   complaint: {
-    fontSize: '0.85rem',
-    color: '#475569',
-    marginTop: '2px',
+    marginTop: '0.35rem',
+    fontSize: '1rem',
+    fontWeight: 600,
+    color: '#0f172a',
   },
   queueCard: {
     display: 'flex',
     alignItems: 'center',
-    gap: '1rem',
+    gap: '0.85rem',
     padding: '1rem',
+    borderRadius: '18px',
     background: '#fff',
-    borderRadius: '14px',
     border: '1px solid #e2e8f0',
   },
   queueNumber: {
-    fontSize: '2rem',
+    minWidth: '3rem',
+    height: '3rem',
+    borderRadius: '16px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#e0e7ff',
+    color: '#3730a3',
+    fontSize: '1.25rem',
     fontWeight: 800,
-    color: '#1e3a5f',
-    minWidth: '50px',
-    textAlign: 'center',
   },
   queueLabel: {
-    fontWeight: 600,
-    fontSize: '0.9rem',
-    color: '#334155',
+    fontSize: '0.82rem',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    color: '#64748b',
   },
   queueWait: {
-    fontSize: '0.8rem',
-    color: '#64748b',
+    marginTop: '0.25rem',
+    fontSize: '0.92rem',
+    color: '#0f172a',
   },
   actions: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.5rem',
+    gap: '0.75rem',
   },
   actionBtn: {
-    padding: '0.75rem',
+    padding: '0.9rem 1rem',
     border: 'none',
-    borderRadius: '12px',
+    borderRadius: '14px',
     color: '#fff',
-    fontWeight: 600,
     fontSize: '0.95rem',
+    fontWeight: 700,
     cursor: 'pointer',
+    fontFamily: 'inherit',
   },
   chatContainer: {
     background: '#fff',
-    borderRadius: '14px',
+    borderRadius: '18px',
     border: '1px solid #e2e8f0',
-    height: '400px',
+    minHeight: '26rem',
     overflow: 'hidden',
-    display: 'flex',
   },
   terminalCard: {
-    textAlign: 'center',
-    padding: '1.5rem',
     background: '#fff',
-    borderRadius: '14px',
+    borderRadius: '18px',
     border: '1px solid #e2e8f0',
-  },
-  terminalText: {
-    fontSize: '0.95rem',
-    color: '#334155',
-    margin: '0 0 1rem',
-  },
-  resetBtn: {
-    padding: '0.65rem 1.5rem',
-    background: '#1e3a5f',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '10px',
-    fontWeight: 600,
-    fontSize: '0.9rem',
-    cursor: 'pointer',
-  },
-  timeline: {
+    padding: '1rem',
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.5rem',
-    padding: '0.75rem 1rem',
-    background: '#fff',
+    gap: '0.9rem',
+  },
+  terminalText: {
+    margin: 0,
+    color: '#334155',
+    lineHeight: 1.5,
+  },
+  resetBtn: {
+    padding: '0.9rem 1rem',
+    border: 'none',
     borderRadius: '14px',
-    border: '1px solid #e2e8f0',
+    background: '#1e3a5f',
+    color: '#fff',
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  },
+  timeline: {
+    marginTop: '0.25rem',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.65rem',
+    padding: '0.75rem 0 1rem',
   },
   timelineItem: {
-    display: 'flex',
+    display: 'grid',
+    gridTemplateColumns: '12px 1fr auto',
     alignItems: 'center',
-    gap: '0.5rem',
-    fontSize: '0.8rem',
+    gap: '0.65rem',
   },
   timelineDot: {
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    background: '#3b82f6',
-    flexShrink: 0,
+    width: '0.65rem',
+    height: '0.65rem',
+    borderRadius: '999px',
+    background: '#94a3b8',
   },
   timelineLabel: {
-    fontWeight: 600,
-    color: '#334155',
-    flex: 1,
+    color: '#475569',
+    fontSize: '0.9rem',
   },
   timelineTime: {
     color: '#94a3b8',
-    fontSize: '0.75rem',
+    fontSize: '0.8rem',
+    fontVariantNumeric: 'tabular-nums',
   },
 };

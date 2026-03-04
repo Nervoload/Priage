@@ -1,9 +1,6 @@
-// PatientApp/src/app/PatientApp.tsx
-// Root app shell — handles auth gating and route rendering.
-
-import { useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../shared/hooks/useAuth';
+import { useGuestSession } from '../shared/hooks/useGuestSession';
 import { BottomNav } from '../shared/ui/BottomNav';
 import { LoginPage } from '../auth/LoginPage';
 import { SignupPage } from '../auth/SignupPage';
@@ -12,12 +9,21 @@ import { PriagePage } from '../pages/PriagePage';
 import { MessagesPage } from '../pages/MessagesPage';
 import { ChatPage } from '../pages/ChatPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { WelcomePage } from './WelcomePage';
+import { Login as GuestCheckInStart } from './Login';
+import { PreTriage } from '../features/pre-triage/PreTriage';
+import { Enroute } from '../features/enroute/Enroute';
 
 export function PatientApp() {
   const { session, loading } = useAuth();
-  const [authView, setAuthView] = useState<'login' | 'signup'>('login');
+  const { session: guestSession } = useGuestSession();
 
-  // Loading spinner while checking stored session
+  const guestPath = guestSession?.encounterId
+    ? `/guest/enroute/${guestSession.encounterId}`
+    : guestSession
+      ? '/guest/pre-triage'
+      : '/welcome';
+
   if (loading) {
     return (
       <div style={styles.loadingContainer}>
@@ -27,16 +33,58 @@ export function PatientApp() {
     );
   }
 
-  // Not authenticated → Login / Signup
-  if (!session) {
-    return authView === 'login' ? (
-      <LoginPage onSwitchToSignup={() => setAuthView('signup')} />
-    ) : (
-      <SignupPage onSwitchToLogin={() => setAuthView('login')} />
-    );
-  }
+  return (
+    <Routes>
+      <Route
+        path="/welcome"
+        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to={guestPath} replace /> : <WelcomePage />}
+      />
+      <Route
+        path="/auth/login"
+        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to={guestPath} replace /> : <LoginRoute />}
+      />
+      <Route
+        path="/auth/signup"
+        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to={guestPath} replace /> : <SignupRoute />}
+      />
+      <Route
+        path="/guest/start"
+        element={session ? <Navigate to="/" replace /> : <GuestCheckInStart />}
+      />
+      <Route
+        path="/guest/pre-triage"
+        element={session ? <Navigate to="/" replace /> : guestSession ? <PreTriage /> : <Navigate to="/guest/start" replace />}
+      />
+      <Route
+        path="/guest/enroute/:encounterId"
+        element={session ? <Navigate to="/" replace /> : guestSession?.encounterId ? <Enroute /> : <Navigate to="/guest/start" replace />}
+      />
+      <Route
+        path="/"
+        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+      />
+      <Route
+        path="/priage"
+        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+      />
+      <Route
+        path="/messages"
+        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+      />
+      <Route
+        path="/messages/:id"
+        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+      />
+      <Route
+        path="/settings"
+        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+      />
+      <Route path="*" element={<Navigate to={session ? '/' : guestPath} replace />} />
+    </Routes>
+  );
+}
 
-  // Authenticated → Main app with routes + bottom nav
+function AuthenticatedShell() {
   return (
     <div style={styles.appContainer}>
       <div style={styles.routeArea}>
@@ -52,6 +100,16 @@ export function PatientApp() {
       <BottomNav />
     </div>
   );
+}
+
+function LoginRoute() {
+  const navigate = useNavigate();
+  return <LoginPage onSwitchToSignup={() => navigate('/auth/signup')} />;
+}
+
+function SignupRoute() {
+  const navigate = useNavigate();
+  return <SignupPage onSwitchToLogin={() => navigate('/auth/login')} />;
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -88,4 +146,3 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: '64px', // space for BottomNav
   },
 };
-

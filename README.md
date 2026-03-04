@@ -161,19 +161,19 @@ Copy-Item .env.example .env
 ~~~
 
 ### Frontend env
-Only the Hospital App currently has a committed env example.
+Both web apps now have committed env examples.
 
 #### macOS
 ~~~bash
 cp Apps/HospitalApp/.env.example Apps/HospitalApp/.env
+cp Apps/PatientApp/.env.example Apps/PatientApp/.env
 ~~~
 
 #### Windows
 ~~~powershell
 Copy-Item Apps\HospitalApp\.env.example Apps\HospitalApp\.env
+Copy-Item Apps\PatientApp\.env.example Apps\PatientApp\.env
 ~~~
-
-`Apps/PatientApp/` exists as source code, but it does not currently have a local dev package setup or committed env example.
 
 ---
 
@@ -218,8 +218,7 @@ If this fails, check:
 For testing locally, the currently runnable stack is:
 1) the backend
 2) the Hospital App
-
-`Apps/PatientApp/` is present in the repo, but it does not currently have a runnable local dev setup like `Apps/HospitalApp/`.
+3) the Patient App
 
 ### Terminal 1 — Backend (NestJS)
 #### macOS & Windows
@@ -240,6 +239,25 @@ npm run dev
 cd Apps\HospitalApp
 npm run dev
 ~~~
+
+### Terminal 3 — Patient web app (React + Vite + TypeScript)
+#### macOS
+~~~bash
+cd Apps/PatientApp
+npm install
+npm run dev
+~~~
+
+#### Windows
+~~~powershell
+cd Apps\PatientApp
+npm install
+npm run dev
+~~~
+
+The Patient App now supports two demo entry flows:
+- `Quick Check-In` for guest intake backed by `/intake/*`
+- `Sign In / Create Account` for patient-auth backed by `/patient-auth/*`
 
 (Each dev server prints the local URL in the terminal output btw)
 

@@ -1,8 +1,3 @@
-// PatientApp/src/shared/types/domain.ts
-// Patient-side domain types — mirrors backend Prisma models relevant to patients.
-
-// ─── Enums ──────────────────────────────────────────────────────────────────
-
 export type EncounterStatus =
   | 'EXPECTED'
   | 'ADMITTED'
@@ -14,7 +9,14 @@ export type EncounterStatus =
 
 export type SenderType = 'PATIENT' | 'USER' | 'SYSTEM';
 
-// ─── Patient profile ────────────────────────────────────────────────────────
+export interface AssetSummary {
+  id: number;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  url: string;
+}
 
 export interface PatientProfile {
   id: number;
@@ -31,8 +33,6 @@ export interface PatientProfile {
   conditions: string | null;
   preferredLanguage: string;
 }
-
-// ─── Auth ───────────────────────────────────────────────────────────────────
 
 export interface AuthResponse {
   sessionToken: string;
@@ -67,7 +67,28 @@ export interface UpdateProfilePayload {
   preferredLanguage?: string;
 }
 
-// ─── Encounter ──────────────────────────────────────────────────────────────
+export interface AuthenticatedPatientSession {
+  sessionToken: string;
+  patientId: number;
+  patient: PatientProfile;
+}
+
+export interface GuestIntakeSession {
+  sessionToken: string;
+  patientId: number;
+  encounterId: number | null;
+  hospitalSlug: string | null;
+}
+
+export interface EncounterMessage {
+  id: number;
+  createdAt: string;
+  senderType: SenderType;
+  content: string;
+  createdByUserId?: number | null;
+  createdByPatientId?: number | null;
+  attachments: AssetSummary[];
+}
 
 export interface Encounter {
   id: number;
@@ -76,15 +97,10 @@ export interface Encounter {
   chiefComplaint: string | null;
   details: string | null;
   hospitalId: number;
-  patientId: number;
   expectedAt: string | null;
   arrivedAt: string | null;
-  triagedAt: string | null;
-  waitingAt: string | null;
-  departedAt: string | null;
-  cancelledAt: string | null;
-  patient?: PatientProfile;
-  messages?: Message[];
+  messages: EncounterMessage[];
+  intakeImages: AssetSummary[];
 }
 
 export interface EncounterSummary {
@@ -97,22 +113,20 @@ export interface EncounterSummary {
   arrivedAt: string | null;
 }
 
-// ─── Queue info ─────────────────────────────────────────────────────────────
-
 export interface QueueInfo {
   position: number;
   estimatedMinutes: number;
   totalInQueue: number;
 }
 
-// ─── Messaging ──────────────────────────────────────────────────────────────
-
 export interface Message {
   id: number;
   createdAt: string;
   senderType: SenderType;
   content: string;
+  createdByUserId?: number | null;
   createdByPatientId?: number | null;
+  attachments?: AssetSummary[];
 }
 
 export interface ChatMessage {
@@ -136,7 +150,45 @@ export function messageToChatMessage(msg: Message): ChatMessage {
   };
 }
 
-// ─── Priage AI ──────────────────────────────────────────────────────────────
+export interface CreateIntentPayload {
+  firstName?: string;
+  lastName?: string;
+  age?: number;
+  chiefComplaint?: string;
+  details?: string;
+  preferredLanguage?: string;
+}
+
+export interface CreateIntentResponse {
+  sessionToken: string;
+  patientId: number;
+  encounterId: number | null;
+}
+
+export interface UpdateIntakeDetailsPayload {
+  chiefComplaint?: string;
+  details?: string;
+  firstName?: string;
+  lastName?: string;
+  age?: number;
+  allergies?: string;
+  conditions?: string;
+}
+
+export interface UpdateIntakeDetailsResponse {
+  ok: boolean;
+  pending: boolean;
+}
+
+export interface ConfirmIntentPayload {
+  hospitalId?: number;
+  hospitalSlug?: string;
+}
+
+export interface LocationPingPayload {
+  latitude: number;
+  longitude: number;
+}
 
 export interface PriageChatMessage {
   role: 'user' | 'assistant';
@@ -172,12 +224,4 @@ export interface Hospital {
   id: number;
   name: string;
   slug: string;
-}
-
-// ─── Session (persisted in localStorage) ────────────────────────────────────
-
-export interface PatientSession {
-  sessionToken: string;
-  patientId: number;
-  patient: PatientProfile;
 }

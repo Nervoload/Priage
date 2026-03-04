@@ -88,6 +88,7 @@ export function ChatPage() {
       await sendPatientMessage(
         encounterId,
         '⚠️ ALERT: My condition is getting worse. Please check on me urgently.',
+        true,
       );
       await fetchMessages();
       showToast('Worsening alert sent to care team', 'success');
@@ -120,7 +121,7 @@ export function ChatPage() {
     );
   }
 
-  const isTerminal = encounter && ['DISCHARGED', 'CANCELLED', 'LEFT_AMA'].includes(encounter.status);
+  const isTerminal = encounter && ['COMPLETE', 'CANCELLED', 'UNRESOLVED'].includes(encounter.status);
 
   return (
     <div style={styles.container}>

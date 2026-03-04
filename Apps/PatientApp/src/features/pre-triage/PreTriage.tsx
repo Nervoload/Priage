@@ -1,24 +1,18 @@
-// PatientApp/src/features/pre-triage/PreTriage.tsx
-// Pre-triage wizard — collects additional patient details after intake intent.
-// Steps: Age → Allergies → Pre-existing conditions → Additional details → Routing
-// Then confirms the encounter at a specific hospital.
-
 import { useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
+
 import { QuestionPage } from './QuestionPage';
 import { Routing } from './Routing';
-import { updateIntakeDetails } from '../../shared/api/encounters';
+import { updateIntakeDetails } from '../../shared/api/intake';
+import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import { useToast } from '../../shared/ui/ToastContext';
-import type { PatientSession, Encounter } from '../../shared/types/domain';
-
-interface PreTriageProps {
-  session: PatientSession;
-  onComplete: (encounter: Encounter, session: PatientSession) => void;
-}
 
 const TOTAL_STEPS = 5; // 4 questions + 1 routing
 
-export function PreTriage({ session, onComplete }: PreTriageProps) {
+export function PreTriage() {
+  const navigate = useNavigate();
   const { showToast } = useToast();
+  const { session } = useGuestSession();
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
@@ -46,8 +40,12 @@ export function PreTriage({ session, onComplete }: PreTriageProps) {
     }
   }
 
-  function handleRouted(encounter: Encounter, updatedSession: PatientSession) {
-    onComplete(encounter, updatedSession);
+  if (!session) {
+    return <Navigate to="/guest/start" replace />;
+  }
+
+  function handleRouted(encounterId: number) {
+    navigate(`/guest/enroute/${encounterId}`);
   }
 
   // Step 1: Age
@@ -118,7 +116,6 @@ export function PreTriage({ session, onComplete }: PreTriageProps) {
   // Step 5: Hospital routing
   return (
     <Routing
-      session={session}
       onConfirmed={handleRouted}
     />
   );

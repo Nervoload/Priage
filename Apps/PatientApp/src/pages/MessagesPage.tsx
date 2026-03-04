@@ -9,24 +9,22 @@ import type { EncounterSummary } from '../shared/types/domain';
 
 const STATUS_LABELS: Record<string, string> = {
   EXPECTED: 'Expected',
+  ADMITTED: 'Checked In',
+  TRIAGE: 'In Triage',
   WAITING: 'In Waiting Room',
-  TRIAGED: 'Triaged',
-  IN_PROGRESS: 'In Progress',
-  ADMITTED: 'Admitted',
-  DISCHARGED: 'Discharged',
+  COMPLETE: 'Complete',
   CANCELLED: 'Cancelled',
-  LEFT_AMA: 'Left AMA',
+  UNRESOLVED: 'Unresolved',
 };
 
 const STATUS_COLORS: Record<string, string> = {
   EXPECTED: '#6366f1',
-  WAITING: '#f59e0b',
-  TRIAGED: '#3b82f6',
-  IN_PROGRESS: '#3b82f6',
   ADMITTED: '#16a34a',
-  DISCHARGED: '#64748b',
+  TRIAGE: '#3b82f6',
+  WAITING: '#f59e0b',
+  COMPLETE: '#64748b',
   CANCELLED: '#94a3b8',
-  LEFT_AMA: '#94a3b8',
+  UNRESOLVED: '#dc2626',
 };
 
 export function MessagesPage() {
@@ -50,10 +48,10 @@ export function MessagesPage() {
   }, []);
 
   const active = encounters.filter(e =>
-    !['DISCHARGED', 'CANCELLED', 'LEFT_AMA'].includes(e.status)
+    ['EXPECTED', 'ADMITTED', 'TRIAGE', 'WAITING'].includes(e.status)
   );
   const past = encounters.filter(e =>
-    ['DISCHARGED', 'CANCELLED', 'LEFT_AMA'].includes(e.status)
+    ['COMPLETE', 'CANCELLED', 'UNRESOLVED'].includes(e.status)
   );
 
   function formatDate(d: string) {

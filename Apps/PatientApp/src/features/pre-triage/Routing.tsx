@@ -1,21 +1,24 @@
-// PatientApp/src/features/pre-triage/Routing.tsx
-// Routing/hospital selection step.
-// Patient selects which hospital they're heading to, then we confirm the intent.
-
 import { useState } from 'react';
-import { confirmIntent } from '../../shared/api/encounters';
+
+import { confirmIntent } from '../../shared/api/intake';
+import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import { useToast } from '../../shared/ui/ToastContext';
-import type { PatientSession, Encounter } from '../../shared/types/domain';
 
 interface RoutingProps {
-  session: PatientSession;
-  onConfirmed: (encounter: Encounter, updatedSession: PatientSession) => void;
+  onConfirmed: (encounterId: number) => void;
 }
 
-export function Routing({ session, onConfirmed }: RoutingProps) {
+export function Routing({ onConfirmed }: RoutingProps) {
   const { showToast } = useToast();
-  const [hospitalSlug, setHospitalSlug] = useState(session.hospitalSlug ?? '');
+  const { session, setSession } = useGuestSession();
+  const [hospitalSlug, setHospitalSlug] = useState(session?.hospitalSlug ?? '');
   const [submitting, setSubmitting] = useState(false);
+
+  if (!session) {
+    return null;
+  }
+
+  const currentSession = session;
 
   async function handleConfirm() {
     if (!hospitalSlug.trim()) {
@@ -27,13 +30,12 @@ export function Routing({ session, onConfirmed }: RoutingProps) {
     try {
       const encounter = await confirmIntent({ hospitalSlug: hospitalSlug.trim() });
 
-      const updatedSession: PatientSession = {
-        ...session,
+      setSession({
+        ...currentSession,
         encounterId: encounter.id,
         hospitalSlug: hospitalSlug.trim(),
-      };
-      localStorage.setItem('patientSession', JSON.stringify(updatedSession));
-      onConfirmed(encounter, updatedSession);
+      });
+      onConfirmed(encounter.id);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Could not confirm. Try again.');
     } finally {

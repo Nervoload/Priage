@@ -1,27 +1,11 @@
-// PatientApp/src/shared/api/client.ts
-// Fetch wrapper for the patient app.
-// Uses x-patient-token header instead of JWT Bearer token.
-
 export const API_BASE_URL: string =
   import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
-const SESSION_KEY = 'patientSession';
-
-/** Get the stored session token (if any). */
-export function getSessionToken(): string | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    const session = JSON.parse(raw);
-    return session.sessionToken ?? null;
-  } catch {
-    return null;
-  }
-}
+import { getStoredPatientToken } from '../session';
 
 /**
  * Authenticated fetch wrapper for patient endpoints.
- * Attaches `x-patient-token` header from localStorage session.
+ * Attaches `x-patient-token` header from the current account or guest session.
  */
 export async function client<T = unknown>(
   endpoint: string,
@@ -34,7 +18,7 @@ export async function client<T = unknown>(
     ...((options.headers as Record<string, string>) ?? {}),
   };
 
-  const token = getSessionToken();
+  const token = getStoredPatientToken();
   if (token) {
     headers['x-patient-token'] = token;
   }
