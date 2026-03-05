@@ -14,8 +14,6 @@ import { SettingsPage } from '../features/settings/SettingsPage';
 import { listEncounters, startExam, confirmEncounter } from '../shared/api/encounters';
 import { ApiError } from '../shared/api/client';
 import { getSocket, sendMessageViaSocket } from '../shared/realtime/socket';
-import { useAlerts } from '../shared/api/useAlerts';
-import { AlertsBanner } from '../features/alerts/AlertsBanner';
 import { listMessages } from '../shared/api/messaging';
 import type { View } from '../shared/ui/NavBar';
 
@@ -39,13 +37,6 @@ export function HospitalApp() {
   const loadedMessageEncounters = useRef<Set<number>>(new Set());
   const loadingMessageEncounters = useRef<Set<number>>(new Set());
   const messageRetryAt = useRef<Map<number, number>>(new Map());
-
-  // ─── Alerts (derived + server) ────────────────────────────────────────────
-
-  const { alerts, unacknowledgedCount, acknowledge, severityColors } = useAlerts(
-    encounters,
-    user?.hospitalId ?? null,
-  );
 
   // ─── Fetch encounters from backend ──────────────────────────────────────
 
@@ -239,15 +230,6 @@ export function HospitalApp() {
 
   return (
     <>
-      {/* AlertsBanner only shows on old-style views (admit, triage) */}
-      {(currentView === 'admit' || currentView === 'triage') && (
-        <AlertsBanner
-          alerts={alerts}
-          unacknowledgedCount={unacknowledgedCount}
-          onAcknowledge={acknowledge}
-          severityColors={severityColors}
-        />
-      )}
       {currentView === 'admit' && (
         <AdmitView
           onBack={handleBack}

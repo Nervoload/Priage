@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { createIntent } from '../shared/api/intake';
-import { useDemo } from '../shared/demo';
 import { useGuestSession } from '../shared/hooks/useGuestSession';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
@@ -10,41 +9,12 @@ import { useToast } from '../shared/ui/ToastContext';
 export function Login() {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { selectedScenario } = useDemo();
   const { setSession } = useGuestSession();
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [chiefComplaint, setChiefComplaint] = useState('');
   const [submitting, setSubmitting] = useState(false);
-
-  function applyDemoDefaults() {
-    const defaults = selectedScenario.guestStartDefaults;
-    if (!defaults) {
-      showToast('This scenario is account-focused. You can still continue as guest.');
-      return;
-    }
-    setFirstName(defaults.firstName);
-    setLastName(defaults.lastName);
-    setChiefComplaint(defaults.chiefComplaint);
-  }
-
-  function clearFields() {
-    setFirstName('');
-    setLastName('');
-    setChiefComplaint('');
-  }
-
-  useEffect(() => {
-    if (firstName || lastName || chiefComplaint) {
-      return;
-    }
-    if (selectedScenario.guestStartDefaults) {
-      applyDemoDefaults();
-    }
-    // Intentionally react only to scenario changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedScenario.id]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -65,7 +35,7 @@ export function Login() {
         sessionToken: result.sessionToken,
         patientId: result.patientId,
         encounterId: result.encounterId,
-        hospitalSlug: selectedScenario.hospitalSlug,
+        hospitalSlug: null,
       });
       navigate('/guest/pre-triage');
     } catch (error) {
@@ -82,26 +52,9 @@ export function Login() {
           <span style={styles.badge}>Guest Check-In</span>
           <h1 style={styles.title}>Fast emergency intake</h1>
           <p style={styles.subtitle}>
-            Scenario: <strong>{selectedScenario.label}</strong>. Use defaults for speed, then edit as needed.
+            Tell us what brings you in. Your information will be shared with the hospital care team.
           </p>
         </header>
-
-        <article style={styles.scenarioSummary}>
-          <h2 style={styles.summaryTitle}>Scenario details</h2>
-          <p style={styles.summaryBody}>{selectedScenario.headline}</p>
-          <p style={styles.summaryFoot}>
-            Recommended hospital: <strong>{selectedScenario.hospitalName}</strong>
-          </p>
-        </article>
-
-        <div style={styles.presetRow}>
-          <button style={styles.secondaryButton} type="button" onClick={applyDemoDefaults}>
-            Use demo defaults
-          </button>
-          <button style={styles.secondaryButton} type="button" onClick={clearFields}>
-            Clear
-          </button>
-        </div>
 
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.twoCol}>
@@ -112,7 +65,7 @@ export function Login() {
                 value={firstName}
                 onChange={(event) => setFirstName(event.target.value)}
                 autoComplete="given-name"
-                placeholder="Maya"
+                placeholder="First name"
               />
             </label>
             <label style={styles.fieldLabel}>
@@ -122,7 +75,7 @@ export function Login() {
                 value={lastName}
                 onChange={(event) => setLastName(event.target.value)}
                 autoComplete="family-name"
-                placeholder="Coleman"
+                placeholder="Last name"
               />
             </label>
           </div>

@@ -1,357 +1,445 @@
 // HospitalApp/src/features/waitingroom/AlertDashboard.tsx
-// Alert dashboard for the Waiting Room — shows patient wait times + new-message indicators.
-//
-// ────────────────────────────────────────────────────────────────────────────
-// BACKEND CONNECTION PLACEHOLDERS (Phase 6.3)
-// ────────────────────────────────────────────────────────────────────────────
-//
-// Currently this component derives all data client-side from encounter
-// timestamps and local chatMessages state.  To connect to the backend:
-//
-// 1. REAL-TIME MESSAGE ALERTS
-//    - Subscribe to 'message.created' Socket.IO events via getSocket() from
-//      '../../shared/realtime/socket'.
-//    - When a message arrives with senderType === 'PATIENT', increment the
-//      new-message count for that encounterId.
-//    - The seenPatientMsgCounts ref below is the baseline — real-time events
-//      would push counts above the baseline, triggering the "💬 new" badge.
-//
-// 2. SERVER-SIDE ALERTS
-//    - Accept an optional `serverAlerts: UnifiedAlert[]` prop (from useAlerts)
-//      and merge them into the dashboard items alongside the derived wait-time rows.
-//    - Render server alerts with their own severity/type and a "View" action
-//      instead of dismiss.
-//
-// 3. ACKNOWLEDGE / RESOLVE
-//    - Replace the local `dismissed` Set with calls to:
-//        acknowledgeAlert(alertId) from '../../shared/api/alerts'
-//        resolveAlert(alertId)     from '../../shared/api/alerts'
-//    - Optimistically remove the row and roll back on error.
-//
-// 4. FETCH MESSAGE HISTORY
-//    - On mount, call listMessages(encounterId) from '../../shared/api/messaging'
-//      to get historical patient messages and set the baseline unread count
-//      relative to the last read timestamp (stored per-encounter on the backend).
-//
-// See FEATURES.md § "Alert Dashboard" for the full integration guide.
-// ────────────────────────────────────────────────────────────────────────────
+// Right-side expandable alerts & analytics panel for the waiting room.
+// Slides out from the right edge, like a chat/panel in VS Code.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Encounter, ChatMessage } from '../../app/HospitalApp';
-import { patientName } from '../../app/HospitalApp';
-// TODO (Phase 6.3): import { getSocket } from '../../shared/realtime/socket';
-// TODO (Phase 6.3): import { RealtimeEvents } from '../../shared/types/domain';
-// TODO (Phase 6.3): import type { UnifiedAlert } from '../../shared/api/useAlerts';
-// TODO (Phase 6.3): import { acknowledgeAlert, resolveAlert } from '../../shared/api/alerts';
-// TODO (Phase 6.3): import { listMessages } from '../../shared/api/messaging';
+import type { Encounter, ChatMessage } from '../../shared/types/domain';
+import { patientName } from '../../shared/types/domain';
 
 interface AlertDashboardProps {
-    encounters: Encounter[];
-    chatMessages: Record<number, ChatMessage[]>;
-    onSelectPatient?: (encounterId: number) => void;
-    // TODO (Phase 6.3): Add these props when wiring to backend:
-    // serverAlerts?: UnifiedAlert[];
-    // onAcknowledgeAlert?: (alert: UnifiedAlert) => void;
-    // onResolveAlert?: (alert: UnifiedAlert) => void;
+  encounters: Encounter[];
+  chatMessages: Record<number, ChatMessage[]>;
+  onSelectPatient?: (encounterId: number) => void;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// NavBar height (h-14 = 56px)
+const NAV_HEIGHT = 56;
+const MIN_PANEL_WIDTH = 280;
+const MAX_PANEL_WIDTH = 700;
+const DEFAULT_PANEL_WIDTH = 380;
 
-function minutesSince(isoDate: string | null | undefined): number {
-    if (!isoDate) return 0;
-    return (Date.now() - new Date(isoDate).getTime()) / 60_000;
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function minutesSince(iso: string | null | undefined): number {
+  if (!iso) return 0;
+  return (Date.now() - new Date(iso).getTime()) / 60_000;
 }
 
-/** Pick the best "started waiting" timestamp for display */
 function waitingSince(enc: Encounter): string | null {
-    if (enc.status === 'WAITING' && enc.waitingAt) return enc.waitingAt;
-    if (enc.status === 'TRIAGE' && enc.triagedAt) return enc.triagedAt;
-    return enc.arrivedAt ?? enc.createdAt;
+  if (enc.status === 'WAITING' && enc.waitingAt) return enc.waitingAt;
+  if (enc.status === 'TRIAGE' && enc.triagedAt) return enc.triagedAt;
+  return enc.arrivedAt ?? enc.createdAt;
 }
 
 type Severity = 'ok' | 'warn' | 'critical';
 
 function waitSeverity(mins: number): Severity {
-    if (mins >= 45) return 'critical';
-    if (mins >= 15) return 'warn';
-    return 'ok';
+  if (mins >= 45) return 'critical';
+  if (mins >= 15) return 'warn';
+  return 'ok';
 }
 
-const SEVERITY_STYLES: Record<Severity, { bg: string; border: string; dot: string; text: string }> = {
-    ok: { bg: '#f0fdf4', border: '#bbf7d0', dot: '#22c55e', text: '#166534' },
-    warn: { bg: '#fffbeb', border: '#fde68a', dot: '#f59e0b', text: '#92400e' },
-    critical: { bg: '#fef2f2', border: '#fecaca', dot: '#ef4444', text: '#991b1b' },
-};
+const SEV = {
+  ok:       { bg: 'bg-green-50',  border: 'border-green-200', dot: 'bg-green-500', text: 'text-green-800' },
+  warn:     { bg: 'bg-amber-50',  border: 'border-amber-200', dot: 'bg-amber-500', text: 'text-amber-800' },
+  critical: { bg: 'bg-red-50',    border: 'border-red-200',   dot: 'bg-red-500',   text: 'text-red-800'   },
+} as const;
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: AlertDashboardProps) {
-    const [collapsed, setCollapsed] = useState(false);
-    const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  const [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  const [activeTab, setActiveTab] = useState<'alerts' | 'summary'>('alerts');
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
+  const [expanded, setExpanded] = useState(false);
 
-    // Track "seen" patient message counts at mount-time to detect new ones.
-    // TODO (Phase 6.3): Replace this with a backend-driven "last read" timestamp
-    //   per encounter, fetched via listMessages() or a dedicated unread-count endpoint.
-    const seenPatientMsgCounts = useRef<Record<number, number>>({});
-    const [, forceUpdate] = useState(0);
+  // Drag-resize state
+  const isDragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(DEFAULT_PANEL_WIDTH);
 
-    // Seed baseline message counts once on mount
-    useEffect(() => {
-        const baseline: Record<number, number> = {};
-        for (const enc of encounters) {
-            const msgs = chatMessages[enc.id] || [];
-            baseline[enc.id] = msgs.filter(m => m.sender === 'patient').length;
-        }
-        seenPatientMsgCounts.current = baseline;
-    }, []); // intentionally mount-only
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = panelWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
 
-    // Auto-refresh wait-time display every 30s
-    useEffect(() => {
-        const timer = setInterval(() => forceUpdate(n => n + 1), 30_000);
-        return () => clearInterval(timer);
-    }, []);
+    const onMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return;
+      const delta = dragStartX.current - ev.clientX; // dragging left = bigger
+      const next = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, dragStartWidth.current + delta));
+      setPanelWidth(next);
+    };
+    const onUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [panelWidth]);
 
-    // TODO (Phase 6.3): Subscribe to real-time message events here:
-    //   useEffect(() => {
-    //     const socket = getSocket();
-    //     const handleNewMessage = (payload: { encounterId: number; senderType: string }) => {
-    //       if (payload.senderType === 'PATIENT') {
-    //         // Trigger a re-render so the "new message" badge appears
-    //         forceUpdate(n => n + 1);
-    //       }
-    //     };
-    //     socket.on(RealtimeEvents.MessageCreated, handleNewMessage);
-    //     return () => { socket.off(RealtimeEvents.MessageCreated, handleNewMessage); };
-    //   }, []);
+  // Baseline message counts for unread detection
+  const seenMsgCounts = useRef<Record<number, number>>({});
+  const [, forceUpdate] = useState(0);
 
-    const dismiss = useCallback((encId: number) => {
-        // TODO (Phase 6.3): Call acknowledgeAlert(alertId) here instead of local dismiss.
-        setDismissed(prev => new Set(prev).add(encId));
-    }, []);
+  useEffect(() => {
+    const baseline: Record<number, number> = {};
+    for (const enc of encounters) {
+      const msgs = chatMessages[enc.id] || [];
+      baseline[enc.id] = msgs.filter(m => m.sender === 'patient').length;
+    }
+    seenMsgCounts.current = baseline;
+  }, []); // mount-only
 
-    // Build alert items — one row per encounter
-    const items = encounters
-        .filter(enc => !dismissed.has(enc.id))
-        .map(enc => {
-            const since = waitingSince(enc);
-            const mins = minutesSince(since);
-            const severity = waitSeverity(mins);
-            const name = patientName(enc.patient);
+  useEffect(() => {
+    const t = setInterval(() => forceUpdate(n => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
-            // Detect new patient messages since mount
-            // TODO (Phase 6.3): Replace with backend-driven unread count
-            const currentPatientMsgs = (chatMessages[enc.id] || []).filter(m => m.sender === 'patient').length;
-            const baselineCount = seenPatientMsgCounts.current[enc.id] ?? 0;
-            const newMsgCount = Math.max(0, currentPatientMsgs - baselineCount);
+  const dismiss = useCallback((encId: number) => {
+    setDismissed(prev => new Set(prev).add(encId));
+  }, []);
 
-            return { enc, mins, severity, name, newMsgCount };
-        });
+  // Build alert items
+  const items = encounters
+    .filter(enc => !dismissed.has(enc.id))
+    .map(enc => {
+      const since = waitingSince(enc);
+      const mins = minutesSince(since);
+      const severity = waitSeverity(mins);
+      const name = patientName(enc.patient);
+      const currentPatientMsgs = (chatMessages[enc.id] || []).filter(m => m.sender === 'patient').length;
+      const baselineCount = seenMsgCounts.current[enc.id] ?? 0;
+      const newMsgCount = Math.max(0, currentPatientMsgs - baselineCount);
+      return { enc, mins, severity, name, newMsgCount };
+    });
 
-    // Sort: critical first, then warn, then ok
-    const order: Record<Severity, number> = { critical: 0, warn: 1, ok: 2 };
-    items.sort((a, b) => order[a.severity] - order[b.severity]);
+  const order: Record<Severity, number> = { critical: 0, warn: 1, ok: 2 };
+  items.sort((a, b) => order[a.severity] - order[b.severity]);
 
-    const critCount = items.filter(i => i.severity === 'critical').length;
-    const warnCount = items.filter(i => i.severity === 'warn').length;
-    const msgCount = items.reduce((s, i) => s + i.newMsgCount, 0);
+  const critCount = items.filter(i => i.severity === 'critical').length;
+  const warnCount = items.filter(i => i.severity === 'warn').length;
+  const msgCount = items.reduce((s, i) => s + i.newMsgCount, 0);
+  const totalAlerts = critCount + warnCount;
 
-    // Always render the dashboard (even with zero alerts) so staff always see it.
+  // Summary stats
+  const avgWaitMins = encounters.length > 0
+    ? Math.round(encounters.reduce((s, e) => s + minutesSince(waitingSince(e)), 0) / encounters.length)
+    : 0;
+  const ctasBreakdown = [1, 2, 3, 4, 5].map(level => ({
+    level,
+    count: encounters.filter(e => e.currentCtasLevel === level).length,
+  })).filter(c => c.count > 0);
+  const statusBreakdown = ['TRIAGE', 'WAITING', 'COMPLETE'].map(s => ({
+    status: s,
+    count: encounters.filter(e => e.status === s).length,
+  })).filter(c => c.count > 0);
 
-    return (
-        <div
-            style={{
-                marginBottom: '1rem',
-                borderRadius: '12px',
-                overflow: 'hidden',
-                boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-                border: '1px solid #e5e7eb',
-                backgroundColor: 'white',
-            }}
-        >
-            {/* Header bar */}
-            <div
-                onClick={() => setCollapsed(!collapsed)}
-                style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '0.65rem 1.25rem',
-                    cursor: 'pointer',
-                    background: 'linear-gradient(90deg, #7c3aed 0%, #6d28d9 100%)',
-                    color: 'white',
-                    userSelect: 'none',
-                }}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <span style={{ fontSize: '1rem' }}>📋</span>
-                    <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                        Alert Dashboard
-                    </span>
-                    {/* Summary badges */}
-                    <div style={{ display: 'flex', gap: '0.4rem', marginLeft: '0.25rem' }}>
-                        {critCount > 0 && (
-                            <span style={{
-                                backgroundColor: '#ef4444',
-                                color: 'white',
-                                borderRadius: '10px',
-                                padding: '0.1rem 0.55rem',
-                                fontSize: '0.7rem',
-                                fontWeight: 700,
-                            }}>
-                                {critCount} critical
-                            </span>
-                        )}
-                        {warnCount > 0 && (
-                            <span style={{
-                                backgroundColor: '#f59e0b',
-                                color: 'white',
-                                borderRadius: '10px',
-                                padding: '0.1rem 0.55rem',
-                                fontSize: '0.7rem',
-                                fontWeight: 700,
-                            }}>
-                                {warnCount} warning
-                            </span>
-                        )}
-                        {msgCount > 0 && (
-                            <span style={{
-                                backgroundColor: '#3b82f6',
-                                color: 'white',
-                                borderRadius: '10px',
-                                padding: '0.1rem 0.55rem',
-                                fontSize: '0.7rem',
-                                fontWeight: 700,
-                            }}>
-                                💬 {msgCount} new
-                            </span>
-                        )}
-                        {items.length === 0 && (
-                            <span style={{
-                                backgroundColor: 'rgba(255,255,255,0.25)',
-                                borderRadius: '10px',
-                                padding: '0.1rem 0.55rem',
-                                fontSize: '0.7rem',
-                                fontWeight: 600,
-                            }}>
-                                All clear
-                            </span>
-                        )}
-                    </div>
-                </div>
-                <span style={{ fontSize: '0.8rem', opacity: 0.8 }}>
-                    {collapsed ? '▼' : '▲'}
-                </span>
+  return (
+    <>
+      {/* ── Toggle tab (right edge, always visible, below navbar) ──── */}
+      <button
+        onClick={() => setOpen(!open)}
+        className={`
+          fixed right-0 z-40 cursor-pointer
+          flex items-center gap-1.5 px-2 py-3
+          rounded-l-lg border border-r-0 shadow-lg transition-all
+          ${totalAlerts > 0
+            ? 'bg-red-600 text-white border-red-700 hover:bg-red-700'
+            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+          }
+        `}
+        style={{
+          top: `calc(50% + ${NAV_HEIGHT / 2}px)`,
+          transform: 'translateY(-50%)',
+          writingMode: 'vertical-lr',
+          textOrientation: 'mixed',
+        }}
+        title={open ? 'Close panel' : 'Open alerts panel'}
+      >
+        <span className="text-xs font-bold tracking-wide" style={{ writingMode: 'vertical-lr' }}>
+          {open ? '✕' : totalAlerts > 0 ? `${totalAlerts}` : ''}
+        </span>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="rotate-0">
+          <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+        {msgCount > 0 && !open && (
+          <span className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-blue-500 text-white text-[9px] font-bold flex items-center justify-center">
+            {msgCount}
+          </span>
+        )}
+      </button>
+
+      {/* ── Slide-out panel (below navbar, resizable) ────────────── */}
+      <div
+        className={`
+          fixed right-0 z-30 transition-transform duration-300 ease-in-out
+          ${open ? 'translate-x-0' : 'translate-x-full'}
+        `}
+        style={{
+          top: NAV_HEIGHT,
+          height: `calc(100vh - ${NAV_HEIGHT}px)`,
+          width: expanded ? '100vw' : panelWidth,
+          transition: expanded ? 'width 0.3s ease-in-out' : undefined,
+        }}
+      >
+        <div className="h-full bg-white border-l border-gray-200 shadow-2xl flex flex-col relative">
+          {/* Drag handle (left edge) with arrow indicator — hidden when expanded */}
+          {!expanded && (
+          <div
+            onMouseDown={onDragStart}
+            className="absolute left-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 group flex items-center justify-center hover:bg-priage-200/50 active:bg-priage-400/50 transition-colors"
+            title="Drag to resize"
+          >
+            <svg width="6" height="24" viewBox="0 0 6 24" fill="none" className="opacity-30 group-hover:opacity-70 transition-opacity">
+              <path d="M3 2L0.5 5H5.5L3 2Z" fill="currentColor" />
+              <path d="M3 22L0.5 19H5.5L3 22Z" fill="currentColor" />
+              <line x1="1.5" y1="8" x2="1.5" y2="16" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              <line x1="4.5" y1="8" x2="4.5" y2="16" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+            </svg>
+          </div>
+          )}
+          {/* Header */}
+          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 shrink-0">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-bold text-gray-900">Waiting Room Panel</h2>
+              <div className="flex items-center gap-1">
+                {/* Expand / collapse full-screen */}
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className="w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition-colors cursor-pointer"
+                  title={expanded ? 'Collapse to side panel' : 'Expand to full view'}
+                >
+                  {expanded ? (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path d="M10 2v4h4M6 14v-4H2M10 6L14 2M6 10l-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path d="M14 2l-4 4M2 14l4-4M10 2h4v4M6 14H2v-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+                {/* Close */}
+                <button
+                  onClick={() => { setOpen(false); setExpanded(false); }}
+                  className="w-7 h-7 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition-colors cursor-pointer"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
-            {/* Alert rows */}
-            {!collapsed && (
-                <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
-                    {items.length === 0 ? (
-                        <div style={{
-                            padding: '1.25rem',
-                            textAlign: 'center',
-                            color: '#6b7280',
-                            fontSize: '0.85rem',
-                        }}>
-                            ✅ No active alerts — all patients are within normal wait times.
-                        </div>
-                    ) : (
-                        items.map(({ enc, mins, severity, name, newMsgCount }) => {
-                            const colors = SEVERITY_STYLES[severity];
-                            return (
-                                <div
-                                    key={enc.id}
-                                    style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.75rem',
-                                        padding: '0.6rem 1.25rem',
-                                        backgroundColor: colors.bg,
-                                        borderBottom: `1px solid ${colors.border}`,
-                                        cursor: onSelectPatient ? 'pointer' : 'default',
-                                        transition: 'background-color 0.15s',
-                                    }}
-                                    onClick={() => onSelectPatient?.(enc.id)}
-                                    onMouseOver={e => { e.currentTarget.style.opacity = '0.85'; }}
-                                    onMouseOut={e => { e.currentTarget.style.opacity = '1'; }}
-                                >
-                                    {/* Severity dot */}
-                                    <div
-                                        style={{
-                                            width: '10px',
-                                            height: '10px',
-                                            borderRadius: '50%',
-                                            backgroundColor: colors.dot,
-                                            flexShrink: 0,
-                                            boxShadow: severity === 'critical' ? `0 0 6px ${colors.dot}` : 'none',
-                                            animation: severity === 'critical' ? 'pulse 2s infinite' : 'none',
-                                        }}
-                                    />
+            {/* Summary badges */}
+            <div className="flex gap-1.5 flex-wrap">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600">
+                {encounters.length} patients
+              </span>
+              {critCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700">
+                  {critCount} critical
+                </span>
+              )}
+              {warnCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">
+                  {warnCount} warning
+                </span>
+              )}
+              {msgCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">
+                  {msgCount} new messages
+                </span>
+              )}
+            </div>
 
-                                    {/* Info */}
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                            <span style={{ fontWeight: 600, fontSize: '0.85rem', color: colors.text }}>
-                                                {name}
-                                            </span>
-                                            {newMsgCount > 0 && (
-                                                <span style={{
-                                                    backgroundColor: '#3b82f6',
-                                                    color: 'white',
-                                                    borderRadius: '10px',
-                                                    padding: '0.05rem 0.45rem',
-                                                    fontSize: '0.65rem',
-                                                    fontWeight: 700,
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    gap: '0.2rem',
-                                                }}>
-                                                    💬 {newMsgCount} new message{newMsgCount > 1 ? 's' : ''}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.1rem' }}>
-                                            <span style={{ textTransform: 'capitalize' }}>{enc.status.toLowerCase()}</span>
-                                            {' · '}
-                                            has been waiting for <strong style={{ color: colors.text }}>{Math.round(mins)} min</strong>
-                                            {enc.chiefComplaint && (
-                                                <> · {enc.chiefComplaint}</>
-                                            )}
-                                        </div>
-                                    </div>
+            {/* Tabs */}
+            <div className="flex gap-1 mt-3">
+              {(['alerts', 'summary'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`
+                    px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer
+                    ${activeTab === tab
+                      ? 'bg-priage-600 text-white'
+                      : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+                    }
+                  `}
+                >
+                  {tab === 'alerts' ? `Alerts (${totalAlerts})` : 'Summary'}
+                </button>
+              ))}
+            </div>
+          </div>
 
-                                    {/* Dismiss */}
-                                    <button
-                                        onClick={e => { e.stopPropagation(); dismiss(enc.id); }}
-                                        title="Dismiss"
-                                        style={{
-                                            padding: '0.2rem 0.5rem',
-                                            fontSize: '0.7rem',
-                                            fontWeight: 500,
-                                            backgroundColor: 'rgba(0,0,0,0.05)',
-                                            border: 'none',
-                                            borderRadius: '4px',
-                                            cursor: 'pointer',
-                                            color: '#6b7280',
-                                            flexShrink: 0,
-                                        }}
-                                    >
-                                        ✕
-                                    </button>
-                                </div>
-                            );
-                        })
-                    )}
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto">
+            {activeTab === 'alerts' ? (
+              /* ── Alerts tab ───────────────────────────────────────── */
+              items.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <span className="text-3xl mb-2">✓</span>
+                  <p className="text-sm">All clear — no active alerts</p>
                 </div>
-            )}
+              ) : (
+                <div>
+                  {items.map(({ enc, mins, severity, name, newMsgCount }) => {
+                    const s = SEV[severity];
+                    return (
+                      <div
+                        key={enc.id}
+                        className={`
+                          flex items-start gap-3 px-4 py-3 border-b cursor-pointer
+                          transition-colors hover:brightness-95
+                          ${s.bg} ${s.border}
+                        `}
+                        onClick={() => onSelectPatient?.(enc.id)}
+                      >
+                        <div className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${s.dot} ${
+                          severity === 'critical' ? 'animate-pulse' : ''
+                        }`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`font-semibold text-sm ${s.text}`}>{name}</span>
+                            {newMsgCount > 0 && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500 text-white">
+                                {newMsgCount} msg
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-500 mt-0.5 m-0">
+                            <span className="capitalize">{enc.status.toLowerCase()}</span>
+                            {' · '}
+                            <span className={`font-semibold ${s.text}`}>{Math.round(mins)}m</span>
+                            {enc.chiefComplaint && <> · {enc.chiefComplaint}</>}
+                          </p>
+                        </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); dismiss(enc.id); }}
+                          title="Dismiss"
+                          className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 hover:bg-black/5 shrink-0 cursor-pointer text-xs mt-0.5"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              /* ── Summary tab ──────────────────────────────────────── */
+              <div className="p-4 space-y-5">
+                {/* Average wait */}
+                <StatBlock label="Average Wait Time" value={`${avgWaitMins} min`}
+                  color={avgWaitMins >= 45 ? 'red' : avgWaitMins >= 15 ? 'amber' : 'green'} />
 
-            {/* Pulse keyframe (injected once) */}
-            <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
+                <StatBlock label="Total Patients" value={String(encounters.length)} color="gray" />
+
+                {/* CTAS breakdown */}
+                {ctasBreakdown.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">CTAS Breakdown</h4>
+                    <div className="space-y-1.5">
+                      {ctasBreakdown.map(c => (
+                        <div key={c.level} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-3 h-3 rounded-sm text-[8px] font-bold flex items-center justify-center text-white ${
+                              c.level === 1 ? 'bg-red-500' :
+                              c.level === 2 ? 'bg-orange-500' :
+                              c.level === 3 ? 'bg-amber-500' :
+                              c.level === 4 ? 'bg-blue-500' : 'bg-gray-400'
+                            }`}>
+                              {c.level}
+                            </span>
+                            <span className="text-xs text-gray-600">CTAS {c.level}</span>
+                          </div>
+                          <span className="text-xs font-semibold text-gray-800">{c.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Status breakdown */}
+                {statusBreakdown.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">By Status</h4>
+                    <div className="space-y-1.5">
+                      {statusBreakdown.map(c => (
+                        <div key={c.status} className="flex items-center justify-between">
+                          <span className="text-xs text-gray-600 capitalize">{c.status.toLowerCase()}</span>
+                          <span className="text-xs font-semibold text-gray-800">{c.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Longest waits */}
+                {encounters.length > 0 && (
+                  <div>
+                    <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Longest Waits</h4>
+                    <div className="space-y-1.5">
+                      {[...encounters]
+                        .sort((a, b) => minutesSince(waitingSince(a)) - minutesSince(waitingSince(b)))
+                        .reverse()
+                        .slice(0, 5)
+                        .map(enc => {
+                          const mins = Math.round(minutesSince(waitingSince(enc)));
+                          const sev = waitSeverity(mins);
+                          return (
+                            <div
+                              key={enc.id}
+                              className="flex items-center justify-between cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5 -mx-1"
+                              onClick={() => onSelectPatient?.(enc.id)}
+                            >
+                              <span className="text-xs text-gray-600 truncate">{patientName(enc.patient)}</span>
+                              <span className={`text-xs font-semibold ${SEV[sev].text}`}>{mins}m</span>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-    );
+      </div>
+
+      {/* Backdrop (click to close, below navbar) */}
+      {open && (
+        <div
+          className="fixed left-0 right-0 bottom-0 z-20 bg-black/10"
+          style={{ top: NAV_HEIGHT }}
+          onClick={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── Stat block helper ──────────────────────────────────────────────────────
+
+function StatBlock({ label, value, color }: { label: string; value: string; color: 'red' | 'amber' | 'green' | 'gray' }) {
+  const colors = {
+    red: 'bg-red-50 border-red-200 text-red-800',
+    amber: 'bg-amber-50 border-amber-200 text-amber-800',
+    green: 'bg-green-50 border-green-200 text-green-800',
+    gray: 'bg-gray-50 border-gray-200 text-gray-800',
+  };
+  return (
+    <div className={`rounded-lg border px-3 py-2.5 ${colors[color]}`}>
+      <div className="text-[10px] font-bold uppercase tracking-wider opacity-60">{label}</div>
+      <div className="text-xl font-bold mt-0.5">{value}</div>
+    </div>
+  );
 }

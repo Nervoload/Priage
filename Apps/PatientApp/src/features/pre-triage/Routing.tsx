@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { confirmIntent } from '../../shared/api/intake';
 import { listHospitals } from '../../shared/api/priage';
-import { useDemo } from '../../shared/demo';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import type { Hospital } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
@@ -20,8 +19,7 @@ function waitLabel(index: number): string {
 export function Routing({ onConfirmed }: RoutingProps) {
   const { showToast } = useToast();
   const { session, setSession } = useGuestSession();
-  const { selectedScenario } = useDemo();
-  const [hospitalSlug, setHospitalSlug] = useState(session?.hospitalSlug ?? selectedScenario.hospitalSlug);
+  const [hospitalSlug, setHospitalSlug] = useState(session?.hospitalSlug ?? '');
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [loadingHospitals, setLoadingHospitals] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -52,17 +50,12 @@ export function Routing({ onConfirmed }: RoutingProps) {
   useEffect(() => {
     if (hospitalSlug) return;
     if (hospitals.length === 0) return;
-    const preferred = hospitals.find((hospital) => hospital.slug === selectedScenario.hospitalSlug);
-    setHospitalSlug(preferred?.slug ?? hospitals[0].slug);
-  }, [hospitalSlug, hospitals, selectedScenario.hospitalSlug]);
+    setHospitalSlug(hospitals[0].slug);
+  }, [hospitalSlug, hospitals]);
 
-  const sortedHospitals = useMemo(() => {
-    return [...hospitals].sort((first, second) => {
-      if (first.slug === selectedScenario.hospitalSlug) return -1;
-      if (second.slug === selectedScenario.hospitalSlug) return 1;
-      return first.name.localeCompare(second.name);
-    });
-  }, [hospitals, selectedScenario.hospitalSlug]);
+  const sortedHospitals = [...hospitals].sort((first, second) =>
+    first.name.localeCompare(second.name)
+  );
 
   if (!session) return null;
   const currentSession = session;
@@ -106,7 +99,6 @@ export function Routing({ onConfirmed }: RoutingProps) {
           <div style={styles.optionGrid}>
             {sortedHospitals.map((hospital, index) => {
               const selected = hospital.slug === hospitalSlug;
-              const preferred = hospital.slug === selectedScenario.hospitalSlug;
               return (
                 <button
                   key={hospital.id}
@@ -120,7 +112,6 @@ export function Routing({ onConfirmed }: RoutingProps) {
                 >
                   <div style={styles.optionTop}>
                     <strong style={styles.optionTitle}>{hospital.name}</strong>
-                    {preferred && <span style={styles.recommendedPill}>Demo default</span>}
                   </div>
                   <span style={styles.optionMeta}>Slug: {hospital.slug}</span>
                   <span style={styles.optionMeta}>Current queue estimate: {waitLabel(index)}</span>
@@ -142,9 +133,6 @@ export function Routing({ onConfirmed }: RoutingProps) {
         )}
 
         <div style={styles.buttonRow}>
-          <button style={styles.secondaryButton} type="button" onClick={() => setHospitalSlug(selectedScenario.hospitalSlug)}>
-            Use demo default
-          </button>
           <button style={styles.primaryButton} type="button" onClick={handleConfirm} disabled={submitting}>
             {submitting ? 'Notifying hospital…' : 'Notify hospital'}
           </button>
@@ -234,15 +222,6 @@ const styles: Record<string, React.CSSProperties> = {
   optionTitle: {
     fontSize: '0.9rem',
     lineHeight: 1.3,
-  },
-  recommendedPill: {
-    border: '1px solid #b8d0ff',
-    borderRadius: '999px',
-    padding: '0.17rem 0.48rem',
-    background: '#eef5ff',
-    color: patientTheme.colors.accentStrong,
-    fontSize: '0.68rem',
-    fontWeight: 700,
   },
   optionMeta: {
     fontSize: '0.77rem',

@@ -3,22 +3,17 @@ import { useNavigate } from 'react-router-dom';
 
 import { listMyEncounters } from '../shared/api/encounters';
 import { ENCOUNTER_STATUS_META, isActiveEncounter } from '../shared/encounters';
-import { useDemo } from '../shared/demo';
 import { useAuth } from '../shared/hooks/useAuth';
-import { useGuestSession } from '../shared/hooks/useGuestSession';
 import type { EncounterSummary } from '../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const { patient, logout } = useAuth();
-  const { clearSession } = useGuestSession();
+  const { patient } = useAuth();
   const { showToast } = useToast();
-  const { selectedScenario } = useDemo();
   const [encounters, setEncounters] = useState<EncounterSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [restarting, setRestarting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -52,26 +47,11 @@ export function DashboardPage() {
 
   const displayName = patient?.firstName || patient?.email?.split('@')[0] || 'Patient';
 
-  async function handleRestartDemo() {
-    if (restarting) return;
-    setRestarting(true);
-    try {
-      await logout().catch(() => undefined);
-      clearSession();
-      navigate('/welcome', { replace: true });
-    } finally {
-      setRestarting(false);
-    }
-  }
-
   return (
     <main style={styles.page}>
       <section style={styles.hero}>
         <div style={styles.heroTop}>
           <span style={styles.badge}>Patient Home</span>
-          <button style={styles.restartButton} onClick={handleRestartDemo} disabled={restarting}>
-            {restarting ? 'Restarting…' : 'Restart Demo'}
-          </button>
         </div>
         <h1 style={styles.title}>Welcome back, {displayName}</h1>
         <p style={styles.subtitle}>
@@ -85,7 +65,7 @@ export function DashboardPage() {
         <article style={styles.heroCard}>
           <h2 style={styles.heroCardTitle}>Start New Visit</h2>
           <p style={styles.heroCardText}>
-            Launch the Priage intake assistant with prefilled demo prompts from <strong>{selectedScenario.label}</strong>.
+            Launch the Priage intake assistant to begin a new emergency visit.
           </p>
           <button style={styles.primaryButton} onClick={() => navigate('/priage')}>
             Start New Visit
@@ -130,7 +110,7 @@ export function DashboardPage() {
           </button>
           <button style={styles.quickCard} onClick={() => navigate('/priage')}>
             <strong>AI Assessment</strong>
-            <span>Prefilled symptom prompts for demo speed</span>
+            <span>Describe symptoms for guided triage</span>
           </button>
         </div>
       </section>

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 
 import { listMyEncounters } from '../shared/api/encounters';
 import { ENCOUNTER_STATUS_META, isActiveEncounter } from '../shared/encounters';
-import { useDemo } from '../shared/demo';
 import type { EncounterSummary } from '../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
@@ -11,7 +10,6 @@ import { useToast } from '../shared/ui/ToastContext';
 export function MessagesPage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { selectedScenario } = useDemo();
   const [encounters, setEncounters] = useState<EncounterSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -62,7 +60,7 @@ export function MessagesPage() {
         <span style={styles.badge}>Messages</span>
         <h1 style={styles.title}>Care-team conversations</h1>
         <p style={styles.subtitle}>
-          Open any encounter to continue messaging. The selected demo scenario is <strong>{selectedScenario.label}</strong>.
+          Open any encounter to continue messaging.
         </p>
       </section>
 

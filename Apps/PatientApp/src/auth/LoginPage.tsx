@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../shared/hooks/useAuth';
-import { useDemo } from '../shared/demo';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
@@ -11,28 +10,10 @@ interface LoginPageProps {
 export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
   const { login } = useAuth();
   const { showToast } = useToast();
-  const { selectedScenario, scenarios, setSelectedScenarioId } = useDemo();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
-
-  function applyScenarioDefaults() {
-    setEmail(selectedScenario.authEmail ?? 'diana@patient.dev');
-    setPassword(selectedScenario.authPassword ?? 'password123');
-  }
-
-  function clearFields() {
-    setEmail('');
-    setPassword('');
-  }
-
-  useEffect(() => {
-    if (email || password) return;
-    applyScenarioDefaults();
-    // Default autofill should react to scenario changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedScenario.id]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -51,27 +32,13 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
     }
   }
 
-  const authScenarios = scenarios.filter((scenario) => scenario.persona === 'authenticated');
-
   return (
     <main style={styles.page}>
       <section style={styles.card}>
         <header style={styles.header}>
           <span style={styles.badge}>Sign In</span>
           <h1 style={styles.title}>Continue with your patient account</h1>
-          <p style={styles.subtitle}>
-            Current scenario: <strong>{selectedScenario.label}</strong>. Use defaults for a seeded demo login.
-          </p>
         </header>
-
-        <div style={styles.presetRow}>
-          <button type="button" style={styles.secondaryButton} onClick={applyScenarioDefaults}>
-            Use demo defaults
-          </button>
-          <button type="button" style={styles.secondaryButton} onClick={clearFields}>
-            Clear
-          </button>
-        </div>
 
         <form onSubmit={handleSubmit} style={styles.form}>
           <label style={styles.fieldLabel}>
@@ -103,27 +70,6 @@ export function LoginPage({ onSwitchToSignup }: LoginPageProps) {
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-
-        <article style={styles.seedCard}>
-          <h2 style={styles.seedTitle}>Seeded account launchers</h2>
-          <div style={styles.seedGrid}>
-            {authScenarios.map((scenario) => (
-              <button
-                key={scenario.id}
-                type="button"
-                style={styles.seedButton}
-                onClick={() => {
-                  setSelectedScenarioId(scenario.id);
-                  setEmail(scenario.authEmail ?? '');
-                  setPassword(scenario.authPassword ?? 'password123');
-                }}
-              >
-                <strong>{scenario.label}</strong>
-                <span>{scenario.authEmail ?? 'seeded account'}</span>
-              </button>
-            ))}
-          </div>
-        </article>
 
         <div style={styles.switchRow}>
           <span>Need an account?</span>

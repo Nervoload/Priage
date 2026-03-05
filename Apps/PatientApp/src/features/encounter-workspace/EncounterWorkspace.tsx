@@ -4,16 +4,14 @@ import {
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type CSSProperties,
   type ReactNode,
 } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
-import { cancelMyEncounter, getMyEncounter, getQueueInfo, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
+import { getMyEncounter, getQueueInfo, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
 import { updateProfile } from '../../shared/api/auth';
 import { ENCOUNTER_STATUS_META, isInHospitalEncounter, isTerminalEncounter } from '../../shared/encounters';
-import { useDemo } from '../../shared/demo';
 import { useAuth } from '../../shared/hooks/useAuth';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import type { Encounter, EncounterWorkspaceTab, Message, QueueInfo } from '../../shared/types/domain';
@@ -100,16 +98,6 @@ export function EncounterWorkspace() {
   const { showToast } = useToast();
   const { session: authSession, patient, refreshProfile, logout } = useAuth();
   const { session: guestSession, clearSession } = useGuestSession();
-  const {
-    selectedScenario,
-    quickReplies,
-    checklistItems,
-    getEncounterDraft,
-    updateEncounterDraft,
-    addEncounterAttachment,
-    clearEncounterDraft,
-    getCareTeamMember,
-  } = useDemo();
 
   const encounterId = Number(id);
   const [encounter, setEncounter] = useState<Encounter | null>(null);
@@ -132,12 +120,6 @@ export function EncounterWorkspace() {
     emergencyContact: '',
     supportNotes: '',
   });
-  const [localSymptomInput, setLocalSymptomInput] = useState('');
-  const [localSymptomSeverity, setLocalSymptomSeverity] = useState(5);
-  const [localTransportNote, setLocalTransportNote] = useState('');
-  const [localMedications, setLocalMedications] = useState('');
-  const [localAccessibility, setLocalAccessibility] = useState('');
-  const [restartingDemo, setRestartingDemo] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const isGuest = !authSession && !!guestSession;
@@ -147,34 +129,8 @@ export function EncounterWorkspace() {
     if (guestSession?.hospitalSlug) {
       return formatHospitalName(guestSession.hospitalSlug);
     }
-    return selectedScenario.hospitalName;
-  }, [guestSession?.hospitalSlug, selectedScenario.hospitalName]);
-
-  const draft = useMemo(() => {
-    if (!encounterId || Number.isNaN(encounterId)) {
-      return null;
-    }
-    return getEncounterDraft(encounterId);
-  }, [encounterId, getEncounterDraft]);
-
-  useEffect(() => {
-    if (!encounterId || Number.isNaN(encounterId)) {
-      return;
-    }
-    if (!draft) {
-      return;
-    }
-    setLocalSymptomInput(draft.symptomUpdate);
-    setLocalSymptomSeverity(draft.symptomSeverity);
-    setLocalTransportNote(draft.transportNote);
-    setLocalMedications(draft.medications);
-    setLocalAccessibility(draft.accessibilityNeeds);
-    setGuestProfile((previous) => ({
-      ...previous,
-      emergencyContact: draft.emergencyContact,
-      supportNotes: draft.supportPerson,
-    }));
-  }, [draft, encounterId]);
+    return 'Priage General Hospital';
+  }, [guestSession?.hospitalSlug]);
 
   useEffect(() => {
     if (!patient) {
@@ -310,7 +266,6 @@ export function EncounterWorkspace() {
   const currentEncounter = encounter;
   const isTerminal = isTerminalEncounter(encounter.status);
   const inHospital = isInHospitalEncounter(encounter.status);
-  const checklistSelection = new Set(draft?.selectedChecklistIds ?? []);
   const primaryDescription = inHospital
     ? 'Your care team has your details and this workspace updates as your visit progresses.'
     : 'You are checked in and on the way. Keep this page open for live updates.';
@@ -336,13 +291,7 @@ export function EncounterWorkspace() {
 
   async function handleSaveProfile() {
     if (!authSession) {
-      if (encounterId) {
-        updateEncounterDraft(encounterId, {
-          emergencyContact: guestProfile.emergencyContact,
-          supportPerson: guestProfile.supportNotes,
-        });
-      }
-      showToast('Guest visit details updated locally for the demo.', 'success');
+      showToast('Guest profile updates will be available in a future release.', 'success');
       return;
     }
 
@@ -365,69 +314,7 @@ export function EncounterWorkspace() {
     }
   }
 
-  function handleChecklistToggle(itemId: string) {
-    if (!draft) return;
-    const set = new Set(draft.selectedChecklistIds);
-    if (set.has(itemId)) set.delete(itemId);
-    else set.add(itemId);
-    updateEncounterDraft(currentEncounter.id, {
-      selectedChecklistIds: Array.from(set),
-    });
-  }
-
-  function handleAttachment(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    addEncounterAttachment(currentEncounter.id, file.name);
-    showToast('Attachment saved to demo visit timeline.', 'success');
-    event.target.value = '';
-  }
-
-  function saveSymptomUpdate() {
-    if (!localSymptomInput.trim()) {
-      showToast('Add a short symptom update before saving.');
-      return;
-    }
-    updateEncounterDraft(currentEncounter.id, {
-      symptomUpdate: localSymptomInput.trim(),
-      symptomSeverity: localSymptomSeverity,
-    });
-    showToast('Symptom update saved locally for demo review.', 'success');
-  }
-
-  function saveVisitNotes() {
-    updateEncounterDraft(currentEncounter.id, {
-      transportNote: localTransportNote,
-      medications: localMedications,
-      accessibilityNeeds: localAccessibility,
-    });
-    showToast('Visit notes saved.', 'success');
-  }
-
   const latestInstruction = getLatestCareInstruction(messages);
-
-  async function handleRestartDemo() {
-    if (restartingDemo) return;
-    setRestartingDemo(true);
-    try {
-      if (guestSession && !authSession) {
-        try {
-          await cancelMyEncounter(currentEncounter.id);
-        } catch {
-          // Continue with reset even if cancellation fails.
-        }
-        clearSession();
-        navigate('/welcome', { replace: true });
-        return;
-      }
-
-      await logout().catch(() => undefined);
-      clearSession();
-      navigate('/welcome', { replace: true });
-    } finally {
-      setRestartingDemo(false);
-    }
-  }
 
   return (
     <div style={styles.shell}>
@@ -438,9 +325,6 @@ export function EncounterWorkspace() {
             <span style={{ ...styles.statusPill, color: statusMeta.color, background: statusMeta.bg, borderColor: statusMeta.border }}>
               {statusMeta.shortLabel}
             </span>
-            <button style={styles.restartButton} onClick={handleRestartDemo} disabled={restartingDemo}>
-              {restartingDemo ? 'Restarting…' : 'Restart Demo'}
-            </button>
           </div>
         </div>
         <h1 style={styles.headerTitle}>{currentEncounter.chiefComplaint ?? 'Emergency Visit'}</h1>
@@ -476,109 +360,6 @@ export function EncounterWorkspace() {
                 <Card title="Latest Care-Team Instruction" subtitle="From your current message thread">
                   <p style={styles.bodyText}>{latestInstruction}</p>
                 </Card>
-
-                <Card title="Symptom Progression" subtitle="Demo-local note that remains editable">
-                  <textarea
-                    value={localSymptomInput}
-                    onChange={(event) => setLocalSymptomInput(event.target.value)}
-                    placeholder="Describe any change in pain, dizziness, breathing, or discomfort."
-                    style={styles.textArea}
-                    disabled={isTerminal}
-                  />
-                  <label style={styles.fieldLabel}>
-                    Symptom severity: {localSymptomSeverity}/10
-                    <input
-                      type="range"
-                      min={1}
-                      max={10}
-                      value={localSymptomSeverity}
-                      onChange={(event) => setLocalSymptomSeverity(Number(event.target.value))}
-                      disabled={isTerminal}
-                      style={styles.slider}
-                    />
-                  </label>
-                  <button style={styles.primaryButton} onClick={saveSymptomUpdate} disabled={isTerminal}>
-                    Save symptom update
-                  </button>
-                </Card>
-
-                <Card title="Forms & Checklist" subtitle="Demo checklist for bedside workflow">
-                  <div style={styles.checklistStack}>
-                    {checklistItems.map((item) => {
-                      const checked = checklistSelection.has(item.id);
-                      return (
-                        <button
-                          key={item.id}
-                          style={{ ...styles.checklistItem, background: checked ? '#e8f1ff' : '#fffdf8' }}
-                          onClick={() => handleChecklistToggle(item.id)}
-                          disabled={isTerminal}
-                        >
-                          <span style={{ ...styles.checkCircle, borderColor: checked ? patientTheme.colors.accent : '#b8af9d' }}>
-                            {checked ? '✓' : ''}
-                          </span>
-                          <span>
-                            <strong style={styles.checkLabel}>{item.label}</strong>
-                            <small style={styles.checkDetail}>{item.description}</small>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </Card>
-
-                <Card title="Attachments & Evidence" subtitle="Photo upload with local preview cards for demo">
-                  <label style={styles.uploadLabel}>
-                    Add photo or document
-                    <input type="file" onChange={handleAttachment} style={styles.fileInput} disabled={isTerminal} />
-                  </label>
-                  <div style={styles.attachmentList}>
-                    {draft?.attachments.length ? (
-                      draft.attachments.map((attachment) => (
-                        <div key={attachment.id} style={{ ...styles.attachmentCard, background: attachment.tint }}>
-                          <strong>{attachment.name}</strong>
-                          <span>{attachment.note}</span>
-                        </div>
-                      ))
-                    ) : (
-                      <p style={styles.mutedText}>No demo attachments yet.</p>
-                    )}
-                  </div>
-                </Card>
-
-                <Card title="Support & Logistics" subtitle="Demo-only cards to show broader patient support">
-                  <div style={styles.fieldStack}>
-                    <label style={styles.fieldLabel}>
-                      Transport / arrival notes
-                      <textarea
-                        value={localTransportNote}
-                        onChange={(event) => setLocalTransportNote(event.target.value)}
-                        placeholder="Example: arriving by rideshare, spouse waiting in parking lot."
-                        style={styles.textArea}
-                      />
-                    </label>
-                    <label style={styles.fieldLabel}>
-                      Current medications
-                      <input
-                        value={localMedications}
-                        onChange={(event) => setLocalMedications(event.target.value)}
-                        placeholder="Example: Metformin 500mg twice daily"
-                        style={styles.input}
-                      />
-                    </label>
-                    <label style={styles.fieldLabel}>
-                      Accessibility preferences
-                      <input
-                        value={localAccessibility}
-                        onChange={(event) => setLocalAccessibility(event.target.value)}
-                        placeholder="Example: hearing support, low-noise seating"
-                        style={styles.input}
-                      />
-                    </label>
-                    <button style={styles.secondaryButton} onClick={saveVisitNotes}>
-                      Save visit notes
-                    </button>
-                  </div>
-                </Card>
               </section>
             )}
           />
@@ -586,28 +367,13 @@ export function EncounterWorkspace() {
             path="chat"
             element={(
               <section style={styles.contentStack}>
-                <Card title="Care-Team Conversation" subtitle="Polling every 5 seconds from your live encounter thread">
-                  <div style={styles.quickReplyRow}>
-                    {quickReplies.map((reply) => (
-                      <button
-                        key={reply.id}
-                        style={styles.quickReplyChip}
-                        onClick={() => {
-                          void handleSendMessage(reply.message, Boolean(reply.isWorsening));
-                        }}
-                        disabled={sendingMessage || isTerminal}
-                      >
-                        {reply.label}
-                      </button>
-                    ))}
-                  </div>
+                <Card title="Care-Team Conversation" subtitle="Live message thread from your encounter">
                   <div style={styles.messageList}>
                     {messages.length === 0 && (
                       <p style={styles.mutedText}>No messages yet. Use quick replies or type below.</p>
                     )}
                     {messages.map((message) => {
                       const isPatientMessage = message.senderType === 'PATIENT';
-                      const sender = isPatientMessage ? null : getCareTeamMember(message.createdByUserId);
                       return (
                         <div
                           key={message.id}
@@ -622,7 +388,7 @@ export function EncounterWorkspace() {
                             {isPatientMessage ? (
                               <span>You</span>
                             ) : (
-                              <span>{sender ? `${sender.name} • ${sender.badge}` : 'Care Team'}</span>
+                              <span>Care Team</span>
                             )}
                             <time>{formatTime(message.createdAt)}</time>
                           </div>
@@ -719,7 +485,7 @@ export function EncounterWorkspace() {
                         <input
                           value={guestProfile.preferredName}
                           onChange={(event) => setGuestProfile((prev) => ({ ...prev, preferredName: event.target.value }))}
-                          placeholder={selectedScenario.guestStartDefaults?.firstName ?? 'Guest'}
+                          placeholder={guestSession?.hospitalSlug ? '' : 'Guest'}
                           style={styles.input}
                         />
                       </label>
@@ -753,28 +519,8 @@ export function EncounterWorkspace() {
                   </div>
                 </Card>
 
-                <Card title="Care Team Roster" subtitle="Demo display identities mapped from staff messages">
-                  <div style={styles.rosterGrid}>
-                    {[1, 2, 3, 4].map((index) => {
-                      const member = getCareTeamMember(index);
-                      if (!member) return null;
-                      return (
-                        <div key={member.userId} style={styles.rosterCard}>
-                          <span style={{ ...styles.avatar, background: `${member.color}22`, color: member.color }}>
-                            {member.avatarInitials}
-                          </span>
-                          <div>
-                            <strong style={styles.rosterName}>{member.name}</strong>
-                            <small style={styles.rosterRole}>{member.role}</small>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </Card>
-
                 {authSession && (
-                  <Card title="Account Actions" subtitle="Demo utility actions for walkthrough speed">
+                  <Card title="Account Actions" subtitle="Quick actions for your account">
                     <div style={styles.buttonRow}>
                       <button style={styles.secondaryButton} onClick={() => navigate('/priage')}>
                         Start new visit
@@ -790,18 +536,6 @@ export function EncounterWorkspace() {
                     </div>
                   </Card>
                 )}
-
-                <Card title="Demo Draft Controls" subtitle="Resets local-only high-fidelity additions">
-                  <button
-                    style={styles.secondaryButton}
-                    onClick={() => {
-                      clearEncounterDraft(currentEncounter.id);
-                      showToast('Local demo draft reset for this encounter.');
-                    }}
-                  >
-                    Reset local demo draft
-                  </button>
-                </Card>
               </section>
             )}
           />
@@ -976,17 +710,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: '0.75rem',
     fontWeight: 700,
   },
-  restartButton: {
-    border: '1px solid #fecaca',
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff1f2',
-    color: '#9f1239',
-    fontWeight: 700,
-    fontSize: '0.74rem',
-    padding: '0.4rem 0.65rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
+
   headerTitle: {
     fontFamily: patientTheme.fonts.heading,
     fontSize: '1.35rem',
@@ -1096,10 +820,7 @@ const styles: Record<string, CSSProperties> = {
     resize: 'vertical',
   },
   input: sharedInput,
-  slider: {
-    width: '100%',
-    marginTop: '0.35rem',
-  },
+
   fieldLabel: {
     display: 'grid',
     gap: '0.35rem',
@@ -1137,91 +858,14 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: patientTheme.fonts.body,
     cursor: 'pointer',
   },
-  checklistStack: {
-    display: 'grid',
-    gap: '0.55rem',
-  },
-  checklistItem: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    padding: '0.55rem 0.65rem',
-    display: 'grid',
-    gridTemplateColumns: '24px 1fr',
-    gap: '0.55rem',
-    alignItems: 'flex-start',
-    textAlign: 'left',
-    fontFamily: patientTheme.fonts.body,
-    cursor: 'pointer',
-  },
-  checkCircle: {
-    width: '18px',
-    height: '18px',
-    border: '2px solid',
-    borderRadius: '50%',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '0.7rem',
-    fontWeight: 900,
-    marginTop: '0.1rem',
-    color: patientTheme.colors.accent,
-  },
-  checkLabel: {
-    display: 'block',
-    fontSize: '0.88rem',
-  },
-  checkDetail: {
-    display: 'block',
-    color: patientTheme.colors.inkMuted,
-    marginTop: '0.15rem',
-    lineHeight: 1.35,
-  },
-  uploadLabel: {
-    display: 'grid',
-    gap: '0.35rem',
-    fontSize: '0.82rem',
-    fontWeight: 700,
-  },
-  fileInput: {
-    ...sharedInput,
-    padding: '0.5rem',
-  },
-  attachmentList: {
-    marginTop: '0.65rem',
-    display: 'grid',
-    gap: '0.5rem',
-  },
-  attachmentCard: {
-    borderRadius: patientTheme.radius.sm,
-    padding: '0.6rem 0.7rem',
-    border: panelBorder,
-    display: 'grid',
-    gap: '0.2rem',
-    fontSize: '0.82rem',
-  },
+
   mutedText: {
     margin: 0,
     color: patientTheme.colors.inkMuted,
     lineHeight: 1.4,
     fontSize: '0.88rem',
   },
-  quickReplyRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.45rem',
-    marginBottom: '0.7rem',
-  },
-  quickReplyChip: {
-    border: '1px solid #bcd1ff',
-    borderRadius: '999px',
-    padding: '0.35rem 0.72rem',
-    background: '#eef5ff',
-    color: patientTheme.colors.accentStrong,
-    fontWeight: 700,
-    fontSize: '0.77rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
+
   messageList: {
     display: 'grid',
     gap: '0.55rem',
@@ -1266,39 +910,5 @@ const styles: Record<string, CSSProperties> = {
     gridTemplateColumns: '1fr 1fr',
     gap: '0.55rem',
   },
-  rosterGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: '0.55rem',
-  },
-  rosterCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    padding: '0.6rem 0.65rem',
-    display: 'grid',
-    gridTemplateColumns: '36px 1fr',
-    gap: '0.55rem',
-    alignItems: 'center',
-  },
-  avatar: {
-    width: '36px',
-    height: '36px',
-    borderRadius: '50%',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 800,
-    fontSize: '0.8rem',
-  },
-  rosterName: {
-    display: 'block',
-    fontSize: '0.84rem',
-  },
-  rosterRole: {
-    display: 'block',
-    color: patientTheme.colors.inkMuted,
-    marginTop: '0.12rem',
-    fontSize: '0.75rem',
-  },
+
 };

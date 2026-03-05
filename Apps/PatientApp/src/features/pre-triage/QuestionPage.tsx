@@ -19,7 +19,6 @@ interface QuestionPageProps {
   chips?: string[];
   onChipSelect?: (value: string) => void;
   summary?: ReactNode;
-  onUseDefaults?: () => void;
   onClear?: () => void;
 }
 
@@ -40,7 +39,6 @@ export function QuestionPage({
   chips,
   onChipSelect,
   summary,
-  onUseDefaults,
   onClear,
 }: QuestionPageProps) {
   const canAdvance = !required || value.trim().length > 0;
@@ -62,18 +60,11 @@ export function QuestionPage({
           </div>
           <h1 style={styles.question}>{question}</h1>
           {description && <p style={styles.description}>{description}</p>}
-          {(onUseDefaults || onClear) && (
+          {onClear && (
             <div style={styles.presetRow}>
-              {onUseDefaults && (
-                <button type="button" style={styles.secondaryButton} onClick={onUseDefaults}>
-                  Use demo defaults
-                </button>
-              )}
-              {onClear && (
-                <button type="button" style={styles.secondaryButton} onClick={onClear}>
-                  Clear
-                </button>
-              )}
+              <button type="button" style={styles.secondaryButton} onClick={onClear}>
+                Clear
+              </button>
             </div>
           )}
         </header>

@@ -1,6 +1,6 @@
 // HospitalApp/src/features/waitingroom/WaitingRoomView.tsx
-// Waiting Room — grid dashboard of patient cells with alert dashboard on top.
-// Clicking a cell opens the PatientDetailModal.
+// Waiting Room — grid dashboard of patient cells.
+// AlertDashboard renders as a fixed right-side panel (VS Code chat style).
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import type { Encounter, ChatMessage, AlertSeverity } from '../../shared/types/domain';
@@ -154,13 +154,6 @@ export function WaitingRoomView({
       />
 
       <div className="p-6 max-w-[1600px] mx-auto space-y-4">
-        {/* Alert Dashboard */}
-        <AlertDashboard
-          encounters={encounters}
-          chatMessages={chatMessages}
-          onSelectPatient={(id) => setSelectedId(id)}
-        />
-
         {/* Toolbar: Search + Filters + Refresh */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
@@ -290,6 +283,13 @@ export function WaitingRoomView({
         messages={selectedEncounter ? (chatMessages[selectedEncounter.id] || []) : []}
         onSendMessage={onSendMessage}
         onClose={() => setSelectedId(null)}
+      />
+
+      {/* Right-side alerts & analytics panel (fixed position) */}
+      <AlertDashboard
+        encounters={encounters}
+        chatMessages={chatMessages}
+        onSelectPatient={(id) => setSelectedId(id)}
       />
     </div>
   );

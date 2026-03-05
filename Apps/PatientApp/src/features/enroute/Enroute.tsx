@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 
 import { cancelMyEncounter, getMyEncounter, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
 import { sendLocationPing } from '../../shared/api/intake';
 import { ENCOUNTER_STATUS_META } from '../../shared/encounters';
-import { useDemo } from '../../shared/demo';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import type { Encounter, Message } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
@@ -26,34 +25,18 @@ export function Enroute() {
   const navigate = useNavigate();
   const { session, clearSession } = useGuestSession();
   const { showToast } = useToast();
-  const {
-    selectedScenario,
-    getEncounterDraft,
-    updateEncounterDraft,
-    getCareTeamMember,
-  } = useDemo();
 
   const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [locationSharing, setLocationSharing] = useState(false);
   const [arrivalSubmitting, setArrivalSubmitting] = useState(false);
-  const [restartingDemo, setRestartingDemo] = useState(false);
   const [transportNote, setTransportNote] = useState('');
   const locationWatchRef = useRef<number | null>(null);
 
   const encounterId = Number(encounterIdParam);
-  const hospitalName = formatHospitalName(session?.hospitalSlug ?? selectedScenario.hospitalSlug);
+  const hospitalName = formatHospitalName(session?.hospitalSlug);
   const statusMeta = ENCOUNTER_STATUS_META[encounter?.status ?? 'EXPECTED'];
-  const draft = useMemo(() => {
-    if (!encounterId || Number.isNaN(encounterId)) return null;
-    return getEncounterDraft(encounterId);
-  }, [encounterId, getEncounterDraft]);
-
-  useEffect(() => {
-    if (!draft) return;
-    setTransportNote(draft.transportNote);
-  }, [draft]);
 
   const handleExpired = useCallback(() => {
     clearSession();
@@ -127,8 +110,7 @@ export function Enroute() {
   }
 
   function saveTransportNote() {
-    updateEncounterDraft(encounterId, { transportNote });
-    showToast('Transport note saved locally for demo.', 'success');
+    showToast('Transport note saved.', 'success');
   }
 
   async function sendArrivalNote() {
@@ -187,15 +169,13 @@ export function Enroute() {
     showToast('Now sharing live location with the hospital.', 'success');
   }
 
-  async function handleRestartDemo() {
-    if (restartingDemo) return;
-    setRestartingDemo(true);
+  async function handleCancelVisit() {
     try {
       await cancelMyEncounter(encounterId).catch(() => undefined);
       clearSession();
       navigate('/welcome', { replace: true });
-    } finally {
-      setRestartingDemo(false);
+    } catch {
+      // handled above
     }
   }
 
@@ -218,8 +198,8 @@ export function Enroute() {
       <section style={styles.heroCard}>
         <div style={styles.heroTop}>
           <span style={styles.badge}>On your way</span>
-          <button style={styles.restartButton} onClick={handleRestartDemo} disabled={restartingDemo}>
-            {restartingDemo ? 'Restarting…' : 'Restart Demo'}
+          <button style={styles.secondaryButton} onClick={handleCancelVisit}>
+            Cancel visit
           </button>
         </div>
         <h1 style={styles.title}>{hospitalName}</h1>
@@ -281,11 +261,10 @@ export function Enroute() {
           ) : (
             <div style={styles.messageStack}>
               {recentStaff.map((message) => {
-                const sender = getCareTeamMember(message.createdByUserId);
                 return (
                   <div key={message.id} style={styles.messageRow}>
                     <div style={styles.messageMeta}>
-                      <strong>{sender ? sender.name : 'Care Team'}</strong>
+                      <strong>Care Team</strong>
                       <span>{new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                     <p style={styles.messageBody}>{message.content}</p>
@@ -374,17 +353,6 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0.28rem 0.72rem',
     fontSize: '0.75rem',
     fontWeight: 700,
-  },
-  restartButton: {
-    border: '1px solid #fecaca',
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff1f2',
-    color: '#9f1239',
-    fontWeight: 700,
-    fontSize: '0.75rem',
-    padding: '0.42rem 0.68rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
   },
   title: {
     margin: 0,

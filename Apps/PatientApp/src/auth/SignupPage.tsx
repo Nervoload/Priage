@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { useAuth } from '../shared/hooks/useAuth';
-import { useDemo } from '../shared/demo';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
@@ -12,7 +11,6 @@ interface SignupPageProps {
 export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const { register } = useAuth();
   const { showToast } = useToast();
-  const { selectedScenario } = useDemo();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -21,38 +19,6 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
   const [submitting, setSubmitting] = useState(false);
-
-  function applyDemoDefaults() {
-    const defaults = selectedScenario.signupDefaults;
-    if (!defaults) {
-      showToast('No signup defaults for this scenario.');
-      return;
-    }
-    setFirstName(defaults.firstName);
-    setLastName(defaults.lastName);
-    setEmail(defaults.email);
-    setPhone(defaults.phone);
-    setPassword(defaults.password);
-    setConfirmPassword(defaults.password);
-  }
-
-  function clearFields() {
-    setFirstName('');
-    setLastName('');
-    setEmail('');
-    setPhone('');
-    setPassword('');
-    setConfirmPassword('');
-  }
-
-  useEffect(() => {
-    if (firstName || lastName || email || phone || password || confirmPassword) {
-      return;
-    }
-    applyDemoDefaults();
-    // Autofill defaults on scenario changes for demo speed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedScenario.id]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -92,19 +58,7 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
         <header style={styles.header}>
           <span style={styles.badge}>Create Account</span>
           <h1 style={styles.title}>Set up your patient profile</h1>
-          <p style={styles.subtitle}>
-            Scenario defaults are editable and optimized for fast demo walkthroughs.
-          </p>
         </header>
-
-        <div style={styles.presetRow}>
-          <button type="button" style={styles.secondaryButton} onClick={applyDemoDefaults}>
-            Use demo defaults
-          </button>
-          <button type="button" style={styles.secondaryButton} onClick={clearFields}>
-            Clear
-          </button>
-        </div>
 
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.twoCol}>

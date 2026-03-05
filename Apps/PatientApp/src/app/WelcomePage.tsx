@@ -1,18 +1,9 @@
 import { useNavigate } from 'react-router-dom';
 
-import { useDemo } from '../shared/demo';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 
 export function WelcomePage() {
   const navigate = useNavigate();
-  const {
-    scenarios,
-    selectedScenarioId,
-    setSelectedScenarioId,
-    selectedScenario,
-  } = useDemo();
-
-  const accountScenarios = scenarios.filter((scenario) => scenario.persona === 'authenticated');
 
   return (
     <main style={styles.page}>
@@ -38,51 +29,6 @@ export function WelcomePage() {
           </button>
         </div>
       </section>
-
-      <section style={styles.demoTools}>
-        <header style={styles.toolsHeader}>
-          <h2 style={styles.toolsTitle}>Demo Tools</h2>
-          <p style={styles.toolsBody}>
-            Selected scenario: <strong>{selectedScenario.label}</strong>
-          </p>
-        </header>
-
-        <div style={styles.scenarioGrid}>
-          {scenarios.map((scenario) => {
-            const active = selectedScenarioId === scenario.id;
-            return (
-              <button
-                key={scenario.id}
-                style={{
-                  ...styles.scenarioChip,
-                  borderColor: active ? patientTheme.colors.accent : '#d7d1c3',
-                  background: active ? '#edf3ff' : 'transparent',
-                  color: active ? patientTheme.colors.accentStrong : patientTheme.colors.inkMuted,
-                }}
-                onClick={() => setSelectedScenarioId(scenario.id)}
-              >
-                {scenario.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div style={styles.accountGrid}>
-          {accountScenarios.map((scenario) => (
-            <button
-              key={scenario.id}
-              style={styles.accountCard}
-              onClick={() => {
-                setSelectedScenarioId(scenario.id);
-                navigate('/auth/login');
-              }}
-            >
-              <strong>{scenario.label}</strong>
-              <span>{scenario.authEmail ?? 'seeded account'}</span>
-            </button>
-          ))}
-        </div>
-      </section>
     </main>
   );
 }
@@ -92,7 +38,7 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: '100vh',
     display: 'flex',
     flexDirection: 'column',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     padding: '1rem',
     background: heroBackdrop,
     color: patientTheme.colors.ink,
@@ -180,69 +126,5 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0.35rem',
     cursor: 'pointer',
     fontFamily: patientTheme.fonts.body,
-  },
-  demoTools: {
-    maxWidth: '980px',
-    margin: '0 auto',
-    width: '100%',
-    border: '1px dashed #cdc6b7',
-    borderRadius: patientTheme.radius.md,
-    background: 'rgba(255, 253, 248, 0.72)',
-    padding: '0.72rem',
-    display: 'grid',
-    gap: '0.55rem',
-  },
-  toolsHeader: {
-    display: 'flex',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: '0.6rem',
-    flexWrap: 'wrap',
-  },
-  toolsTitle: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '0.84rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-    color: patientTheme.colors.inkMuted,
-  },
-  toolsBody: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.78rem',
-  },
-  scenarioGrid: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.42rem',
-  },
-  scenarioChip: {
-    border: '1px solid',
-    borderRadius: '999px',
-    background: 'transparent',
-    padding: '0.28rem 0.6rem',
-    fontSize: '0.75rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  accountGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: '0.42rem',
-  },
-  accountCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: 'rgba(255,255,255,0.75)',
-    padding: '0.52rem 0.58rem',
-    textAlign: 'left',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-    display: 'grid',
-    gap: '0.12rem',
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.76rem',
   },
 };

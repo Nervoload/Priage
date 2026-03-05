@@ -38,6 +38,8 @@ const THRESHOLDS = {
   waitingLongWarning: 45,
   /** WAITING patients waiting longer than this → critical */
   waitingLongCritical: 90,
+  /** New profiles not yet reviewed after this → warning */
+  profileUnseenWarning: 45,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -193,11 +195,34 @@ const criticalComplaint: DerivationRule = (enc) => {
   };
 };
 
+/**
+ * New patient profile not yet reviewed by staff after 45+ minutes.
+ * Uses createdAt as the baseline since we can't access localStorage from
+ * the derivation layer — the alert fires for ALL old EXPECTED patients,
+ * which is correct because the AlertsBanner is a global notification.
+ */
+const profileUnseen: DerivationRule = (enc) => {
+  if (enc.status !== 'EXPECTED') return null;
+  const mins = minutesSince(enc.createdAt);
+  if (mins < THRESHOLDS.profileUnseenWarning) return null;
+  return {
+    id: `derived-${enc.id}-profile-unseen`,
+    encounterId: enc.id,
+    type: 'PROFILE_UNSEEN',
+    severity: mins >= 90 ? 'HIGH' : 'MEDIUM',
+    message: `${patientDisplayName(enc)} has been waiting ${Math.round(mins)} min — profile not yet reviewed`,
+    patientName: patientDisplayName(enc),
+    timestamp: enc.createdAt,
+    acknowledged: false,
+  };
+};
+
 // All rules in priority order
 const RULES: DerivationRule[] = [
   criticalTriagePending,
   highAcuityWaiting,
   criticalComplaint,
+  profileUnseen,
   admittedTooLong,
   triageStale,
   waitingTooLong,

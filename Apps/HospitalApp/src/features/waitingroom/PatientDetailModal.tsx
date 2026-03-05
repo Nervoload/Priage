@@ -8,7 +8,6 @@ import { Modal } from '../../shared/ui/Modal';
 import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
 import { ChatPanel } from './ChatPanel';
-import { useSimulatedVitals } from '../../shared/hooks/useSimulatedVitals';
 
 type Tab = 'messages' | 'profile';
 
@@ -124,44 +123,49 @@ export function PatientDetailModal({ encounter, messages, onSendMessage, onClose
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function VitalStrip({ encounter, latestTriage }: { encounter: Encounter; latestTriage: any }) {
-  const vitals = useSimulatedVitals(encounter.id, latestTriage?.vitalSigns);
+function VitalStrip({ latestTriage }: { encounter: Encounter; latestTriage: any }) {
+  const vs = latestTriage?.vitalSigns;
+  if (!vs) return null;
 
-  if (!vitals.heartRate && !vitals.systolic) return null;
+  const bp = vs.bloodPressure?.split('/');
+  const systolic = bp?.[0] ? parseInt(bp[0], 10) : null;
+  const diastolic = bp?.[1] ? parseInt(bp[1], 10) : null;
+
+  if (!vs.heartRate && !systolic) return null;
 
   return (
     <div className="px-6 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center gap-6 text-xs">
-      {vitals.heartRate && (
+      {vs.heartRate && (
         <div className="flex items-center gap-1.5">
           <span className="text-red-400 text-sm">♥</span>
-          <span className="font-semibold text-gray-700">{vitals.heartRate}</span>
+          <span className="font-semibold text-gray-700">{vs.heartRate}</span>
           <span className="text-gray-400">bpm</span>
         </div>
       )}
-      {vitals.systolic && vitals.diastolic && (
+      {systolic && diastolic && (
         <div className="flex items-center gap-1.5">
           <span className="text-blue-400 text-sm">⬆</span>
-          <span className="font-semibold text-gray-700">{vitals.systolic}/{vitals.diastolic}</span>
+          <span className="font-semibold text-gray-700">{systolic}/{diastolic}</span>
           <span className="text-gray-400">mmHg</span>
         </div>
       )}
-      {vitals.oxygenSaturation && (
+      {vs.oxygenSaturation && (
         <div className="flex items-center gap-1.5">
           <span className="text-cyan-400 text-sm">○</span>
-          <span className="font-semibold text-gray-700">{vitals.oxygenSaturation}%</span>
+          <span className="font-semibold text-gray-700">{vs.oxygenSaturation}%</span>
           <span className="text-gray-400">SpO₂</span>
         </div>
       )}
-      {vitals.temperature && (
+      {vs.temperature && (
         <div className="flex items-center gap-1.5">
           <span className="text-orange-400 text-sm">🌡</span>
-          <span className="font-semibold text-gray-700">{vitals.temperature}°C</span>
+          <span className="font-semibold text-gray-700">{vs.temperature}°C</span>
         </div>
       )}
-      {vitals.respiratoryRate && (
+      {vs.respiratoryRate && (
         <div className="flex items-center gap-1.5">
           <span className="text-teal-400 text-sm">↕</span>
-          <span className="font-semibold text-gray-700">{vitals.respiratoryRate}</span>
+          <span className="font-semibold text-gray-700">{vs.respiratoryRate}</span>
           <span className="text-gray-400">/min</span>
         </div>
       )}

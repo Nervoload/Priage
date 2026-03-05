@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { updateProfile } from '../shared/api/auth';
-import { useDemo } from '../shared/demo';
 import { useAuth } from '../shared/hooks/useAuth';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
@@ -10,7 +9,6 @@ import { useToast } from '../shared/ui/ToastContext';
 export function SettingsPage() {
   const navigate = useNavigate();
   const { patient, logout, refreshProfile } = useAuth();
-  const { selectedScenario } = useDemo();
   const { showToast } = useToast();
 
   const [firstName, setFirstName] = useState('');
@@ -39,33 +37,6 @@ export function SettingsPage() {
     setConditions(patient.conditions ?? '');
     setPreferredLanguage(patient.preferredLanguage ?? '');
   }, [patient]);
-
-  function applyDemoDefaults() {
-    const defaults = selectedScenario.signupDefaults;
-    setFirstName(defaults?.firstName ?? 'Maya');
-    setLastName(defaults?.lastName ?? 'Coleman');
-    setPhone(defaults?.phone ?? '555-0200');
-    setAge('39');
-    setGender('female');
-    setHeightCm('167');
-    setWeightKg('63');
-    setAllergies('Penicillin');
-    setConditions('Mild asthma');
-    setPreferredLanguage('English');
-  }
-
-  function clearLocalFields() {
-    setFirstName('');
-    setLastName('');
-    setPhone('');
-    setAge('');
-    setGender('');
-    setHeightCm('');
-    setWeightKg('');
-    setAllergies('');
-    setConditions('');
-    setPreferredLanguage('');
-  }
 
   async function handleSave() {
     setSaving(true);
@@ -108,17 +79,7 @@ export function SettingsPage() {
         <header style={styles.header}>
           <span style={styles.badge}>Profile</span>
           <h1 style={styles.title}>Patient information and settings</h1>
-          <p style={styles.subtitle}>Scenario preset: <strong>{selectedScenario.label}</strong></p>
         </header>
-
-        <div style={styles.presetRow}>
-          <button style={styles.secondaryButton} onClick={applyDemoDefaults}>
-            Use demo defaults
-          </button>
-          <button style={styles.secondaryButton} onClick={clearLocalFields}>
-            Clear
-          </button>
-        </div>
 
         <article style={styles.profileCard}>
           <div style={styles.avatar}>

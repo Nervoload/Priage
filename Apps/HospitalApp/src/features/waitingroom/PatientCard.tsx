@@ -2,11 +2,9 @@
 // Individual patient cell in the waiting room grid dashboard.
 
 import { useState, useEffect } from 'react';
-import type { Encounter, ChatMessage } from '../../shared/types/domain';
+import type { Encounter, ChatMessage, AlertSeverity } from '../../shared/types/domain';
 import { patientName } from '../../shared/types/domain';
 import { CTASBadge, CountBadge, AlertIndicator } from '../../shared/ui/Badge';
-import { useSimulatedVitals } from '../../shared/hooks/useSimulatedVitals';
-import type { AlertSeverity } from '../../shared/types/domain';
 
 interface PatientCardProps {
   encounter: Encounter;
@@ -60,7 +58,15 @@ export function PatientCard({ encounter, messages, unreadCount, alertSeverity, o
 
   // Get baseline vitals from triage assessments
   const latestTriage = encounter.triageAssessments?.[encounter.triageAssessments.length - 1];
-  const vitals = useSimulatedVitals(encounter.id, latestTriage?.vitalSigns);
+  const vs = latestTriage?.vitalSigns;
+  const bp = vs?.bloodPressure?.split('/');
+  const vitals = {
+    heartRate: vs?.heartRate ?? null,
+    systolic: bp?.[0] ? parseInt(bp[0], 10) : null,
+    diastolic: bp?.[1] ? parseInt(bp[1], 10) : null,
+    oxygenSaturation: vs?.oxygenSaturation ?? null,
+    temperature: vs?.temperature ?? null,
+  };
 
   const waitStart = encounter.waitingAt ?? encounter.triagedAt ?? encounter.arrivedAt ?? encounter.createdAt;
   const waitMins = minutesSince(waitStart);

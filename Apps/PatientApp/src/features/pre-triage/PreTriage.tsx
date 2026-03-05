@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 
-import { useDemo } from '../../shared/demo';
 import { updateIntakeDetails } from '../../shared/api/intake';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import { useToast } from '../../shared/ui/ToastContext';
@@ -35,7 +34,6 @@ export function PreTriage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { session } = useGuestSession();
-  const { selectedScenario } = useDemo();
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [age, setAge] = useState('');
@@ -43,33 +41,12 @@ export function PreTriage() {
   const [conditions, setConditions] = useState('');
   const [details, setDetails] = useState('');
 
-  const defaults = selectedScenario.preTriageDefaults;
-
-  function applyDefaults() {
-    if (!defaults) {
-      showToast('No scenario defaults available for this step.');
-      return;
-    }
-    setAge(defaults.age);
-    setAllergies(defaults.allergies);
-    setConditions(defaults.conditions);
-    setDetails(defaults.details);
-  }
-
   function clearCurrentStep() {
     if (step === 1) setAge('');
     if (step === 2) setAllergies('');
     if (step === 3) setConditions('');
     if (step === 4) setDetails('');
   }
-
-  useEffect(() => {
-    if (!defaults) return;
-    if (age || allergies || conditions || details) return;
-    applyDefaults();
-    // Apply defaults only when scenario changes and fields are blank.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedScenario.id]);
 
   const summary = useMemo(() => buildSummary({ age, allergies, conditions, details }), [age, allergies, conditions, details]);
 
@@ -113,7 +90,6 @@ export function PreTriage() {
         chips={['25', '34', '41', '72']}
         onChipSelect={setAge}
         summary={summary}
-        onUseDefaults={applyDefaults}
         onClear={clearCurrentStep}
       />
     );
@@ -134,7 +110,6 @@ export function PreTriage() {
         chips={['None', 'Penicillin', 'Peanuts', 'Latex']}
         onChipSelect={(value) => setAllergies(value)}
         summary={summary}
-        onUseDefaults={applyDefaults}
         onClear={clearCurrentStep}
       />
     );
@@ -155,7 +130,6 @@ export function PreTriage() {
         chips={['None', 'Asthma', 'Diabetes', 'Hypertension']}
         onChipSelect={(value) => setConditions(value)}
         summary={summary}
-        onUseDefaults={applyDefaults}
         onClear={clearCurrentStep}
       />
     );
@@ -175,7 +149,6 @@ export function PreTriage() {
         placeholder="e.g. symptoms started 90 minutes ago, took aspirin at home..."
         multiline
         summary={summary}
-        onUseDefaults={applyDefaults}
         onClear={clearCurrentStep}
         nextLabel={submitting ? 'Saving…' : 'Continue to hospital selection'}
       />

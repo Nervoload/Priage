@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { listHospitals, priageAdmit, priageChat } from '../shared/api/priage';
-import { useDemo } from '../shared/demo';
 import type {
   Hospital,
   PriageAssessment,
@@ -28,7 +27,6 @@ const defaultQuickPrompts = [
 export function PriagePage() {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { selectedScenario, scenarios, setSelectedScenarioId } = useDemo();
 
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState('');
@@ -103,17 +101,10 @@ export function PriagePage() {
   useEffect(() => {
     if (!hospitals.length) return;
     if (selectedHospital) return;
-    const scenarioHospital = hospitals.find((hospital) => hospital.slug === selectedScenario.hospitalSlug);
-    setSelectedHospital(scenarioHospital?.slug ?? hospitals[0].slug);
-  }, [hospitals, selectedHospital, selectedScenario.hospitalSlug]);
+    setSelectedHospital(hospitals[0].slug);
+  }, [hospitals, selectedHospital]);
 
-  const quickPrompts = useMemo(() => {
-    const prompts = [...defaultQuickPrompts];
-    if (selectedScenario.priageStarterPrompt && !prompts.includes(selectedScenario.priageStarterPrompt)) {
-      prompts.unshift(selectedScenario.priageStarterPrompt);
-    }
-    return prompts.slice(0, 4);
-  }, [selectedScenario.priageStarterPrompt]);
+  const quickPrompts = defaultQuickPrompts;
 
   async function handleSendMessage(messageText: string) {
     const content = messageText.trim();
@@ -193,42 +184,13 @@ export function PriagePage() {
     }
   }
 
-  function applyScenarioStarter() {
-    setInput(selectedScenario.priageStarterPrompt ?? quickPrompts[0]);
-  }
-
   return (
     <main style={styles.page}>
       <section style={styles.layout}>
         <header style={styles.header}>
           <span style={styles.badge}>Priage AI</span>
           <h1 style={styles.title}>Start a new visit with guided triage</h1>
-          <p style={styles.subtitle}>
-            Current scenario: <strong>{selectedScenario.label}</strong>
-          </p>
         </header>
-
-        <section style={styles.sidePanel}>
-          <h2 style={styles.sideTitle}>Scenario shortcuts</h2>
-          <div style={styles.scenarioStack}>
-            {scenarios.map((scenario) => (
-              <button
-                key={scenario.id}
-                style={{
-                  ...styles.scenarioButton,
-                  borderColor: scenario.id === selectedScenario.id ? patientTheme.colors.accent : patientTheme.colors.line,
-                }}
-                onClick={() => setSelectedScenarioId(scenario.id)}
-              >
-                <strong>{scenario.label}</strong>
-                <span>{scenario.persona === 'guest' ? 'Guest' : 'Signed-in'} demo</span>
-              </button>
-            ))}
-          </div>
-          <button style={styles.secondaryButton} onClick={applyScenarioStarter}>
-            Use scenario starter prompt
-          </button>
-        </section>
 
         <section style={styles.chatPanel}>
           <div style={styles.quickPrompts}>
