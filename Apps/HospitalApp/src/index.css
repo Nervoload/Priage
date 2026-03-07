@@ -3,17 +3,29 @@
 /* ─── Priage Custom Theme ─────────────────────────────────────────────────── */
 
 @theme {
-  /* Primary violet palette */
-  --color-priage-50: #f5f3ff;
-  --color-priage-100: #ede9fe;
-  --color-priage-200: #ddd6fe;
-  --color-priage-300: #c4b5fd;
-  --color-priage-400: #a78bfa;
-  --color-priage-500: #8b5cf6;
-  --color-priage-600: #7c3aed;
-  --color-priage-700: #6d28d9;
-  --color-priage-800: #5b21b6;
-  --color-priage-900: #4c1d95;
+  /* Primary navy palette */
+  --color-priage-50: #eff6ff;
+  --color-priage-100: #dbeafe;
+  --color-priage-200: #bfdbfe;
+  --color-priage-300: #93c5fd;
+  --color-priage-400: #60a5fa;
+  --color-priage-500: #3b82f6;
+  --color-priage-600: #1e3a5f;
+  --color-priage-700: #172d4a;
+  --color-priage-800: #111f36;
+  --color-priage-900: #0b1423;
+
+  /* Accent red palette */
+  --color-accent-50: #fef2f2;
+  --color-accent-100: #fee2e2;
+  --color-accent-200: #fecaca;
+  --color-accent-300: #fca5a5;
+  --color-accent-400: #f87171;
+  --color-accent-500: #ef4444;
+  --color-accent-600: #dc2626;
+  --color-accent-700: #b91c1c;
+  --color-accent-800: #991b1b;
+  --color-accent-900: #7f1d1d;
 
   /* CTAS severity colors */
   --color-ctas-1: #ef4444;
@@ -47,7 +59,7 @@ html {
 
 body {
   font-family: var(--font-sans);
-  background-color: #f3f4f6;
+  background-color: #f8fafc;
   color: #1f2937;
   margin: 0;
 }
@@ -91,6 +103,15 @@ body {
   }
 }
 
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 /* ─── Utility Classes ─────────────────────────────────────────────────────── */
 
 .animate-fade-in-up {
@@ -106,13 +127,17 @@ body {
 }
 
 .animate-shimmer {
-  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
 
 .animate-slide-up {
   animation: slideUp 0.25s ease-out;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s ease-out;
 }
 
 /* Scrollbar styling for a cleaner look */

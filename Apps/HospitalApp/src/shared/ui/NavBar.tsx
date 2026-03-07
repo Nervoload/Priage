@@ -74,23 +74,23 @@ const tabs: NavTab[] = [
 
 export function NavBar({ currentView, onNavigate, onLogout, user }: NavBarProps) {
   return (
-    <nav className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+    <nav className="sticky top-0 z-50 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg">
       <div className="flex items-center justify-between px-6 h-14">
         {/* Left: Logo + Tabs */}
         <div className="flex items-center gap-6">
           {/* Logo */}
           <button
             onClick={() => onNavigate('waiting')}
-            className="flex items-center gap-2 text-priage-600 font-bold text-lg tracking-tight hover:opacity-80 transition-opacity"
+            className="flex items-center gap-2 text-white font-bold text-lg tracking-tight hover:opacity-80 transition-opacity"
           >
-            <div className="w-8 h-8 rounded-lg bg-priage-600 text-white flex items-center justify-center text-sm font-black">
+            <div className="w-8 h-8 rounded-lg bg-white/15 text-white flex items-center justify-center text-sm font-black ring-1 ring-white/20">
               P
             </div>
             <span>Priage</span>
           </button>
 
           {/* Divider */}
-          <div className="w-px h-6 bg-gray-200" />
+          <div className="w-px h-6 bg-white/20" />
 
           {/* Tab buttons */}
           <div className="flex items-center gap-1">
@@ -104,8 +104,8 @@ export function NavBar({ currentView, onNavigate, onLogout, user }: NavBarProps)
                     flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
                     transition-all duration-150 cursor-pointer
                     ${isActive
-                      ? 'bg-priage-50 text-priage-700 shadow-sm ring-1 ring-priage-200'
-                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                      ? 'bg-white/15 text-white shadow-sm ring-1 ring-white/25'
+                      : 'text-white/60 hover:text-white hover:bg-white/10'
                     }
                   `}
                 >
@@ -121,18 +121,18 @@ export function NavBar({ currentView, onNavigate, onLogout, user }: NavBarProps)
         <div className="flex items-center gap-3">
           {user && (
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-priage-600 text-white flex items-center justify-center text-xs font-bold">
+              <div className="w-7 h-7 rounded-full bg-accent-600 text-white flex items-center justify-center text-xs font-bold">
                 {user.email[0].toUpperCase()}
               </div>
               <div className="hidden md:flex flex-col">
-                <span className="text-xs font-medium text-gray-700 leading-tight">{user.email}</span>
-                <span className="text-[10px] font-semibold text-priage-600 uppercase leading-tight">{user.role}</span>
+                <span className="text-xs font-medium text-white/90 leading-tight">{user.email}</span>
+                <span className="text-[10px] font-semibold text-priage-200 uppercase leading-tight">{user.role}</span>
               </div>
             </div>
           )}
           <button
             onClick={onLogout}
-            className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1 rounded hover:bg-red-50 cursor-pointer"
+            className="text-xs text-white/50 hover:text-red-300 transition-colors px-2 py-1 rounded hover:bg-white/10 cursor-pointer"
           >
             Logout
           </button>

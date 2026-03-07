@@ -250,7 +250,7 @@ export function AdmitDetailPanel({ encounter, onClose, onAdmit, onSendReminder }
         <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4">
           <button
             onClick={() => onAdmit(encounter)}
-            className="w-full py-3 bg-priage-600 text-white rounded-lg font-semibold hover:bg-priage-700 active:scale-[0.98] transition-all cursor-pointer"
+            className="w-full py-3 bg-accent-600 text-white rounded-lg font-semibold hover:bg-accent-700 active:scale-[0.98] transition-all cursor-pointer"
           >
             {actionLabel}
           </button>

@@ -172,7 +172,7 @@ export function TriagePopup({ encounter, assessment: initialAssessment, onClose,
           <div className="mt-5 pt-4 border-t border-gray-200">
             <button
               onClick={() => onAdmit(encounter)}
-              className="w-full py-3 bg-priage-600 text-white rounded-lg font-semibold hover:bg-priage-700 active:scale-[0.98] transition-all"
+              className="w-full py-3 bg-accent-600 text-white rounded-lg font-semibold hover:bg-accent-700 active:scale-[0.98] transition-all"
             >
               {actionLabel}
             </button>

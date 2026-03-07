@@ -1,7 +1,7 @@
 // HospitalApp/src/features/waitingroom/ChatPanel.tsx
 import { useState, useRef, useEffect } from 'react';
-import type { Encounter, ChatMessage } from '../../app/HospitalApp';
-import { patientName } from '../../app/HospitalApp';
+import type { Encounter, ChatMessage } from '../../shared/types/domain';
+import { patientName } from '../../shared/types/domain';
 
 interface ChatPanelProps {
     encounter: Encounter;
@@ -60,7 +60,7 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                         width: '36px',
                         height: '36px',
                         borderRadius: '50%',
-                        backgroundColor: '#7c3aed',
+                        backgroundColor: '#1e3a5f',
                         color: 'white',
                         display: 'flex',
                         alignItems: 'center',
@@ -125,7 +125,7 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                                 borderRadius: msg.sender === 'admin'
                                     ? '10px 10px 3px 10px'
                                     : '10px 10px 10px 3px',
-                                backgroundColor: msg.sender === 'admin' ? '#7c3aed' : '#f3f4f6',
+                                backgroundColor: msg.sender === 'admin' ? '#1e3a5f' : '#f3f4f6',
                                 color: msg.sender === 'admin' ? 'white' : '#1f2937',
                                 fontSize: '0.78rem',
                                 lineHeight: 1.45,
@@ -185,7 +185,7 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                     disabled={!draft.trim() || sending}
                     style={{
                         padding: '0.6rem 1.15rem',
-                        backgroundColor: draft.trim() && !sending ? '#7c3aed' : '#d1d5db',
+                        backgroundColor: draft.trim() && !sending ? '#dc2626' : '#d1d5db',
                         color: 'white',
                         border: 'none',
                         borderRadius: '8px',
@@ -196,10 +196,10 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                         whiteSpace: 'nowrap',
                     }}
                     onMouseOver={(e) => {
-                        if (draft.trim() && !sending) e.currentTarget.style.backgroundColor = '#6d28d9';
+                        if (draft.trim() && !sending) e.currentTarget.style.backgroundColor = '#b91c1c';
                     }}
                     onMouseOut={(e) => {
-                        if (draft.trim() && !sending) e.currentTarget.style.backgroundColor = '#7c3aed';
+                        if (draft.trim() && !sending) e.currentTarget.style.backgroundColor = '#dc2626';
                     }}
                 >
                     {sending ? 'Sending…' : 'Send'}

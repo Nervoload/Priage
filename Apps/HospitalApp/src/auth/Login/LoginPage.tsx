@@ -34,7 +34,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-100 to-purple-100 flex flex-col items-center justify-center p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex flex-col items-center justify-center p-8">
       {/* Branding */}
       <div className="text-center mb-10 animate-fade-in-up">
         <h1 className="text-5xl font-bold text-priage-600 mb-1">Priage</h1>
@@ -90,7 +90,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           <button
             type="submit"
             disabled={loggingIn}
-            className="w-full py-2.5 bg-priage-600 text-white rounded-lg font-semibold text-sm hover:bg-priage-700 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full py-2.5 bg-accent-600 text-white rounded-lg font-semibold text-sm hover:bg-accent-700 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {loggingIn ? 'Signing In…' : 'Sign In'}
           </button>

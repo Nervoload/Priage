@@ -227,7 +227,7 @@ export function TriageWorkspace({ encounter, onClose, onComplete }: TriageWorksp
           <button
             onClick={handleSubmit}
             disabled={submitting}
-            className="px-5 py-2.5 bg-priage-600 text-white rounded-lg text-sm font-semibold hover:bg-priage-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
+            className="px-5 py-2.5 bg-accent-600 text-white rounded-lg text-sm font-semibold hover:bg-accent-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
           >
             {submitting ? 'Completing…' : 'Complete Triage & Move to Waiting'}
           </button>
@@ -496,7 +496,7 @@ export function TriageWorkspace({ encounter, onClose, onComplete }: TriageWorksp
                 <button
                   onClick={handleSubmit}
                   disabled={submitting}
-                  className="px-6 py-3 bg-priage-600 text-white rounded-lg font-semibold hover:bg-priage-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
+                  className="px-6 py-3 bg-accent-600 text-white rounded-lg font-semibold hover:bg-accent-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
                 >
                   {submitting ? 'Completing…' : 'Complete Triage & Move to Waiting'}
                 </button>
