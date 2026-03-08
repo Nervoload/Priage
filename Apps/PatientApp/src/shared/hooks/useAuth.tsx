@@ -6,8 +6,9 @@ import type {
   PatientProfile,
   RegisterPayload,
   LoginPayload,
+  UpgradeGuestPayload,
 } from '../types/domain';
-import { registerPatient, loginPatient, logout as logoutApi, getMe } from '../api/auth';
+import { registerPatient, loginPatient, logout as logoutApi, getMe, upgradeGuestAccount } from '../api/auth';
 import { clearAllPatientSessions, loadAuthSession, saveAuthSession } from '../session';
 
 interface AuthContextValue {
@@ -16,6 +17,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (payload: LoginPayload) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
+  upgradeFromGuest: (payload: UpgradeGuestPayload) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   updatePatient: (profile: PatientProfile) => void;
@@ -122,8 +124,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(prev => prev ? { ...prev, patient: profile } : null);
   }, []);
 
+  const upgradeFromGuest = useCallback(async (payload: UpgradeGuestPayload) => {
+    const result = await upgradeGuestAccount(payload);
+    const newSession: AuthenticatedPatientSession = {
+      sessionToken: result.sessionToken,
+      patientId: result.patient.id,
+      patient: result.patient,
+    };
+    saveAuthSession(newSession);
+    setSession(newSession);
+    setPatient(result.patient);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ session, patient, loading, login, register, logout, refreshProfile, updatePatient }}>
+    <AuthContext.Provider value={{ session, patient, loading, login, register, upgradeFromGuest, logout, refreshProfile, updatePatient }}>
       {children}
     </AuthContext.Provider>
   );

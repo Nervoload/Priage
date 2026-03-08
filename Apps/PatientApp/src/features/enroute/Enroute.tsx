@@ -8,6 +8,7 @@ import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import type { Encounter, Message } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
+import { UpgradeAccountCard } from '../encounter-workspace/UpgradeAccountCard';
 
 const ENCOUNTER_POLL_MS = 10_000;
 const MESSAGES_POLL_MS = 5_000;
@@ -290,6 +291,10 @@ export function Enroute() {
           <li>Queue placement and ongoing updates in your workspace</li>
         </ol>
       </section>
+
+      <section style={styles.upgradeSection}>
+        <UpgradeAccountCard />
+      </section>
     </main>
   );
 }
@@ -492,5 +497,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: patientTheme.colors.inkMuted,
     lineHeight: 1.5,
     fontSize: '0.86rem',
+  },
+  upgradeSection: {
+    maxWidth: '960px',
+    margin: '0.8rem auto 0',
   },
 };

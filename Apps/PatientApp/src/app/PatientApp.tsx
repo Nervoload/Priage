@@ -94,8 +94,38 @@ export function PatientApp() {
 }
 
 function AuthenticatedShell() {
+  const { patient, logout: doLogout } = useAuth();
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const displayName =
+    [patient?.firstName, patient?.lastName].filter(Boolean).join(' ') ||
+    patient?.email?.split('@')[0] ||
+    'Patient';
+
+  const initial = (patient?.firstName?.[0] ?? patient?.email?.[0] ?? '?').toUpperCase();
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    try { await doLogout(); } catch { /* auth context clears state */ }
+    finally { setLoggingOut(false); }
+  }
+
   return (
     <div style={styles.appContainer}>
+      {/* Top bar */}
+      <header style={styles.topBar}>
+        <div style={styles.topBarLeft}>
+          <div style={styles.topBarAvatar}>{initial}</div>
+          <span style={styles.topBarName}>{displayName}</span>
+        </div>
+        <button
+          style={styles.topBarLogout}
+          onClick={handleLogout}
+          disabled={loggingOut}
+        >
+          {loggingOut ? 'Logging out…' : 'Log out'}
+        </button>
+      </header>
       <div style={styles.routeArea}>
         <Routes>
           <Route path="/" element={<HomeRoute />} />
@@ -113,12 +143,12 @@ function AuthenticatedShell() {
 
 function LoginRoute() {
   const navigate = useNavigate();
-  return <LoginPage onSwitchToSignup={() => navigate('/auth/signup')} />;
+  return <LoginPage onSwitchToSignup={() => navigate('/auth/signup')} onBack={() => navigate('/welcome')} />;
 }
 
 function SignupRoute() {
   const navigate = useNavigate();
-  return <SignupPage onSwitchToLogin={() => navigate('/auth/login')} />;
+  return <SignupPage onSwitchToLogin={() => navigate('/auth/login')} onBack={() => navigate('/welcome')} />;
 }
 
 function HomeRoute() {
@@ -199,5 +229,49 @@ const styles: Record<string, React.CSSProperties> = {
   routeArea: {
     flex: 1,
     paddingBottom: '64px', // space for BottomNav
+  },
+  topBar: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0.5rem 1rem',
+    background: '#ffffff',
+    borderBottom: '1px solid #e2e8f0',
+    position: 'sticky',
+    top: 0,
+    zIndex: 90,
+  },
+  topBarLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  topBarAvatar: {
+    width: '30px',
+    height: '30px',
+    borderRadius: '50%',
+    background: 'linear-gradient(135deg, #1949b8 0%, #3b82f6 100%)',
+    color: '#fff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 800,
+    fontSize: '0.75rem',
+  },
+  topBarName: {
+    fontWeight: 600,
+    fontSize: '0.85rem',
+    color: '#14213d',
+  },
+  topBarLogout: {
+    border: 'none',
+    background: 'none',
+    color: '#9f1239',
+    fontWeight: 600,
+    fontSize: '0.78rem',
+    cursor: 'pointer',
+    padding: '0.35rem 0.6rem',
+    borderRadius: '8px',
+    transition: 'background 0.15s',
   },
 };

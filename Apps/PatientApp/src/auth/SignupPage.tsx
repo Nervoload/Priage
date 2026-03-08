@@ -6,9 +6,10 @@ import { useToast } from '../shared/ui/ToastContext';
 
 interface SignupPageProps {
   onSwitchToLogin: () => void;
+  onBack?: () => void;
 }
 
-export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
+export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
   const { register } = useAuth();
   const { showToast } = useToast();
 
@@ -55,6 +56,11 @@ export function SignupPage({ onSwitchToLogin }: SignupPageProps) {
   return (
     <main style={styles.page}>
       <section style={styles.card}>
+        {onBack && (
+          <button style={styles.backButton} onClick={onBack} type="button">
+            ← Back
+          </button>
+        )}
         <header style={styles.header}>
           <span style={styles.badge}>Create Account</span>
           <h1 style={styles.title}>Set up your patient profile</h1>
@@ -246,6 +252,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     cursor: 'pointer',
     fontFamily: patientTheme.fonts.body,
+  },
+  backButton: {
+    border: 'none',
+    background: 'none',
+    color: patientTheme.colors.inkMuted,
+    fontWeight: 600,
+    fontSize: '0.84rem',
+    cursor: 'pointer',
+    padding: '0.2rem 0',
+    fontFamily: patientTheme.fonts.body,
+    justifySelf: 'start',
   },
   switchRow: {
     display: 'flex',

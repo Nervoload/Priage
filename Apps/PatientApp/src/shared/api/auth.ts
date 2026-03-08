@@ -1,5 +1,5 @@
 // Patient auth API calls.
-// POST /patient-auth/register, /login, GET /me, PATCH /profile, DELETE /logout
+// POST /patient-auth/register, /login, /upgrade, GET /me, PATCH /profile, DELETE /logout
 
 import { client, API_BASE_URL } from './client';
 import type {
@@ -7,6 +7,7 @@ import type {
   RegisterPayload,
   LoginPayload,
   UpdateProfilePayload,
+  UpgradeGuestPayload,
   PatientProfile,
 } from '../types/domain';
 
@@ -68,4 +69,15 @@ export async function updateProfile(payload: UpdateProfilePayload): Promise<Pati
  */
 export async function logout(): Promise<void> {
   await client('/patient-auth/logout', { method: 'DELETE' }).catch(() => {});
+}
+
+/**
+ * Upgrade a guest intake session to a full account.
+ * Uses the current guest session token (x-patient-token) for auth.
+ */
+export async function upgradeGuestAccount(payload: UpgradeGuestPayload): Promise<AuthResponse> {
+  return client<AuthResponse>('/patient-auth/upgrade', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }

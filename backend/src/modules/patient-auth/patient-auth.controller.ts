@@ -3,6 +3,7 @@
 // POST /patient-auth/login    — public, validates credentials, creates session
 // GET  /patient-auth/me       — returns current patient profile (PatientGuard)
 // PATCH /patient-auth/profile — update profile fields (PatientGuard)
+// POST /patient-auth/upgrade  — convert guest intake profile to full account (PatientGuard)
 // POST /patient-auth/logout   — delete current session (PatientGuard)
 
 import { Body, Controller, Delete, Get, Patch, Post, Req, UseGuards } from '@nestjs/common';
@@ -14,6 +15,7 @@ import { PatientAuthService } from './patient-auth.service';
 import { RegisterPatientDto } from './dto/register-patient.dto';
 import { LoginPatientDto } from './dto/login-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-profile.dto';
+import { UpgradeGuestDto } from './dto/upgrade-guest.dto';
 
 @Controller('patient-auth')
 export class PatientAuthController {
@@ -46,6 +48,16 @@ export class PatientAuthController {
     @Req() req: Request,
   ) {
     return this.patientAuthService.updateProfile(patient.patientId, dto, req.correlationId);
+  }
+
+  @Post('upgrade')
+  @UseGuards(PatientGuard)
+  async upgradeGuest(
+    @Body() dto: UpgradeGuestDto,
+    @CurrentPatient() patient: PatientContext,
+    @Req() req: Request,
+  ) {
+    return this.patientAuthService.upgradeGuest(patient.patientId, patient.sessionId, dto, req.correlationId);
   }
 
   @Delete('logout')

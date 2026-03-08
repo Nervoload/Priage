@@ -2,7 +2,7 @@
 // Handles registration, login, and profile management for patient users.
 // Uses bcrypt for password hashing and x-patient-token sessions.
 
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 
@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RegisterPatientDto } from './dto/register-patient.dto';
 import { LoginPatientDto } from './dto/login-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-profile.dto';
+import { UpgradeGuestDto } from './dto/upgrade-guest.dto';
 
 const BCRYPT_ROUNDS = 10;
 
@@ -183,6 +184,86 @@ export class PatientAuthService {
       // Session may already be deleted
     });
     return { ok: true };
+  }
+
+  /**
+   * Upgrade a guest intake profile to a full account.
+   * Sets a real email + hashed password on the existing PatientProfile so all
+   * encounters, messages, and assets are preserved.
+   */
+  async upgradeGuest(patientId: number, sessionId: number, dto: UpgradeGuestDto, correlationId?: string) {
+    this.loggingService.info('Guest account upgrade attempt', {
+      service: 'PatientAuthService',
+      operation: 'upgradeGuest',
+      correlationId,
+      patientId,
+    });
+
+    const patient = await this.prisma.patientProfile.findUnique({
+      where: { id: patientId },
+    });
+
+    if (!patient) {
+      throw new UnauthorizedException('Patient not found');
+    }
+
+    // Only allow upgrade for guest profiles (intake.local placeholder emails)
+    if (!patient.email.endsWith('@intake.local')) {
+      throw new BadRequestException('This account is already a full account');
+    }
+
+    // Check that the desired email is not already taken
+    const existing = await this.prisma.patientProfile.findUnique({
+      where: { email: dto.email },
+    });
+    if (existing) {
+      throw new ConflictException('An account with this email already exists');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+
+    const updated = await this.prisma.patientProfile.update({
+      where: { id: patientId },
+      data: {
+        email: dto.email,
+        password: hashedPassword,
+        firstName: dto.firstName ?? patient.firstName,
+        lastName: dto.lastName ?? patient.lastName,
+        phone: dto.phone ?? patient.phone,
+        age: dto.age ?? patient.age,
+        gender: dto.gender ?? patient.gender,
+        allergies: dto.allergies ?? patient.allergies,
+        conditions: dto.conditions ?? patient.conditions,
+      },
+    });
+
+    // Create a fresh session token for the upgraded account
+    const token = randomUUID();
+
+    // Carry over encounterId from the current session
+    const currentSession = await this.prisma.patientSession.findUnique({
+      where: { id: sessionId },
+    });
+
+    await this.prisma.patientSession.create({
+      data: {
+        token,
+        patientId: patient.id,
+        encounterId: currentSession?.encounterId ?? null,
+      },
+    });
+
+    this.loggingService.info('Guest account upgraded successfully', {
+      service: 'PatientAuthService',
+      operation: 'upgradeGuest',
+      correlationId,
+      patientId: patient.id,
+    });
+
+    return {
+      sessionToken: token,
+      patient: this.sanitizePatient(updated),
+    };
   }
 
   private sanitizePatient(patient: any) {

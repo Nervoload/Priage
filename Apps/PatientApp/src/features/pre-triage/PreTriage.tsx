@@ -85,6 +85,7 @@ export function PreTriage() {
         value={age}
         onChange={setAge}
         onNext={() => setStep(2)}
+        onBack={() => navigate('/guest/start')}
         placeholder="e.g. 39"
         required
         chips={['25', '34', '41', '72']}
@@ -156,6 +157,6 @@ export function PreTriage() {
   }
 
   return (
-    <Routing onConfirmed={handleRouted} />
+    <Routing onConfirmed={handleRouted} onBack={() => setStep(4)} />
   );
 }

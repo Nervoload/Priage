@@ -17,6 +17,7 @@ import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import type { Encounter, EncounterWorkspaceTab, Message, QueueInfo } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
+import { UpgradeAccountCard } from './UpgradeAccountCard';
 
 const ENCOUNTER_POLL_MS = 10_000;
 const MESSAGE_POLL_MS = 5_000;
@@ -360,6 +361,8 @@ export function EncounterWorkspace() {
                 <Card title="Latest Care-Team Instruction" subtitle="From your current message thread">
                   <p style={styles.bodyText}>{latestInstruction}</p>
                 </Card>
+
+                {isGuest && <UpgradeAccountCard />}
               </section>
             )}
           />

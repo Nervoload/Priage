@@ -67,6 +67,18 @@ export interface UpdateProfilePayload {
   preferredLanguage?: string;
 }
 
+export interface UpgradeGuestPayload {
+  email: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  age?: number;
+  gender?: string;
+  allergies?: string;
+  conditions?: string;
+}
+
 export interface AuthenticatedPatientSession {
   sessionToken: string;
   patientId: number;

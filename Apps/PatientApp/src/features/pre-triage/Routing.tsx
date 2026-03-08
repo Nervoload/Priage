@@ -9,6 +9,7 @@ import { useToast } from '../../shared/ui/ToastContext';
 
 interface RoutingProps {
   onConfirmed: (encounterId: number) => void;
+  onBack?: () => void;
 }
 
 function waitLabel(index: number): string {
@@ -16,7 +17,7 @@ function waitLabel(index: number): string {
   return ranges[index % ranges.length];
 }
 
-export function Routing({ onConfirmed }: RoutingProps) {
+export function Routing({ onConfirmed, onBack }: RoutingProps) {
   const { showToast } = useToast();
   const { session, setSession } = useGuestSession();
   const [hospitalSlug, setHospitalSlug] = useState(session?.hospitalSlug ?? '');
@@ -133,6 +134,11 @@ export function Routing({ onConfirmed }: RoutingProps) {
         )}
 
         <div style={styles.buttonRow}>
+          {onBack && (
+            <button style={styles.secondaryButton} type="button" onClick={onBack}>
+              ← Back
+            </button>
+          )}
           <button style={styles.primaryButton} type="button" onClick={handleConfirm} disabled={submitting}>
             {submitting ? 'Notifying hospital…' : 'Notify hospital'}
           </button>

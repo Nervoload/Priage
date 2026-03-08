@@ -48,6 +48,9 @@ export function Login() {
   return (
     <main style={styles.page}>
       <section style={styles.card}>
+        <button style={styles.backButton} onClick={() => navigate('/welcome')} type="button">
+          ← Back
+        </button>
         <header style={styles.header}>
           <span style={styles.badge}>Guest Check-In</span>
           <h1 style={styles.title}>Fast emergency intake</h1>
@@ -233,6 +236,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.8rem',
     cursor: 'pointer',
     fontFamily: patientTheme.fonts.body,
+  },
+  backButton: {
+    border: 'none',
+    background: 'none',
+    color: patientTheme.colors.inkMuted,
+    fontWeight: 600,
+    fontSize: '0.84rem',
+    cursor: 'pointer',
+    padding: '0.2rem 0',
+    fontFamily: patientTheme.fonts.body,
+    justifySelf: 'start',
   },
   footer: {
     borderTop: panelBorder,
