@@ -163,10 +163,11 @@ export function messageToChatMessage(msg: Message): ChatMessage {
 }
 
 export interface CreateIntentPayload {
-  firstName?: string;
+  firstName: string;
   lastName?: string;
+  phone: string;
   age?: number;
-  chiefComplaint?: string;
+  chiefComplaint: string;
   details?: string;
   preferredLanguage?: string;
 }

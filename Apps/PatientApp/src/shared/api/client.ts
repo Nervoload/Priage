@@ -25,7 +25,7 @@ export async function client<T = unknown>(
 
   const response = await fetch(url, { ...options, headers });
 
-  if (response.status === 401 || response.status === 403) {
+  if ((response.status === 401 || response.status === 403) && token) {
     window.dispatchEvent(new CustomEvent('patient-session-expired'));
   }
 

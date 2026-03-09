@@ -12,11 +12,6 @@ interface RoutingProps {
   onBack?: () => void;
 }
 
-function waitLabel(index: number): string {
-  const ranges = ['~8 min', '~16 min', '~24 min', '~32 min'];
-  return ranges[index % ranges.length];
-}
-
 export function Routing({ onConfirmed, onBack }: RoutingProps) {
   const { showToast } = useToast();
   const { session, setSession } = useGuestSession();
@@ -98,7 +93,7 @@ export function Routing({ onConfirmed, onBack }: RoutingProps) {
           <p style={styles.loadingLabel}>Loading hospitals…</p>
         ) : sortedHospitals.length > 0 ? (
           <div style={styles.optionGrid}>
-            {sortedHospitals.map((hospital, index) => {
+            {sortedHospitals.map((hospital) => {
               const selected = hospital.slug === hospitalSlug;
               return (
                 <button
@@ -115,7 +110,9 @@ export function Routing({ onConfirmed, onBack }: RoutingProps) {
                     <strong style={styles.optionTitle}>{hospital.name}</strong>
                   </div>
                   <span style={styles.optionMeta}>Slug: {hospital.slug}</span>
-                  <span style={styles.optionMeta}>Current queue estimate: {waitLabel(index)}</span>
+                  <span style={styles.optionMeta}>
+                    {selected ? 'Selected for check-in' : 'Tap to choose this hospital'}
+                  </span>
                 </button>
               );
             })}

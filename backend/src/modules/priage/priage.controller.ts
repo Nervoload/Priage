@@ -12,11 +12,11 @@ import { PriageService } from './priage.service';
 import { PriageChatDto, PriageAdmitDto } from './dto/chat.dto';
 
 @Controller('patient/priage')
-@UseGuards(PatientGuard)
 export class PriageController {
   constructor(private readonly priageService: PriageService) {}
 
   @Post('chat')
+  @UseGuards(PatientGuard)
   async chat(
     @Body() dto: PriageChatDto,
     @CurrentPatient() patient: PatientContext,
@@ -26,6 +26,7 @@ export class PriageController {
   }
 
   @Post('admit')
+  @UseGuards(PatientGuard)
   async admit(
     @Body() dto: PriageAdmitDto,
     @CurrentPatient() patient: PatientContext,

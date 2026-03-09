@@ -17,6 +17,7 @@
 
 require('dotenv').config();
 const bcrypt = require('bcrypt');
+const { randomUUID } = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const { Pool } = require('pg');
 const { PrismaPg } = require('@prisma/adapter-pg');
@@ -427,6 +428,7 @@ async function seed() {
 
     encounter = await prisma.encounter.create({
       data: {
+        publicId: `enc_${randomUUID()}`,
         status: p.encounter.status,
         chiefComplaint: p.encounter.chiefComplaint,
         details: p.encounter.details,

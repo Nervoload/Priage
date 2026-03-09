@@ -10,11 +10,12 @@ import {
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { getMyEncounter, getQueueInfo, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
-import { updateProfile } from '../../shared/api/auth';
+import { updateIntakeDetails } from '../../shared/api/intake';
+import { getMe, updateProfile } from '../../shared/api/auth';
 import { ENCOUNTER_STATUS_META, isInHospitalEncounter, isTerminalEncounter } from '../../shared/encounters';
 import { useAuth } from '../../shared/hooks/useAuth';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
-import type { Encounter, EncounterWorkspaceTab, Message, QueueInfo } from '../../shared/types/domain';
+import type { Encounter, EncounterWorkspaceTab, Message, PatientProfile, QueueInfo } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
 import { UpgradeAccountCard } from './UpgradeAccountCard';
@@ -72,6 +73,19 @@ function getLatestCareInstruction(messages: Message[]): string {
   return latest.content;
 }
 
+function toGuestProfileState(profile: PatientProfile) {
+  return {
+    firstName: profile.firstName ?? '',
+    lastName: profile.lastName ?? '',
+    phone: profile.phone ?? '',
+    age: profile.age != null ? String(profile.age) : '',
+    gender: profile.gender ?? '',
+    allergies: profile.allergies ?? '',
+    conditions: profile.conditions ?? '',
+    preferredLanguage: profile.preferredLanguage ?? '',
+  };
+}
+
 function TerminalBanner({ status }: { status: Encounter['status'] }) {
   const content: Record<Encounter['status'], string> = {
     EXPECTED: '',
@@ -117,11 +131,19 @@ export function EncounterWorkspace() {
     preferredLanguage: '',
   });
   const [guestProfile, setGuestProfile] = useState({
-    preferredName: '',
-    emergencyContact: '',
-    supportNotes: '',
+    firstName: '',
+    lastName: '',
+    phone: '',
+    age: '',
+    gender: '',
+    allergies: '',
+    conditions: '',
+    preferredLanguage: '',
+    details: '',
   });
+  const [guestProfileError, setGuestProfileError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const loadedGuestEncounterId = useRef<number | null>(null);
 
   const isGuest = !authSession && !!guestSession;
   const activeTab = resolveActiveTab(location.pathname);
@@ -146,6 +168,47 @@ export function EncounterWorkspace() {
       preferredLanguage: patient.preferredLanguage ?? '',
     });
   }, [patient]);
+
+  useEffect(() => {
+    if (!isGuest) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadGuestProfile() {
+      try {
+        const profile = await getMe();
+        if (cancelled) return;
+        setGuestProfile((prev) => ({
+          ...prev,
+          ...toGuestProfileState(profile),
+        }));
+        setGuestProfileError(null);
+      } catch {
+        if (!cancelled) {
+          setGuestProfileError('Could not load your saved guest information.');
+        }
+      }
+    }
+
+    void loadGuestProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest]);
+
+  useEffect(() => {
+    if (!isGuest || !encounter || loadedGuestEncounterId.current === encounter.id) {
+      return;
+    }
+
+    loadedGuestEncounterId.current = encounter.id;
+    setGuestProfile((prev) => ({
+      ...prev,
+      details: encounter.details ?? '',
+    }));
+  }, [encounter, isGuest]);
 
   const handleSessionExpired = useCallback(() => {
     if (isGuest) {
@@ -267,6 +330,7 @@ export function EncounterWorkspace() {
   const currentEncounter = encounter;
   const isTerminal = isTerminalEncounter(encounter.status);
   const inHospital = isInHospitalEncounter(encounter.status);
+  const showGuestUpgradePrompt = isGuest && currentEncounter.status === 'WAITING';
   const primaryDescription = inHospital
     ? 'Your care team has your details and this workspace updates as your visit progresses.'
     : 'You are checked in and on the way. Keep this page open for live updates.';
@@ -292,7 +356,53 @@ export function EncounterWorkspace() {
 
   async function handleSaveProfile() {
     if (!authSession) {
-      showToast('Guest profile updates will be available in a future release.', 'success');
+      const trimmedFirstName = guestProfile.firstName.trim();
+      const trimmedPhone = guestProfile.phone.trim();
+
+      if (!trimmedFirstName) {
+        setGuestProfileError('First name is required.');
+        return;
+      }
+
+      if (!trimmedPhone) {
+        setGuestProfileError('Phone number is required.');
+        return;
+      }
+
+      setSavingProfile(true);
+      try {
+        const updatedProfile = await updateProfile({
+          firstName: trimmedFirstName,
+          lastName: guestProfile.lastName.trim() || undefined,
+          phone: trimmedPhone,
+          age: guestProfile.age ? Number(guestProfile.age) : undefined,
+          gender: guestProfile.gender.trim() || undefined,
+          allergies: guestProfile.allergies.trim() || undefined,
+          conditions: guestProfile.conditions.trim() || undefined,
+          preferredLanguage: guestProfile.preferredLanguage.trim() || undefined,
+        });
+
+        const result = await updateIntakeDetails({
+          details: guestProfile.details.trim() || undefined,
+        });
+
+        if (result && typeof result === 'object' && 'id' in result) {
+          setEncounter(result as Encounter);
+        }
+
+        setGuestProfile({
+          ...toGuestProfileState(updatedProfile),
+          details: guestProfile.details,
+        });
+        setGuestProfileError(null);
+        showToast('Guest information saved.', 'success');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not save guest information.';
+        setGuestProfileError(message);
+        showToast(message);
+      } finally {
+        setSavingProfile(false);
+      }
       return;
     }
 
@@ -362,7 +472,7 @@ export function EncounterWorkspace() {
                   <p style={styles.bodyText}>{latestInstruction}</p>
                 </Card>
 
-                {isGuest && <UpgradeAccountCard />}
+                {showGuestUpgradePrompt && <UpgradeAccountCard />}
               </section>
             )}
           />
@@ -483,42 +593,72 @@ export function EncounterWorkspace() {
                     </div>
                   ) : (
                     <div style={styles.fieldStack}>
+                      <TwoColField
+                        leftLabel="First name"
+                        leftValue={guestProfile.firstName}
+                        onLeftChange={(value) => setGuestProfile((prev) => ({ ...prev, firstName: value }))}
+                        rightLabel="Last name"
+                        rightValue={guestProfile.lastName}
+                        onRightChange={(value) => setGuestProfile((prev) => ({ ...prev, lastName: value }))}
+                      />
                       <label style={styles.fieldLabel}>
-                        Preferred name
+                        Phone
                         <input
-                          value={guestProfile.preferredName}
-                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, preferredName: event.target.value }))}
-                          placeholder={guestSession?.hospitalSlug ? '' : 'Guest'}
+                          value={guestProfile.phone}
+                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, phone: event.target.value }))}
+                          style={styles.input}
+                          inputMode="tel"
+                        />
+                      </label>
+                      <TwoColField
+                        leftLabel="Age"
+                        leftValue={guestProfile.age}
+                        onLeftChange={(value) => setGuestProfile((prev) => ({ ...prev, age: value }))}
+                        rightLabel="Gender"
+                        rightValue={guestProfile.gender}
+                        onRightChange={(value) => setGuestProfile((prev) => ({ ...prev, gender: value }))}
+                      />
+                      <label style={styles.fieldLabel}>
+                        Allergies
+                        <input
+                          value={guestProfile.allergies}
+                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, allergies: event.target.value }))}
                           style={styles.input}
                         />
                       </label>
                       <label style={styles.fieldLabel}>
-                        Emergency contact
+                        Conditions
                         <input
-                          value={guestProfile.emergencyContact}
-                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, emergencyContact: event.target.value }))}
+                          value={guestProfile.conditions}
+                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, conditions: event.target.value }))}
                           style={styles.input}
                         />
                       </label>
                       <label style={styles.fieldLabel}>
-                        Support notes
+                        Preferred language
+                        <input
+                          value={guestProfile.preferredLanguage}
+                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, preferredLanguage: event.target.value }))}
+                          style={styles.input}
+                        />
+                      </label>
+                      <label style={styles.fieldLabel}>
+                        Additional details for the triage team
                         <textarea
-                          value={guestProfile.supportNotes}
-                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, supportNotes: event.target.value }))}
+                          value={guestProfile.details}
+                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, details: event.target.value }))}
                           style={styles.textArea}
                         />
                       </label>
                     </div>
                   )}
+                  {!authSession && guestProfileError && (
+                    <p style={styles.errorText}>{guestProfileError}</p>
+                  )}
                   <div style={styles.buttonRow}>
                     <button style={styles.primaryButton} onClick={handleSaveProfile} disabled={savingProfile}>
-                      {savingProfile ? 'Saving...' : authSession ? 'Save profile changes' : 'Save guest visit details'}
+                      {savingProfile ? 'Saving...' : authSession ? 'Save profile changes' : 'Save guest details'}
                     </button>
-                    {!authSession && (
-                      <button style={styles.secondaryButton} onClick={() => navigate('/auth/signup')}>
-                        Create account after visit
-                      </button>
-                    )}
                   </div>
                 </Card>
 
@@ -834,6 +974,11 @@ const styles: Record<string, CSSProperties> = {
   fieldStack: {
     display: 'grid',
     gap: '0.65rem',
+  },
+  errorText: {
+    margin: 0,
+    color: patientTheme.colors.danger,
+    fontSize: '0.82rem',
   },
   buttonRow: {
     display: 'flex',

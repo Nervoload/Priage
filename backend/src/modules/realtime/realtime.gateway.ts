@@ -248,7 +248,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     @ConnectedSocket() client: Socket,
     @MessageBody() rawPayload: unknown,
   ): Promise<MessageSendAck> {
-    const trustedUser = this.getTrustedUser(client);
+    let trustedUser = this.getTrustedUser(client);
+    if (!trustedUser) {
+      trustedUser = await this.hydrateTrustedUser(client);
+    }
     if (!trustedUser) {
       return {
         ok: false,
@@ -576,6 +579,52 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   private getTrustedUser(client: Socket): TrustedRealtimeUser | null {
     const user = client.data.user as TrustedRealtimeUser | undefined;
     return user?.userId && user?.hospitalId ? user : null;
+  }
+
+  private async hydrateTrustedUser(client: Socket): Promise<TrustedRealtimeUser | null> {
+    const existing = this.getTrustedUser(client);
+    if (existing) {
+      return existing;
+    }
+
+    const token = this.extractToken(client);
+    if (!token) {
+      return null;
+    }
+
+    try {
+      const trustedUser = await this.realtimeAuthService.validateStaffToken(token);
+      client.data.user = trustedUser;
+
+      if (!this.connectedClients.has(client.id)) {
+        this.connectedClients.set(client.id, {
+          userId: trustedUser.userId,
+          hospitalId: trustedUser.hospitalId,
+          connectedAt: new Date(),
+        });
+      }
+
+      await client.join(hospitalRoomKey(trustedUser.hospitalId));
+
+      const requestedEncounterIds = this.getEncounterIdsFromHandshake(client);
+      if (requestedEncounterIds.length > 0) {
+        const encounters = await this.prisma.encounter.findMany({
+          where: {
+            id: { in: requestedEncounterIds },
+            hospitalId: trustedUser.hospitalId,
+          },
+          select: { id: true },
+        });
+
+        for (const encounter of encounters) {
+          await client.join(encounterRoomKey(encounter.id));
+        }
+      }
+
+      return trustedUser;
+    } catch {
+      return null;
+    }
   }
 
   private formatValidationErrors(errors: Awaited<ReturnType<typeof validate>>): string {

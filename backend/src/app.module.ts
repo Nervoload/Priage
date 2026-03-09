@@ -26,6 +26,8 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { PatientAuthModule } from './modules/patient-auth/patient-auth.module';
 import { PriageModule } from './modules/priage/priage.module';
+// Optional partner-facing integration surface for external software.
+import { PlatformModule } from './modules/platform/platform.module';
 import { TriageModule } from './modules/triage/triage.module';
 import { UsersModule } from './modules/users/users.module';
 
@@ -53,6 +55,8 @@ import { UsersModule } from './modules/users/users.module';
     IntakeModule,
     PatientAuthModule,
     PriageModule,
+    // Keep the partner API isolated at the module boundary.
+    PlatformModule,
     JobsModule,
     HealthModule,
   ],

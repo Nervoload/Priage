@@ -9,11 +9,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { EncounterStatus, EventType } from '@prisma/client';
+import { ContextSourceType, EncounterStatus, ReviewState, TrustTier, VisibilityScope } from '@prisma/client';
 import Redis from 'ioredis';
 
-import { AssetsService } from '../assets/assets.service';
-import { EventsService } from '../events/events.service';
+import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
@@ -35,8 +34,6 @@ type SessionRecord = {
   id: number;
   patientId: number;
   encounterId: number | null;
-  pendingChiefComplaint: string | null;
-  pendingDetails: string | null;
   expiresAt: Date | null;
   encounter: {
     hospitalId: number;
@@ -48,8 +45,7 @@ type SessionRecord = {
 export class IntakeService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly events: EventsService,
-    private readonly assetsService: AssetsService,
+    private readonly intakeSessions: IntakeSessionsService,
     private readonly loggingService: LoggingService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
@@ -62,6 +58,7 @@ export class IntakeService {
     }, {
       hasFirstName: !!dto.firstName,
       hasLastName: !!dto.lastName,
+      hasPhone: !!dto.phone,
       hasAge: dto.age !== undefined && dto.age !== null,
       hasChiefComplaint: !!dto.chiefComplaint,
       hasDetails: !!dto.details,
@@ -75,20 +72,53 @@ export class IntakeService {
         password: randomUUID(),
         firstName: dto.firstName,
         lastName: dto.lastName,
+        phone: dto.phone,
         age: dto.age,
         preferredLanguage: dto.preferredLanguage ?? 'en',
       },
     });
 
-    await this.prisma.patientSession.create({
+    const authSession = await this.prisma.patientSession.create({
       data: {
         token,
         patientId: patient.id,
         expiresAt: new Date(Date.now() + PATIENT_SESSION_TTL_MS),
-        pendingChiefComplaint: dto.chiefComplaint,
-        pendingDetails: dto.details,
       },
     });
+
+    await this.intakeSessions.createDraft(
+      {
+        patientId: patient.id,
+        authSessionId: authSession.id,
+      },
+      correlationId,
+    );
+
+    if (dto.chiefComplaint || dto.details || dto.firstName || dto.lastName || dto.phone || dto.age || dto.preferredLanguage) {
+      await this.intakeSessions.appendContextItemByAuthSession(
+        authSession.id,
+        patient.id,
+        {
+          itemType: 'patient_intake',
+          schemaVersion: 'v1',
+          payload: {
+            chiefComplaint: dto.chiefComplaint,
+            details: dto.details,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            phone: dto.phone,
+            age: dto.age,
+            preferredLanguage: dto.preferredLanguage,
+          },
+          sourceType: ContextSourceType.PATIENT,
+          trustTier: TrustTier.UNTRUSTED,
+          reviewState: ReviewState.UNREVIEWED,
+          visibilityScope: VisibilityScope.STORED_ONLY,
+          patientId: patient.id,
+        },
+        correlationId,
+      );
+    }
 
     this.loggingService.info('Patient intent created successfully', {
       service: 'IntakeService',
@@ -126,99 +156,15 @@ export class IntakeService {
     correlationId?: string,
   ) {
     const hospitalId = await this.resolveHospitalId(dto);
-    const { encounter, event } = await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`
-        SELECT 1
-        FROM "PatientSession"
-        WHERE "id" = ${session.id}
-        FOR UPDATE
-      `;
-
-      const lockedSession = await tx.patientSession.findUnique({
-        where: { id: session.id },
-        include: {
-          encounter: {
-            select: {
-              id: true,
-              hospitalId: true,
-              status: true,
-            },
-          },
-        },
-      });
-
-      if (!lockedSession) {
-        throw new NotFoundException('Patient session not found');
-      }
-
-      this.ensureSessionIsActive(lockedSession);
-
-      if (lockedSession.encounterId) {
-        if (!lockedSession.encounter) {
-          throw new NotFoundException('Encounter linked to session was not found');
-        }
-        if (lockedSession.encounter.hospitalId !== hospitalId) {
-          throw new BadRequestException(
-            `Session is already confirmed for hospital ${lockedSession.encounter.hospitalId}`,
-          );
-        }
-
-        await this.assetsService.promoteSessionAssetsToEncounter(
-          lockedSession.id,
-          lockedSession.encounter.id,
-          lockedSession.encounter.hospitalId,
-          lockedSession.patientId,
-          tx,
-        );
-
-        return { encounter: lockedSession.encounter, event: null };
-      }
-
-      const createdEncounter = await tx.encounter.create({
-        data: {
-          patientId: lockedSession.patientId,
-          hospitalId,
-          status: EncounterStatus.EXPECTED,
-          chiefComplaint: lockedSession.pendingChiefComplaint,
-          details: lockedSession.pendingDetails,
-          expectedAt: new Date(),
-        },
-      });
-
-      await tx.patientSession.update({
-        where: { id: lockedSession.id },
-        data: {
-          encounterId: createdEncounter.id,
-          pendingChiefComplaint: null,
-          pendingDetails: null,
-        },
-      });
-
-      await this.assetsService.promoteSessionAssetsToEncounter(
-        lockedSession.id,
-        createdEncounter.id,
-        createdEncounter.hospitalId,
-        lockedSession.patientId,
-        tx,
-      );
-
-      const createdEvent = await this.events.emitEncounterEventTx(tx, {
-        encounterId: createdEncounter.id,
-        hospitalId: createdEncounter.hospitalId,
-        type: EventType.ENCOUNTER_CREATED,
-        metadata: {
-          status: createdEncounter.status,
-          intake: 'confirmed',
-        },
-        actor: { actorPatientId: lockedSession.patientId },
-      });
-
-      return { encounter: createdEncounter, event: createdEvent };
-    });
-
-    if (event) {
-      void this.events.dispatchEncounterEventAndMarkProcessed(event);
-    }
+    const encounter = await this.intakeSessions.confirmByAuthSession(
+      session.id,
+      session.patientId,
+      {
+        hospitalId,
+        sourceLabel: 'patient_intake',
+      },
+      correlationId,
+    );
 
     this.loggingService.info('Patient intent confirmed successfully', {
       service: 'IntakeService',
@@ -267,35 +213,43 @@ export class IntakeService {
       encounterCreated: !!session.encounterId,
     });
 
-    let encounter = null;
-    if (session.encounterId) {
-      encounter = await this.prisma.encounter.update({
-        where: { id: session.encounterId },
-        data: {
+    await this.intakeSessions.appendContextItemByAuthSession(
+      session.id,
+      session.patientId,
+      {
+        itemType: 'patient_intake',
+        schemaVersion: 'v1',
+        payload: {
           chiefComplaint: dto.chiefComplaint,
           details: dto.details,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          age: dto.age,
+          allergies: dto.allergies,
+          conditions: dto.conditions,
         },
-      });
-    } else {
-      await this.prisma.patientSession.update({
-        where: { id: session.id },
+        sourceType: ContextSourceType.PATIENT,
+        trustTier: TrustTier.UNTRUSTED,
+        reviewState: ReviewState.UNREVIEWED,
+        visibilityScope: session.encounterId ? VisibilityScope.ADMISSIONS : VisibilityScope.STORED_ONLY,
+        patientId: session.patientId,
+      },
+      correlationId,
+    );
+
+    if (session.encounterId && (dto.chiefComplaint !== undefined || dto.details !== undefined)) {
+      await this.prisma.encounter.update({
+        where: { id: session.encounterId },
         data: {
-          pendingChiefComplaint: dto.chiefComplaint,
-          pendingDetails: dto.details,
+          chiefComplaint: dto.chiefComplaint !== undefined ? dto.chiefComplaint : undefined,
+          details: dto.details !== undefined ? dto.details : undefined,
         },
       });
     }
 
-    await this.prisma.patientProfile.update({
-      where: { id: session.patientId },
-      data: {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        age: dto.age,
-        allergies: dto.allergies,
-        conditions: dto.conditions,
-      },
-    });
+    const encounter = session.encounterId
+      ? await this.prisma.encounter.findUnique({ where: { id: session.encounterId } })
+      : null;
 
     this.loggingService.info('Patient intake details updated successfully', {
       service: 'IntakeService',

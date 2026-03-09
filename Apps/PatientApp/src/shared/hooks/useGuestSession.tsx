@@ -15,10 +15,6 @@ export function GuestSessionProvider({ children }: { children: ReactNode }) {
   const [session, setSessionState] = useState<GuestIntakeSession | null>(loadGuestSession);
 
   useEffect(() => {
-    saveGuestSession(session);
-  }, [session]);
-
-  useEffect(() => {
     function handleExpired() {
       setSessionState(null);
       clearAllPatientSessions();
@@ -30,6 +26,7 @@ export function GuestSessionProvider({ children }: { children: ReactNode }) {
 
   const setSession = useCallback((nextSession: GuestIntakeSession | null) => {
     setSessionState(nextSession);
+    saveGuestSession(nextSession);
   }, []);
 
   const clearSession = useCallback(() => {

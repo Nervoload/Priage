@@ -1,264 +1,410 @@
-# PRIAGE 🚑💨 
-An AI powered emergency department patient pipeline.
+# Priage
 
-Priage improves the emergency room experience for hospitals and patients. Through seemless data transfer, open communication, and quality patient monitoring--Priage transforms confusement and concern into certainty and satisfaction. Priage saves lives by tracking patients, and informing staff on potential disease or injury progression before treatment: whether on the way to the hospital or in the waiting room.
+`Version: 0.1 Alpha`
 
-Priage enables communication between patients and ER staff, allowing for updates directly from the waiting room. The medical team can view the condition, health status, messages and more for all patients. 
+Priage is an emergency-department operations platform that lets patients notify a hospital before arrival, continue sharing updates while waiting, and gives staff a live encounter workspace from intake through treatment.
 
-# Development 
+## Contents Summary
 
-We are building a modular platform for Hospitals, Clinics and Patients. We want to build a prototype to present to Hospitals, and so we need to build the basic architecture which will be the foundation for scaling in the future. We are going to build the following:
+1. Problem Overview
+2. Architecture Design / Technical Overview
+3. Setup Instructions, Development Practices, Dependencies, Notes, and Useful Commands / Docs
 
-1) The backend infrastructure to transfer patient profile data across the pipeline, send live notifications, and queue jobs for real-time updates. 
-2) The Hospital App, with multiple views: The Pre-triage, Triage, and Waiting Room views for different staff members downstream of the pipeline.
-3) The Patient App, which can initiate a notice to a hospital, and then can communicate with the hospital according to the stage of the pipeline the patient is in. 
+## 1. Problem Overview
 
-Below is our proposed tech stack: 
+### Priage Mission
+
+Priage exists to reduce the information gap between the moment a patient decides they need emergency care and the moment a clinician can meaningfully act on that information.
+
+In a typical emergency workflow, important context is fragmented:
+
+- patients often arrive with little structured information already captured
+- staff may not see symptom progression until the patient is physically in front of them
+- waiting-room communication is inconsistent or absent
+- pre-arrival data, triage context, and live patient updates are rarely carried forward as one continuous operational record
+
+Priage addresses that gap by treating the emergency visit as one connected encounter rather than a series of disconnected handoffs.
+
+### What Priage 0.1 Alpha Does Today
+
+At the current state of the codebase, Priage provides:
+
+- a Patient App with guest check-in, patient sign-in, encounter status tracking, live messaging, and visit/profile updates
+- a Hospital App with staff login, admit/admissions workflow, triage workflow, waiting-room monitoring, patient detail views, alerts, and messaging
+- a NestJS backend that owns encounter lifecycle, patient and staff auth, intake, triage assessments, alerts, assets, messaging, real-time updates, structured logging, and a partner-facing platform intake layer
+- a PostgreSQL data model centered around `PatientProfile`, `IntakeSession`, and `Encounter`
+
+### Core Product Idea
+
+Priage is trying to create a continuous emergency visit record that starts before the patient reaches the hospital and remains useful across:
+
+- guest or authenticated intake
+- hospital selection and encounter creation
+- expected / en route state
+- admitted / triage / waiting-room operations
+- messaging and patient updates during the visit
+
+## 2. Architecture Design / Technical Overview
+
+### Priage Software Architecture
+
+```mermaid
+flowchart LR
+    patient["Patient App<br/>React + Vite<br/>Guest intake<br/>Patient auth<br/>En route + visit workspace<br/>Messaging + profile updates"]
+    hospital["Hospital App<br/>React + Vite<br/>Staff auth<br/>Admit view<br/>Triage workspace<br/>Waiting room + alerts"]
+    backend["NestJS Backend<br/>REST controllers<br/>Socket.IO gateway<br/>Auth + guards<br/>Encounters, intake, triage,<br/>messaging, alerts, assets,<br/>logging, platform APIs"]
+    data["Operational Record<br/>PatientProfile<br/>PatientSession<br/>IntakeSession<br/>Encounter<br/>TriageAssessment<br/>Message / Alert / Asset"]
+
+    patient -->|"patient APIs + realtime"| backend
+    hospital -->|"staff APIs + realtime"| backend
+    backend <--> data
 ```
-                ┌───────────────────────────┐
-                │   Patient Web App (SPA)   │
-                │   React + Vite + TS       │
-                └───────────▲───────────────┘
-                            │  HTTPS + WebSocket (Socket.IO)
-                ┌───────────┴───────────────┐
-                │  Hospital Web App (SPA)   │
-                │  React + Vite + TS        │
-                └───────────▲───────────────┘
-                            │  HTTPS + WebSocket (Socket.IO)
-                    ┌───────┴────────────────────┐
-                    │  AWS ALB (Load Balancer)   │
-                    └───────▲────────────────────┘
-                            │  HTTP(S) / WS
-                  ┌─────────┴────────────────────────┐
-                  │   NestJS Backend (Node + TS)     │
-                  │----------------------------------│
-                  │  • REST Controllers              │
-                  │  • WebSocket Gateway (Socket.IO) │
-                  │  • Auth (JWT, RBAC)              │
-                  │  • Domain Services:              │
-                  │      - Admittance                │
-                  │      - Triage                    │
-                  │      - Waiting Room              │
-                  │      - Messaging                 │
-                  │  • Prisma ORM                    │
-                  └───────┬──────────────────────────┘
-                          │
-          ┌───────────────┼─────────────────┐
-          │                                   │
-┌─────────▼───────────┐            ┌─────────▼────────────┐
-│  PostgreSQL (RDS)   │            │  Redis (ElastiCache) │
-│  • Patients         │            │  • Socket.IO adapter │
-│  • Encounters       │            │    pub/sub channels  │
-│  • Triage notes     │            │  • (optional cache)  │
-│  • Waiting entries  │            └──────────────────────┘
-│  • Messages         │
-│  • Audit logs       │
-└─────────────────────┘
+
+### API Layer And Connection Model
+
+```mermaid
+flowchart TB
+    subgraph Clients
+      patient["Patient App"]
+      hospital["Hospital App"]
+      partner["Partner / Platform Client"]
+    end
+
+    subgraph Auth
+      patientAuth["Patient session token<br/>x-patient-token"]
+      staffAuth["JWT + role guards"]
+      partnerAuth["Partner credentials<br/>idempotency + trust policy"]
+    end
+
+    subgraph Backend
+      rest["REST Controllers"]
+      socket["Socket.IO Gateway"]
+      services["Domain Services"]
+      jobs["Redis / BullMQ Jobs"]
+      prisma["Prisma ORM"]
+    end
+
+    db["PostgreSQL"]
+
+    patient --> patientAuth --> rest
+    hospital --> staffAuth --> rest
+    partner --> partnerAuth --> rest
+
+    patient <--> socket
+    hospital <--> socket
+
+    rest --> services
+    services --> prisma --> db
+    services --> jobs
+    socket --> services
 ```
 
-For our protoype, we want to implement a complete backend that can handle live updates from our Hospital App users and our Patient App users. 
+### Current System Shape
 
-## Server: 
+The codebase is not a static mockup anymore. It is a working multi-app stack with a shared operational model:
 
-We will deploy a relational database system, which is the endpoint for reads and writes from our apps.
+- `backend/` is the source of truth for auth, encounter state, triage, alerts, messaging, assets, logging, and partner intake
+- `Apps/PatientApp/` is the patient-facing SPA
+- `Apps/HospitalApp/` is the staff-facing SPA
+- `docker-compose.yml` provides local PostgreSQL and Redis
 
-For our database management, we will use **PostgreSQL** (standard for webapps) to deal with our relational database. To host our databases, we can use a cloud service like **AWS**. We could also just use Google Firebase for testing, and then use AWS for real prototyping/MVP. 
+### Boundary: First-party vs Partner APIs
 
-Redis will manage read/write jobs from our backend.
+Priage currently has two API surfaces inside the same NestJS backend:
 
-## Backend:
+- first-party controllers used by the Patient App and Hospital App
+- partner-facing controllers under `/platform/v1` for external software integrations
 
-Our backend will encapsulate the communication between our apps, the server, and initiate updates via our own REST APIs. We will manage the following:
+That boundary is intentional:
 
-The Patient Profile
+- first-party patient/staff routes handle the normal Priage product experience
+- partner routes handle software-to-software intake submission, context upload, asset upload, confirmation, cancellation, and status retrieval
 
-The Hospital App Updates
+The shared `IntakeSessionsModule` is internal workflow infrastructure reused by both surfaces. Partner-only concerns such as partner auth, scopes, idempotency, and trust-policy enforcement belong in `backend/src/modules/platform/*` and the related partner tables, not in first-party controller auth flows.
 
-Real-time notifications, status updates, and pipeline transfer
+### Main Domain Model
 
-Prisma will deal with our query packaging for our DB. 
+The data model in `backend/prisma/schema.prisma` is centered on a few core records:
 
-Our backend will be built on Nest.js: Node and typescript
+- `PatientProfile`: persistent patient identity and profile data
+- `PatientSession`: patient-auth or guest session token state
+- `IntakeSession`: draft/confirmed intake session state before and during confirmation
+- `Encounter`: the operational visit record used by both apps
+- `TriageAssessment`: clinical prioritization and triage detail
+- `Message`: patient/staff communication tied to an encounter
+- `Alert`: staff-visible operational or clinical escalation
+- `Asset`: intake images and message attachments
+- `ContextItem` and `SummaryProjection`: structured context and derived summaries for the platform layer
 
-## Frontend:
 
-Our front end will be built using Vite and React --> for interactive webapps, and easy deployment using Vite. 
 
-# Development Setup:
+#### Patient App
 
-## External Software
-- Docker Desktop (required to run local PostgreSQL + Redis)
+Current patient-facing capabilities include:
 
----
+- guest emergency check-in
+- account sign-up and sign-in
+- hospital routing for guest encounters
+- en route / expected-state encounter view
+- encounter workspace with status timeline, messaging, queue/status polling, and profile editing
+- patient settings page
+- a `Priage` patient page / AI-oriented surface in the current app shell
 
-## 1) Pre-flight checks--verify your machine can run the stack:
-Make sure you have node and npm installed! Latest version is fine.
-You might also have to download nestjs globally.
+#### Hospital App
 
-### macOS (Terminal)
-~~~bash
-node -v
-npm -v
-docker --version
-docker compose version
-~~~
+Current staff-facing capabilities include:
 
-### Windows (PowerShell)
-~~~powershell
-node -v
-npm -v
-docker --version
-docker compose version
-~~~
+- JWT-based hospital staff login
+- admit workflow for `EXPECTED` and `ADMITTED` encounters
+- triage workflow and triage assessments
+- waiting-room operations with patient detail modal and messaging
+- derived alert handling and live update hooks
+- analytics and settings pages are present in the app shell but are not the main operational surface today
 
-If `docker compose` fails, open Docker Desktop and confirm it’s running.
+### Backend Modules
 
----
+The NestJS backend currently wires together these major modules:
 
-## 2) Install repo dependencies (Node packages):
+- `auth`, `users`
+- `patient-auth`
+- `intake`, `intake-sessions`
+- `encounters`
+- `triage`
+- `messaging`
+- `alerts`
+- `assets`
+- `patients`, `hospitals`
+- `realtime`, `redis`, `jobs`
+- `logging`
+- `priage`
+- `platform`
+- `health`
 
-From the repo root (the folder that contains `backend/` and `Apps/`):
+### Tech Stack
 
-### macOS (Terminal)
-~~~bash
-cd /Priage/backend/
+| Layer | Current stack |
+|---|---|
+| Patient App | React 18, React Router, Vite, TypeScript, Socket.IO client |
+| Hospital App | React 18, Vite, TypeScript, Tailwind 4, Socket.IO client |
+| Backend | NestJS 11, TypeScript, class-validator, Passport/JWT, Socket.IO |
+| Data | PostgreSQL + Prisma |
+| Realtime / Jobs | Redis, Socket.IO Redis adapter, BullMQ |
+| Local infrastructure | Docker Compose |
+| Auth modes | JWT for staff, patient session token for patients/guests, partner auth for platform |
 
-# Prefer a clean, reproducible install when a lockfile exists
-if [ -f package-lock.json ]; then
-  npm ci
-else
-  npm install
-fi
-~~~
+## 3. Setup Instructions, Development Practices, Dependencies, Notes, and Useful Commands / Docs
 
-### Windows
-~~~powershell
-cd C:\Priage\backend\
+### Setup Instructions
 
-# Prefer a clean, reproducible install when a lockfile exists
-if (Test-Path package-lock.json) {
-  npm ci
-} else {
-  npm install
-}
-~~~
+### External Software
 
----
+- Node.js 20+
+- npm 9+
+- Docker Desktop
+- Docker Compose v2
 
-## 3) Create local environment files (secrets/config)
+### Quick Start
 
-Copy the committed examples into local-only files, then edit them in Priage/backend.
+From the repo root:
 
-### Backend env (NestJS)
-#### macOS
-~~~bash
-cp .env.example .env
-~~~
+```bash
+./priage-dev
+```
 
-#### Windows
-~~~powershell
-Copy-Item .env.example .env
-~~~
+Useful variants:
 
-### Frontend env
-Both web apps now have committed env examples.
+```bash
+./priage-dev reseed
+./priage-dev test
+./priage-dev reseed test
+./priage-dev -k
+```
 
-#### macOS
-~~~bash
+What the launcher does:
+
+- verifies required local tools
+- ensures PostgreSQL and Redis are up through Docker Compose
+- runs `npm install` in `backend`, `Apps/PatientApp`, and `Apps/HospitalApp` only when `node_modules` is missing
+- runs `npx prisma generate`
+- runs `npx prisma migrate deploy`
+- optionally clears patient-facing dev data and re-runs `backend/scripts/seed.js`
+- opens the backend, Hospital App, and Patient App in separate macOS Terminal windows
+- `./priage-dev -k` or `./priage-dev kill` stops those three managed dev services and closes their Terminal windows
+- optionally runs the backend smoke tests after the API is reachable
+
+### Manual Setup
+
+#### 1. Clone and enter the repo
+
+```bash
+git clone <your-repo-url>
+cd Priage
+```
+
+#### 2. Install dependencies
+
+```bash
+cd backend && npm install
+cd ../Apps/PatientApp && npm install
+cd ../HospitalApp && npm install
+cd ../../
+```
+
+#### 3. Create local env files
+
+```bash
+cp backend/.env.example backend/.env
 cp Apps/HospitalApp/.env.example Apps/HospitalApp/.env
 cp Apps/PatientApp/.env.example Apps/PatientApp/.env
-~~~
+```
 
-#### Windows
-~~~powershell
-Copy-Item Apps\HospitalApp\.env.example Apps\HospitalApp\.env
-Copy-Item Apps\PatientApp\.env.example Apps\PatientApp\.env
-~~~
+#### 4. Start local infrastructure
 
----
-
-## 4) Start local infrastructure :PostgreSQL + Redis via Docker Compose
-
-Run from the folder that contains `docker-compose.yml` (The root, /Priage)
-
-### macOS & Windows:
-~~~bash/powershell
+```bash
 docker compose up -d
 docker compose ps
-~~~
+```
 
-To watch logs:
-- `docker compose logs -f`
+#### 5. Generate Prisma client and apply committed migrations
 
-To stop everything:
-- `docker compose down`
-
-To wipe DB data volumes (destructive):
-- `docker compose down -v`
-
----
-
-## 5) Generate Prisma client + apply migrations)
-
-Run from `backend/'
-
-### macOS & Windows
-~~~bash/powershell
+```bash
+cd backend
 npx prisma generate
-npx prisma migrate dev --name init
-~~~
+npx prisma migrate deploy
+```
 
-If this fails, check:
-- Docker DB is up (`docker compose ps`) (or in docker desktop)
-- `DATABASE_URL` in `backend/.env` is correct & that backend/.env exists
-- Misplaced files (.env, main.ts, tsconfig.json, prisma.config.ts)
----
+#### 6. Seed local demo data if needed
 
-# Running the Software
-For testing locally, the currently runnable stack is:
-1) the backend
-2) the Hospital App
-3) the Patient App
+```bash
+node scripts/seed.js
+```
 
-### Terminal 1 — Backend (NestJS)
-#### macOS & Windows
-~~~bash/powershell
+#### 7. Start the apps manually
+
+Backend:
+
+```bash
 cd backend
 npm run start:dev
-~~~
+```
 
-### Terminal 2 — Hospital web app (React + Vite + TypeScript)
-#### macOS
-~~~bash
+Hospital App:
+
+```bash
 cd Apps/HospitalApp
 npm run dev
-~~~
+```
 
-#### Windows 
-~~~powershell
-cd Apps\HospitalApp
-npm run dev
-~~~
+Patient App:
 
-### Terminal 3 — Patient web app (React + Vite + TypeScript)
-#### macOS
-~~~bash
+```bash
 cd Apps/PatientApp
-npm install
 npm run dev
-~~~
+```
 
-#### Windows
-~~~powershell
-cd Apps\PatientApp
-npm install
-npm run dev
-~~~
+### Environment Notes
 
-The Patient App now supports two demo entry flows:
-- `Quick Check-In` for guest intake backed by `/intake/*`
-- `Sign In / Create Account` for patient-auth backed by `/patient-auth/*`
+- backend default API port: `3000`
+- Hospital App default Vite port: `5173`
+- Patient App default Vite port: `5174` in the launcher flow
+- backend local env is the important source for `DATABASE_URL`, `JWT_SECRET`, Redis host/port, and `APP_VERSION`
 
-(Each dev server prints the local URL in the terminal output btw)
+### Development Practices
 
----
+### Prisma workflow
+
+Use different Prisma commands for different jobs:
+
+- startup / CI / local bootstrapping: `npx prisma migrate deploy`
+- schema authoring during development: `npx prisma migrate dev --name <descriptive-name>`
+- client generation: `npx prisma generate`
+
+Do not use the launcher to author new migrations. The launcher is for applying already-committed migrations and starting the stack.
+
+### Current workflow recommendation
+
+When you pull new code:
+
+```bash
+./priage-dev
+```
+
+When you change `schema.prisma` intentionally:
+
+```bash
+cd backend
+npx prisma migrate dev --name <describe-change>
+npx prisma generate
+```
+
+When you want a fresh local patient/encounter dataset:
+
+```bash
+./priage-dev reseed
+```
+
+### Dependencies And Notes
+
+### Key local dependencies
+
+- PostgreSQL stores operational records
+- Redis supports realtime and jobs infrastructure
+- Prisma is the DB access layer
+- Socket.IO powers realtime communication between backend and both SPAs
+
+### Product notes for 0.1 Alpha
+
+- the hospital operational core is Admit, Triage, and Waiting Room
+- guest intake is a first-class patient flow
+- patient/staff messaging is implemented and tied to encounters
+- the backend already includes a partner/platform intake layer
+- some non-core surfaces exist but are lighter-weight than the main encounter workflow
+
+### Useful Commands
+
+### Docker
+
+```bash
+docker compose up -d
+docker compose ps
+docker compose logs -f
+docker compose down
+docker compose down -v
+```
+
+### Backend
+
+```bash
+cd backend
+npm run start:dev
+npx prisma generate
+npx prisma migrate deploy
+npx prisma migrate dev --name <describe-change>
+npx prisma studio
+node scripts/seed.js
+node scripts/reseed-dev.js
+```
+
+### Smoke And Platform Tests
+
+```bash
+cd backend
+npm run test:smoke
+npm run test:smoke:verbose
+npm run test:platform
+node scripts/e2e-frontend-flows.js --seed --verbose
+```
+
+### Frontend Builds
+
+```bash
+cd Apps/HospitalApp && npm run build
+cd Apps/PatientApp && npm run build
+```
+
+### Useful Docs
+
+- [SETUP.md](./SETUP.md) for local environment details and command reference
+- [FEATURES.md](./FEATURES.md) for product / feature notes
+- [backend/src/modules/logging/README.md](./backend/src/modules/logging/README.md) for logging-specific backend notes
+- [backend/src/modules/logging/QUICKSTART.md](./backend/src/modules/logging/QUICKSTART.md) for logging queries and quick operational usage

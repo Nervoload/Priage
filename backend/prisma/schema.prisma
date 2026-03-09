@@ -90,8 +90,71 @@ enum EventType {
   ALERT_RESOLVED
 }
 
+enum IntakeSessionStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
+enum ContextSourceType {
+  PATIENT
+  PARTNER
+  INSTITUTION
+  AI
+}
+
+enum TrustTier {
+  UNTRUSTED
+  PARTNER_SUBMITTED
+  INSTITUTION_TRUSTED
+}
+
+enum ReviewState {
+  UNREVIEWED
+  PATIENT_CONFIRMED
+  STAFF_REVIEWED
+  REJECTED
+}
+
+enum VisibilityScope {
+  STORED_ONLY
+  ADMISSIONS
+  TRIAGE
+  CLINICAL
+}
+
+enum SummaryProjectionKind {
+  OPERATIONAL
+  AI_DERIVED
+  HUMAN_REVIEWED
+}
+
+enum PartnerCredentialStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum IdempotencyRecordStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum WebhookSubscriptionStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
 model Encounter {
   id        Int      @id @default(autoincrement())
+  publicId  String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   status    EncounterStatus @default(EXPECTED)
@@ -126,6 +189,11 @@ model Encounter {
   alerts            Alert[]
   assets            Asset[]
   patientSessions   PatientSession[]
+  intakeSessions    IntakeSession[]
+  contextItems      ContextItem[]
+  summaryProjections SummaryProjection[]
+  partnerReferences PartnerReference[]
+  commandResults    CommandResult[]
   readCursors       EncounterReadCursor[]
 
 
@@ -193,6 +261,10 @@ model Hospital {
 
   users      User[]
   encounters Encounter[]
+  intakeSessions IntakeSession[]
+  contextItems ContextItem[]
+  partnerCredentials PartnerCredential[]
+  webhookSubscriptions WebhookSubscription[]
   config     HospitalConfig?
 
   @@index([slug])
@@ -290,6 +362,8 @@ model PatientProfile {
   encounters Encounter[]
   messages   Message[]
   patientSessions PatientSession[]
+  intakeSessions IntakeSession[]
+  contextItems ContextItem[]
   readCursors EncounterReadCursor[]
   assets      Asset[]
 
@@ -300,19 +374,53 @@ model PatientSession {
   token     String   @unique
   createdAt DateTime @default(now())
   expiresAt DateTime?
-  pendingChiefComplaint String?
-  pendingDetails        String?
 
   patientId Int
   patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
   encounterId Int?
   encounter   Encounter? @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  intakeSessions IntakeSession[]
   assets      Asset[]
 
   @@index([patientId, createdAt])
   @@index([encounterId, createdAt])
   @@index([expiresAt])
+}
+
+model IntakeSession {
+  id        Int                 @id @default(autoincrement())
+  publicId  String              @unique
+  status    IntakeSessionStatus @default(DRAFT)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  expiresAt DateTime?
+  confirmedAt DateTime?
+  cancelledAt DateTime?
+
+  patientId Int?
+  patient   PatientProfile? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  hospitalId Int?
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id], onDelete: SetNull)
+
+  encounterId Int?
+  encounter   Encounter? @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+
+  authSessionId Int?
+  authSession   PatientSession? @relation(fields: [authSessionId], references: [id], onDelete: SetNull)
+
+  contextItems ContextItem[]
+  assets       Asset[]
+  summaries    SummaryProjection[]
+  partnerReferences PartnerReference[]
+  commandResults CommandResult[]
+
+  @@index([patientId, createdAt])
+  @@index([hospitalId, createdAt])
+  @@index([encounterId, createdAt])
+  @@index([status, createdAt])
+  @@index([authSessionId, status, createdAt])
 }
 
 model EncounterReadCursor {
@@ -389,6 +497,9 @@ model Asset {
   patientSessionId Int?
   patientSession   PatientSession? @relation(fields: [patientSessionId], references: [id], onDelete: Cascade)
 
+  intakeSessionId Int?
+  intakeSession   IntakeSession? @relation(fields: [intakeSessionId], references: [id], onDelete: Cascade)
+
   messageId Int?
   message   Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
 
@@ -400,9 +511,231 @@ model Asset {
   @@index([encounterId, createdAt])
   @@index([hospitalId, createdAt])
   @@index([patientSessionId, createdAt])
+  @@index([intakeSessionId, createdAt])
   @@index([messageId, createdAt])
   @@index([status])
   @@index([context])
+}
+
+model ContextItem {
+  id        Int              @id @default(autoincrement())
+  publicId  String           @unique
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  itemType  String
+  schemaVersion String       @default("v1")
+  payload   Json
+
+  sourceType      ContextSourceType
+  trustTier       TrustTier
+  reviewState     ReviewState
+  visibilityScope VisibilityScope
+
+  hospitalId Int?
+  hospital   Hospital? @relation(fields: [hospitalId], references: [id], onDelete: SetNull)
+
+  patientId Int?
+  patient   PatientProfile? @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  intakeSessionId Int?
+  intakeSession   IntakeSession? @relation(fields: [intakeSessionId], references: [id], onDelete: Cascade)
+
+  encounterId Int?
+  encounter   Encounter? @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+
+  partnerId Int?
+  partner   Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  supersedesId Int?
+  supersedes   ContextItem? @relation("context_item_supersession", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy ContextItem[] @relation("context_item_supersession")
+
+  @@index([intakeSessionId, createdAt])
+  @@index([encounterId, createdAt])
+  @@index([hospitalId, createdAt])
+  @@index([patientId, createdAt])
+  @@index([partnerId, createdAt])
+}
+
+model SummaryProjection {
+  id        Int                   @id @default(autoincrement())
+  publicId  String                @unique
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  kind      SummaryProjectionKind
+  content   Json
+  active    Boolean               @default(true)
+
+  sourceType      ContextSourceType
+  trustTier       TrustTier
+  reviewState     ReviewState
+  visibilityScope VisibilityScope
+
+  intakeSessionId Int?
+  intakeSession   IntakeSession? @relation(fields: [intakeSessionId], references: [id], onDelete: Cascade)
+
+  encounterId Int?
+  encounter   Encounter? @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+
+  @@index([intakeSessionId, createdAt])
+  @@index([encounterId, createdAt])
+  @@index([kind, createdAt])
+}
+
+model Partner {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  name      String
+  slug      String   @unique
+
+  credentials PartnerCredential[]
+  references  PartnerReference[]
+  contextItems ContextItem[]
+
+  @@index([slug])
+}
+
+model PartnerCredential {
+  id        Int                     @id @default(autoincrement())
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+  label     String
+  keyPrefix String
+  keyHash   String                  @unique
+  scopes    String[]
+  status    PartnerCredentialStatus @default(ACTIVE)
+
+  partnerId Int
+  partner   Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  hospitalId Int
+  hospital   Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  trustPolicy PartnerTrustPolicy?
+  idempotencyRecords IdempotencyRecord[]
+  commandResults      CommandResult[]
+  webhookSubscriptions WebhookSubscription[]
+
+  @@index([partnerId, createdAt])
+  @@index([hospitalId, createdAt])
+}
+
+model PartnerTrustPolicy {
+  id        Int             @id @default(autoincrement())
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  partnerCredentialId Int  @unique
+  partnerCredential   PartnerCredential @relation(fields: [partnerCredentialId], references: [id], onDelete: Cascade)
+
+  defaultTrustTier              TrustTier       @default(PARTNER_SUBMITTED)
+  defaultVisibilityScope        VisibilityScope @default(STORED_ONLY)
+  requirePatientConfirmation    Boolean         @default(true)
+  allowPreConfirmOperationalUse Boolean         @default(false)
+}
+
+model PartnerReference {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  referenceType  String
+  referenceValue String
+
+  partnerId Int
+  partner   Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  intakeSessionId Int?
+  intakeSession   IntakeSession? @relation(fields: [intakeSessionId], references: [id], onDelete: Cascade)
+
+  encounterId Int?
+  encounter   Encounter? @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, referenceType, referenceValue])
+  @@index([intakeSessionId, createdAt])
+  @@index([encounterId, createdAt])
+}
+
+model CommandResult {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  command   String
+  requestFingerprint String
+  responseStatus Int
+  responseBody Json
+
+  partnerCredentialId Int
+  partnerCredential   PartnerCredential @relation(fields: [partnerCredentialId], references: [id], onDelete: Cascade)
+
+  intakeSessionId Int?
+  intakeSession   IntakeSession? @relation(fields: [intakeSessionId], references: [id], onDelete: SetNull)
+
+  encounterId Int?
+  encounter   Encounter? @relation(fields: [encounterId], references: [id], onDelete: SetNull)
+
+  idempotencyRecords IdempotencyRecord[]
+
+  @@index([partnerCredentialId, createdAt])
+  @@index([intakeSessionId, createdAt])
+  @@index([encounterId, createdAt])
+}
+
+model IdempotencyRecord {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  command   String
+  idempotencyKey String
+  requestFingerprint String
+  status    IdempotencyRecordStatus @default(IN_PROGRESS)
+  completedAt DateTime?
+
+  partnerCredentialId Int
+  partnerCredential   PartnerCredential @relation(fields: [partnerCredentialId], references: [id], onDelete: Cascade)
+
+  commandResultId Int?
+  commandResult   CommandResult? @relation(fields: [commandResultId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerCredentialId, command, idempotencyKey])
+  @@index([commandResultId])
+}
+
+model WebhookSubscription {
+  id        Int                       @id @default(autoincrement())
+  createdAt DateTime                  @default(now())
+  updatedAt DateTime                  @updatedAt
+  targetUrl String
+  status    WebhookSubscriptionStatus @default(ACTIVE)
+  eventTypes String[]
+  secretHash String
+
+  hospitalId Int
+  hospital   Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  partnerCredentialId Int?
+  partnerCredential   PartnerCredential? @relation(fields: [partnerCredentialId], references: [id], onDelete: SetNull)
+
+  deliveries WebhookDelivery[]
+
+  @@index([hospitalId, createdAt])
+  @@index([partnerCredentialId, createdAt])
+}
+
+model WebhookDelivery {
+  id        Int                   @id @default(autoincrement())
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+  status    WebhookDeliveryStatus @default(PENDING)
+  eventType String
+  payload   Json
+  attempts  Int                   @default(0)
+  deliveredAt DateTime?
+  lastAttemptAt DateTime?
+  lastError String?
+
+  webhookSubscriptionId Int
+  webhookSubscription   WebhookSubscription @relation(fields: [webhookSubscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([webhookSubscriptionId, createdAt])
+  @@index([status, createdAt])
 }
 
 model LogRecord {

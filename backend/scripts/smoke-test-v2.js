@@ -17,6 +17,7 @@ const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 
 // ============================================================================
 // CONFIGURATION
@@ -99,6 +100,10 @@ const testState = {
   triageAssessment: null,
   message: null,
   alert: null,
+  internalMessage: null,
+  patientWorseningMessage: null,
+  cancelledEncounter: null,
+  intruderEncounterId: null,
   
   // Auth tokens
   staffToken: null,
@@ -113,6 +118,9 @@ const testState = {
   testsSkipped: 0,
   startTime: Date.now(),
   errors: [],
+  extraHospitalIds: [],
+  extraPatientIds: [],
+  extraUserIds: [],
 };
 
 // ============================================================================
@@ -214,6 +222,108 @@ function staffAuth(token) {
 /** Helper: patient auth header */
 function patientAuth(token) {
   return { 'x-patient-token': token };
+}
+
+function pushUnique(list, value) {
+  if (value && !list.includes(value)) {
+    list.push(value);
+  }
+}
+
+function buildIntentPayload(overrides = {}) {
+  const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-10);
+  return {
+    firstName: 'Smoke',
+    lastName: 'TestPatient',
+    phone: `+1555${suffix.slice(-7)}`,
+    age: 45,
+    chiefComplaint: 'Chest pain and shortness of breath',
+    details: 'Pain started 2 hours ago',
+    preferredLanguage: 'en',
+    ...overrides,
+  };
+}
+
+function createExpiredJwt(user) {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET environment variable is not set');
+  }
+
+  return jwt.sign(
+    {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      hospitalId: user.hospitalId,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: -10 },
+  );
+}
+
+async function expectRequestFailure(requestFactory, expectedFragments, unexpectedSuccessMessage) {
+  try {
+    await requestFactory();
+  } catch (error) {
+    const message = String(error.message || error);
+    if (expectedFragments.some((fragment) => message.includes(fragment))) {
+      return message;
+    }
+    throw error;
+  }
+
+  throw new Error(unexpectedSuccessMessage);
+}
+
+async function createTrackedGuestEncounter(intentOverrides = {}) {
+  const intent = await makeRequest('POST', '/intake/intent', {
+    body: buildIntentPayload(intentOverrides),
+  });
+  const patient = await prisma.patientProfile.findUnique({
+    where: { id: intent.patientId },
+  });
+  if (patient) {
+    pushUnique(testState.extraPatientIds, patient.id);
+  }
+
+  const encounter = await makeRequest('POST', '/intake/confirm', {
+    headers: patientAuth(intent.sessionToken),
+    body: { hospitalId: testState.hospital.id },
+  });
+
+  return { intent, patient, encounter };
+}
+
+async function createExternalEncounter() {
+  const hospital = await prisma.hospital.create({
+    data: {
+      name: 'External Smoke Hospital',
+      slug: `test-hospital-external-${randomUUID().slice(0, 8)}`,
+    },
+  });
+  pushUnique(testState.extraHospitalIds, hospital.id);
+
+  const patient = await prisma.patientProfile.create({
+    data: {
+      email: `external-${randomUUID().slice(0, 8)}@test.com`,
+      password: randomUUID(),
+      firstName: 'Smoke',
+      lastName: 'External',
+      preferredLanguage: 'fr',
+    },
+  });
+  pushUnique(testState.extraPatientIds, patient.id);
+
+  const encounter = await prisma.encounter.create({
+    data: {
+      publicId: `enc_${randomUUID()}`,
+      hospitalId: hospital.id,
+      patientId: patient.id,
+      chiefComplaint: 'External complaint',
+    },
+  });
+
+  return { hospital, patient, encounter };
 }
 
 // ============================================================================
@@ -366,42 +476,54 @@ async function cleanupTestData() {
   
   try {
     await safetyCheckBeforeCleanup();
-    
-    // Delete encounter (cascade handles events, messages, alerts, triage, sessions, assets)
-    if (testState.encounter) {
-      logInfo('Deleting encounter and related data...');
-      await prisma.encounter.delete({ where: { id: testState.encounter.id } });
-      logSuccess('Encounter deleted');
+
+    const hospitalIds = [testState.hospital?.id, ...testState.extraHospitalIds].filter(Boolean);
+    if (hospitalIds.length > 0) {
+      logInfo(`Deleting encounters for ${hospitalIds.length} hospital(s)...`);
+      await prisma.encounter.deleteMany({
+        where: { hospitalId: { in: hospitalIds } },
+      });
+      logSuccess('Encounter records deleted');
     }
-    
-    // Delete remaining patient sessions from intake
-    if (testState.intakePatient) {
-      await prisma.patientSession.deleteMany({ where: { patientId: testState.intakePatient.id } });
+
+    const patientIds = [
+      testState.patient?.id,
+      testState.intakePatient?.id,
+      ...testState.extraPatientIds,
+    ].filter(Boolean);
+    if (patientIds.length > 0) {
+      await prisma.patientSession.deleteMany({
+        where: { patientId: { in: patientIds } },
+      });
+      logSuccess('Patient sessions deleted');
+
+      logInfo(`Deleting ${patientIds.length} patient profile(s)...`);
+      await prisma.patientProfile.deleteMany({
+        where: { id: { in: patientIds } },
+      });
+      logSuccess('Patient profiles deleted');
     }
-    
-    // Delete patients
-    if (testState.patient) {
-      logInfo('Deleting test patient...');
-      await prisma.patientProfile.delete({ where: { id: testState.patient.id } });
-      logSuccess('Test patient deleted');
+
+    const userIds = [
+      testState.staffUser?.id,
+      testState.nurseUser?.id,
+      testState.doctorUser?.id,
+      ...testState.extraUserIds,
+    ].filter(Boolean);
+    if (userIds.length > 0) {
+      logInfo(`Deleting ${userIds.length} test user(s)...`);
+      await prisma.user.deleteMany({
+        where: { id: { in: userIds } },
+      });
+      logSuccess('Test users deleted');
     }
-    if (testState.intakePatient && testState.intakePatient.id !== testState.patient?.id) {
-      logInfo('Deleting intake patient...');
-      await prisma.patientProfile.delete({ where: { id: testState.intakePatient.id } });
-      logSuccess('Intake patient deleted');
+
+    for (const hospitalId of testState.extraHospitalIds) {
+      logInfo(`Deleting external test hospital ${hospitalId}...`);
+      await prisma.hospital.delete({ where: { id: hospitalId } });
     }
-    
-    // Delete users + hospital
+
     if (testState.hospital) {
-      const userIds = [testState.staffUser?.id, testState.nurseUser?.id, testState.doctorUser?.id].filter(Boolean);
-      if (userIds.length > 0) {
-        logInfo(`Deleting ${userIds.length} test users...`);
-        await prisma.user.deleteMany({
-          where: { id: { in: userIds }, hospitalId: testState.hospital.id, email: { contains: '@test.com' } },
-        });
-        logSuccess('Test users deleted');
-      }
-      
       logInfo('Deleting test hospital...');
       await prisma.hospital.delete({ where: { id: testState.hospital.id } });
       logSuccess('Test hospital deleted');
@@ -420,7 +542,6 @@ async function testAuthentication() {
   logSection('TEST 1: Authentication');
   
   try {
-    // 1A: Staff login
     logSubSection('1A: Staff User Login');
     const staffLogin = await makeRequest('POST', '/auth/login', {
       body: { email: testState.staffUser.email, password: CONFIG.testPassword },
@@ -456,33 +577,34 @@ async function testAuthentication() {
     }
     logSuccess('Protected route access verified');
     
-    // 1E: Invalid credentials
     logSubSection('1E: Invalid Credentials (Expected 401)');
-    try {
-      await makeRequest('POST', '/auth/login', {
+    await expectRequestFailure(
+      () => makeRequest('POST', '/auth/login', {
         body: { email: testState.staffUser.email, password: 'wrong-password' },
-      });
-      logError('Should have rejected invalid credentials', 'No error thrown');
-    } catch (error) {
-      if (error.message.includes('401') || error.message.includes('Unauthorized')) {
-        logSuccess('Invalid credentials correctly rejected');
-      } else {
-        throw error;
-      }
-    }
+      }),
+      ['401', 'Unauthorized'],
+      'Invalid credentials unexpectedly succeeded',
+    );
+    logSuccess('Invalid credentials correctly rejected');
     
-    // 1F: Unauthenticated request to guarded endpoint
     logSubSection('1F: Unauthenticated Request (Expected 401)');
-    try {
-      await makeRequest('GET', '/encounters');
-      logError('Should have rejected unauthenticated request', 'No error thrown');
-    } catch (error) {
-      if (error.message.includes('401')) {
-        logSuccess('Unauthenticated request correctly rejected');
-      } else {
-        throw error;
-      }
-    }
+    await expectRequestFailure(
+      () => makeRequest('GET', '/encounters'),
+      ['401', 'Unauthorized'],
+      'Unauthenticated request unexpectedly succeeded',
+    );
+    logSuccess('Unauthenticated request correctly rejected');
+
+    logSubSection('1G: Expired JWT Request (Expected 401)');
+    const expiredToken = createExpiredJwt(testState.staffUser);
+    await expectRequestFailure(
+      () => makeRequest('GET', '/encounters', {
+        headers: staffAuth(expiredToken),
+      }),
+      ['401', 'Unauthorized', 'jwt expired'],
+      'Expired JWT unexpectedly succeeded',
+    );
+    logSuccess('Expired JWT correctly rejected');
     
   } catch (error) {
     logError('Authentication test failed', error);
@@ -498,19 +620,24 @@ async function testPatientIntake() {
   logSection('TEST 2: Patient Intake');
   
   try {
-    // 2A: Create intent (public — no auth)
-    // Returns { sessionToken, patientId, encounterId: null }
-    // Encounter is NOT created until confirmIntent
-    logSubSection('2A: Create Patient Intent (POST /intake/intent)');
+    logSubSection('2A: Missing Required Guest Fields (Expected 400)');
+    const missingFieldMessage = await expectRequestFailure(
+      () => makeRequest('POST', '/intake/intent', {
+        body: { lastName: 'OnlyLastName' },
+      }),
+      ['400', 'firstName', 'phone', 'chiefComplaint'],
+      'Intent creation unexpectedly succeeded without required fields',
+    );
+    for (const requiredField of ['400', 'firstName', 'phone', 'chiefComplaint']) {
+      if (!missingFieldMessage.includes(requiredField)) {
+        throw new Error(`Guest intake validation response missing ${requiredField}: ${missingFieldMessage}`);
+      }
+    }
+    logSuccess('Guest intake requires firstName, phone, and chiefComplaint');
+
+    logSubSection('2B: Create Patient Intent (POST /intake/intent)');
     const intent = await makeRequest('POST', '/intake/intent', {
-      body: {
-        firstName: 'Smoke',
-        lastName: 'TestPatient',
-        age: 45,
-        chiefComplaint: 'Chest pain and shortness of breath',
-        details: 'Pain started 2 hours ago',
-        preferredLanguage: 'en',
-      },
+      body: buildIntentPayload(),
     });
     
     if (!intent.sessionToken) throw new Error('No sessionToken returned');
@@ -524,8 +651,7 @@ async function testPatientIntake() {
     logSuccess(`Intent created — patientId: ${intent.patientId}, encounterId: ${intent.encounterId ?? 'null (expected)'}`);
     logVerbose(`  Token: ${intent.sessionToken.substring(0, 30)}...`);
     
-    // 2B: Verify session in DB
-    logSubSection('2B: Verify Patient Session Token');
+    logSubSection('2C: Verify Patient Session Token');
     testState.patientSession = await prisma.patientSession.findFirst({
       where: { token: testState.patientToken },
     });
@@ -533,8 +659,52 @@ async function testPatientIntake() {
     logSuccess('Patient session token verified in database');
     logVerbose(`  Session ID: ${testState.patientSession.id}`);
     
-    // 2C: Confirm intent → creates encounter and assigns hospital
-    logSubSection('2C: Confirm Intent (POST /intake/confirm)');
+    logSubSection('2D: Invalid Patient Token (Expected 401)');
+    await expectRequestFailure(
+      () => makeRequest('POST', '/intake/confirm', {
+        headers: patientAuth('invalid-patient-token'),
+        body: { hospitalId: testState.hospital.id },
+      }),
+      ['401', 'Invalid patient session token', 'Unauthorized'],
+      'Invalid patient token unexpectedly succeeded',
+    );
+    logSuccess('Invalid patient token correctly rejected');
+
+    logSubSection('2E: Invalid Hospital Slug (Expected 404)');
+    await expectRequestFailure(
+      () => makeRequest('POST', '/intake/confirm', {
+        headers: patientAuth(testState.patientToken),
+        body: { hospitalSlug: 'does-not-exist' },
+      }),
+      ['404', 'Hospital not found'],
+      'Intent confirmation unexpectedly succeeded with invalid hospital slug',
+    );
+    logSuccess('Invalid hospital slug correctly rejected');
+
+    logSubSection('2F: Expired Patient Token (Expected 401)');
+    const expiredIntent = await makeRequest('POST', '/intake/intent', {
+      body: buildIntentPayload({
+        firstName: 'Expired',
+        lastName: 'Guest',
+        chiefComplaint: 'Dizziness',
+      }),
+    });
+    pushUnique(testState.extraPatientIds, expiredIntent.patientId);
+    await prisma.patientSession.update({
+      where: { token: expiredIntent.sessionToken },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+    await expectRequestFailure(
+      () => makeRequest('POST', '/intake/confirm', {
+        headers: patientAuth(expiredIntent.sessionToken),
+        body: { hospitalId: testState.hospital.id },
+      }),
+      ['401', 'expired', 'Unauthorized'],
+      'Expired patient token unexpectedly succeeded',
+    );
+    logSuccess('Expired patient token correctly rejected');
+
+    logSubSection('2G: Confirm Intent (POST /intake/confirm)');
     const confirmedEncounter = await makeRequest('POST', '/intake/confirm', {
       headers: patientAuth(testState.patientToken),
       body: { hospitalId: testState.hospital.id },
@@ -548,8 +718,7 @@ async function testPatientIntake() {
     testState.encounter = confirmedEncounter;
     logSuccess(`Intent confirmed — Encounter ID: ${confirmedEncounter.id}, status: ${confirmedEncounter.status}`);
     
-    // 2D: Update intake details
-    logSubSection('2D: Update Intake Details (PATCH /intake/details)');
+    logSubSection('2H: Update Intake Details (PATCH /intake/details)');
     await makeRequest('PATCH', '/intake/details', {
       headers: patientAuth(testState.patientToken),
       body: {
@@ -559,13 +728,85 @@ async function testPatientIntake() {
     });
     logSuccess('Intake details updated');
     
-    // 2E: Record location
-    logSubSection('2E: Record Patient Location (POST /intake/location)');
+    logSubSection('2I: Record Patient Location (POST /intake/location)');
     await makeRequest('POST', '/intake/location', {
       headers: patientAuth(testState.patientToken),
       body: { latitude: 43.6532, longitude: -79.3832 },
     });
     logSuccess('Patient location recorded');
+
+    logSubSection('2J: Patient Lists Own Encounters');
+    const patientEncounters = await makeRequest('GET', '/patient/encounters', {
+      headers: patientAuth(testState.patientToken),
+    });
+    if (!Array.isArray(patientEncounters) || !patientEncounters.some((encounter) => encounter.id === testState.encounter.id)) {
+      throw new Error('Patient encounter list does not include the confirmed encounter');
+    }
+    logSuccess('Patient encounter list includes the active encounter');
+
+    logSubSection('2K: Patient Reads Encounter Detail');
+    const patientEncounterDetail = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}`, {
+      headers: patientAuth(testState.patientToken),
+    });
+    if (patientEncounterDetail.id !== testState.encounter.id) {
+      throw new Error('Patient encounter detail returned the wrong encounter');
+    }
+    if (patientEncounterDetail.details !== 'Pain started 2 hours ago, radiating to left arm. No previous heart issues.') {
+      throw new Error('Patient encounter detail did not reflect updated details');
+    }
+    logSuccess('Patient encounter detail matches the confirmed visit');
+
+    logSubSection('2L: Patient Queue Before Waiting');
+    const initialQueue = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}/queue`, {
+      headers: patientAuth(testState.patientToken),
+    });
+    if (initialQueue.position !== 0 || initialQueue.estimatedMinutes !== 0 || initialQueue.totalInQueue !== 0) {
+      throw new Error(`Expected empty queue before WAITING, got ${JSON.stringify(initialQueue)}`);
+    }
+    logSuccess('Patient queue is empty before WAITING');
+
+    logSubSection('2M: Patient Cancel Flow on Fresh Encounter');
+    const cancelFlow = await createTrackedGuestEncounter({
+      firstName: 'Cancel',
+      lastName: 'Flow',
+      chiefComplaint: 'Migraine',
+      details: 'Temporary encounter to verify cancel flow.',
+    });
+    const cancelledEncounter = await makeRequest('POST', `/patient/encounters/${cancelFlow.encounter.id}/cancel`, {
+      headers: patientAuth(cancelFlow.intent.sessionToken),
+    });
+    if (cancelledEncounter.status !== 'CANCELLED' || !cancelledEncounter.cancelledAt) {
+      throw new Error('Patient cancel flow did not persist CANCELLED state');
+    }
+    testState.cancelledEncounter = cancelledEncounter;
+    logSuccess('Patient cancel flow works on a fresh encounter');
+
+    logSubSection('2N: Patient Ownership Enforcement');
+    const intruderFlow = await createTrackedGuestEncounter({
+      firstName: 'Other',
+      lastName: 'Guest',
+      chiefComplaint: 'Sprained ankle',
+      details: 'Separate patient to verify ownership rules.',
+    });
+    testState.intruderEncounterId = intruderFlow.encounter.id;
+
+    await expectRequestFailure(
+      () => makeRequest('GET', `/patient/encounters/${intruderFlow.encounter.id}`, {
+        headers: patientAuth(testState.patientToken),
+      }),
+      ['403', 'own encounters'],
+      'Primary patient unexpectedly read another patient encounter',
+    );
+    logSuccess('Patient cannot read another patient encounter');
+
+    await expectRequestFailure(
+      () => makeRequest('POST', `/patient/encounters/${intruderFlow.encounter.id}/cancel`, {
+        headers: patientAuth(testState.patientToken),
+      }),
+      ['403', 'own encounter'],
+      'Primary patient unexpectedly cancelled another patient encounter',
+    );
+    logSuccess('Patient cannot cancel another patient encounter');
     
   } catch (error) {
     logError('Patient intake test failed', error);
@@ -581,7 +822,6 @@ async function testEncounterManagement() {
   logSection('TEST 3: Encounter Management');
   
   try {
-    // If intake test didn't run, create encounter via staff
     if (!testState.encounter) {
       logSubSection('3-SETUP: Create Encounter (staff)');
       testState.encounter = await makeRequest('POST', '/encounters', {
@@ -591,7 +831,6 @@ async function testEncounterManagement() {
       logSuccess(`Encounter created: ID ${testState.encounter.id}`);
     }
     
-    // 3A: List encounters (hospitalId comes from JWT — no query param needed)
     logSubSection('3A: List Encounters (GET /encounters)');
     const encounters = await makeRequest('GET', '/encounters', {
       headers: staffAuth(testState.staffToken),
@@ -600,9 +839,11 @@ async function testEncounterManagement() {
     if (!encounters.data || !Array.isArray(encounters.data)) {
       throw new Error('Expected { data: [...] } response');
     }
+    if (!encounters.data.some((encounter) => encounter.id === testState.encounter.id)) {
+      throw new Error('Encounter list does not include the active encounter');
+    }
     logSuccess(`Listed ${encounters.data.length} encounter(s), total: ${encounters.total}`);
 
-    // 3A.1: List patients
     logSubSection('3A.1: List Patients (GET /patients)');
     const patients = await makeRequest('GET', '/patients', {
       headers: staffAuth(testState.staffToken),
@@ -610,16 +851,16 @@ async function testEncounterManagement() {
     if (!patients.data || !Array.isArray(patients.data) || !patients.meta) {
       throw new Error('Expected paginated patient response');
     }
-    const listedPatient = patients.data.find((patient) => patient.id === testState.patient.id);
+    const expectedListedPatientId = testState.intakePatient?.id ?? testState.patient?.id;
+    const listedPatient = patients.data.find((patient) => patient.id === expectedListedPatientId);
     if (!listedPatient) {
-      throw new Error('Expected test patient in /patients response');
+      throw new Error(`Expected patient ${expectedListedPatientId} in /patients response`);
     }
     if (listedPatient.preferredLanguage !== 'en') {
       throw new Error(`Expected preferredLanguage=en, got ${listedPatient.preferredLanguage}`);
     }
     logSuccess(`Listed ${patients.data.length} patient(s), total: ${patients.meta.total}`);
 
-    // 3A.2: Filter patients by status
     logSubSection('3A.2: Filter Patients by Encounter Status');
     const filteredPatients = await makeRequest('GET', '/patients?status=EXPECTED', {
       headers: staffAuth(testState.staffToken),
@@ -629,57 +870,33 @@ async function testEncounterManagement() {
     }
     logSuccess(`Filtered patients by status, ${filteredPatients.data.length} result(s)`);
 
-    // 3A.3: Hospital scoping
-    logSubSection('3A.3: Patient Results Are Hospital Scoped');
-    const hashedPassword = await bcrypt.hash(CONFIG.testPassword, 10);
-    const externalSuffix = randomUUID().slice(0, 8);
-    const externalHospital = await prisma.hospital.create({
-      data: { name: 'External Smoke Hospital', slug: `external-${externalSuffix}` },
-    });
-    const externalPatient = await prisma.patientProfile.create({
-      data: {
-        email: `external-patient-${externalSuffix}@test.com`,
-        password: hashedPassword,
-        firstName: 'External',
-        lastName: 'Patient',
-        preferredLanguage: 'fr',
-      },
-    });
-    await prisma.encounter.create({
-      data: {
-        hospitalId: externalHospital.id,
-        patientId: externalPatient.id,
-        chiefComplaint: 'External complaint',
-      },
-    });
-
+    logSubSection('3A.3: Wrong-Hospital Scoping');
+    const external = await createExternalEncounter();
     const scopedPatients = await makeRequest('GET', '/patients', {
       headers: staffAuth(testState.staffToken),
     });
-    if (scopedPatients.data.some((patient) => patient.id === externalPatient.id)) {
+    if (scopedPatients.data.some((patient) => patient.id === external.patient.id)) {
       throw new Error('Found patient from another hospital in results');
     }
-    logSuccess('Patient results scoped to authenticated hospital');
-
-    await prisma.encounter.deleteMany({ where: { hospitalId: externalHospital.id, patientId: externalPatient.id } });
-    await prisma.patientProfile.delete({ where: { id: externalPatient.id } });
-    await prisma.hospital.delete({ where: { id: externalHospital.id } });
-
-    // 3A.4: Invalid query validation
-    logSubSection('3A.4: Reject Invalid Patient Query');
-    try {
-      await makeRequest('GET', '/patients?limit=0', {
+    await expectRequestFailure(
+      () => makeRequest('GET', `/encounters/${external.encounter.id}`, {
         headers: staffAuth(testState.staffToken),
-      });
-      throw new Error('Expected invalid patient query to fail');
-    } catch (error) {
-      if (!String(error.message).includes('400')) {
-        throw error;
-      }
-      logSuccess('Invalid patient query rejected with 400');
-    }
+      }),
+      ['404', 'not found'],
+      'Staff unexpectedly fetched an encounter from another hospital',
+    );
+    logSuccess('Staff encounter reads are hospital scoped');
+
+    logSubSection('3A.4: Reject Invalid Patient Query');
+    await expectRequestFailure(
+      () => makeRequest('GET', '/patients?limit=0', {
+        headers: staffAuth(testState.staffToken),
+      }),
+      ['400'],
+      'Invalid patient query unexpectedly succeeded',
+    );
+    logSuccess('Invalid patient query rejected with 400');
     
-    // 3B: Get specific encounter
     logSubSection('3B: Get Encounter Details (GET /encounters/:id)');
     const encounter = await makeRequest('GET', `/encounters/${testState.encounter.id}`, {
       headers: staffAuth(testState.staffToken),
@@ -689,7 +906,16 @@ async function testEncounterManagement() {
     logVerbose(`  Status: ${encounter.status}`);
     logVerbose(`  Patient: ${encounter.patient?.firstName} ${encounter.patient?.lastName}`);
     
-    // 3C: Mark arrived → ADMITTED
+    logSubSection('3C: Role Guard on Waiting Transition (Expected 403)');
+    await expectRequestFailure(
+      () => makeRequest('POST', `/encounters/${testState.encounter.id}/waiting`, {
+        headers: staffAuth(testState.staffToken),
+      }),
+      ['403', 'Forbidden'],
+      'Staff role unexpectedly transitioned encounter to WAITING',
+    );
+    logSuccess('Role guard blocks staff-only WAITING transition');
+
     logSubSection('3C: Mark Patient Arrived (POST /encounters/:id/arrived)');
     const arrivedEncounter = await makeRequest('POST', `/encounters/${testState.encounter.id}/arrived`, {
       headers: staffAuth(testState.staffToken),
@@ -702,17 +928,16 @@ async function testEncounterManagement() {
     logSuccess('Patient marked as arrived → ADMITTED');
     logVerbose(`  Arrived at: ${arrivedEncounter.arrivedAt}`);
     
-    // Verify events
+    logSubSection('3D: Verify Encounter Events');
     const events = await prisma.encounterEvent.findMany({
       where: { encounterId: testState.encounter.id },
       orderBy: { createdAt: 'desc' },
     });
-    if (events.length === 0) {
-      logWarning('No encounter events found');
-    } else {
-      logSuccess(`${events.length} encounter event(s) recorded`);
-      logVerbose(`  Latest: ${events[0].type}`);
+    const eventTypes = new Set(events.map((event) => event.type));
+    if (!eventTypes.has('ENCOUNTER_CREATED') || !eventTypes.has('STATUS_CHANGE')) {
+      throw new Error(`Expected ENCOUNTER_CREATED and STATUS_CHANGE events, got ${Array.from(eventTypes).join(', ')}`);
     }
+    logSuccess(`${events.length} encounter event(s) recorded with expected transition types`);
     
   } catch (error) {
     logError('Encounter management test failed', error);
@@ -728,7 +953,25 @@ async function testTriageAssessment() {
   logSection('TEST 4: Triage Assessment');
   
   try {
-    // 4A: Start exam → TRIAGE
+    logSubSection('4A: Invalid Status Rejection');
+    const expectedOnlyEncounter = await makeRequest('POST', '/encounters', {
+      headers: staffAuth(testState.staffToken),
+      body: { patientId: testState.patient.id, chiefComplaint: 'Expected status only' },
+    });
+    await expectRequestFailure(
+      () => makeRequest('POST', '/triage/assessments', {
+        headers: staffAuth(testState.nurseToken),
+        body: {
+          encounterId: expectedOnlyEncounter.id,
+          ctasLevel: 3,
+          painLevel: 2,
+        },
+      }),
+      ['400', 'cannot be triaged while in status EXPECTED'],
+      'Triage assessment unexpectedly succeeded for EXPECTED encounter',
+    );
+    logSuccess('Triage assessment rejects invalid encounter status');
+
     logSubSection('4A: Start Triage Exam (POST /encounters/:id/start-exam)');
     const triageStarted = await makeRequest('POST', `/encounters/${testState.encounter.id}/start-exam`, {
       headers: staffAuth(testState.nurseToken),
@@ -740,41 +983,71 @@ async function testTriageAssessment() {
     logSuccess('Triage exam started → TRIAGE');
     logVerbose(`  Triaged at: ${triageStarted.triagedAt}`);
     
-    // 4B: Create assessment
-    // DTO only accepts: encounterId, ctasLevel, note
-    // hospitalId + createdByUserId come from JWT via controller
+    logSubSection('4B: Triage Role Guard (Expected 403)');
+    await expectRequestFailure(
+      () => makeRequest('POST', '/triage/assessments', {
+        headers: staffAuth(testState.staffToken),
+        body: {
+          encounterId: testState.encounter.id,
+          ctasLevel: 2,
+          painLevel: 7,
+        },
+      }),
+      ['403', 'Forbidden'],
+      'Staff role unexpectedly created a triage assessment',
+    );
+    logSuccess('Role guard blocks staff triage creation');
+
     logSubSection('4B: Create Triage Assessment (POST /triage/assessments)');
     const assessment = await makeRequest('POST', '/triage/assessments', {
       headers: staffAuth(testState.nurseToken),
       body: {
         encounterId: testState.encounter.id,
         ctasLevel: 2,
-        note: 'Chest pain, radiating to left arm. BP 145/92, HR 98, SpO2 96%. EKG ordered.',
+        painLevel: 7,
+        chiefComplaint: 'Crushing chest pain',
+        vitalSigns: {
+          bloodPressure: '145/92',
+          heartRate: 98,
+          temperature: 37.1,
+          respiratoryRate: 24,
+          oxygenSaturation: 96,
+        },
+        note: 'Chest pain, radiating to left arm. EKG ordered.',
       },
     });
     if (!assessment.id) throw new Error('Assessment not created');
+    if (assessment.painLevel !== 7 || assessment.chiefComplaint !== 'Crushing chest pain') {
+      throw new Error('Assessment payload fields were not persisted');
+    }
+    if (!assessment.vitalSigns || assessment.vitalSigns.heartRate !== 98 || assessment.vitalSigns.bloodPressure !== '145/92') {
+      throw new Error('Assessment vital signs were not persisted');
+    }
     testState.triageAssessment = assessment;
     logSuccess('Triage assessment created');
     logVerbose(`  CTAS Level: ${assessment.ctasLevel}, Priority Score: ${assessment.priorityScore}`);
     
-    // 4C: List assessments
     logSubSection('4C: List Assessments (GET /triage/encounters/:id/assessments)');
     const assessments = await makeRequest('GET', `/triage/encounters/${testState.encounter.id}/assessments`, {
       headers: staffAuth(testState.nurseToken),
     });
-    if (!Array.isArray(assessments) || assessments.length === 0) {
+    const listedAssessment = Array.isArray(assessments)
+      ? assessments.find((entry) => entry.id === assessment.id)
+      : null;
+    if (!listedAssessment) {
       throw new Error('Assessments not listed correctly');
+    }
+    if (listedAssessment.painLevel !== 7 || listedAssessment.vitalSigns?.oxygenSaturation !== 96) {
+      throw new Error('Assessment list did not return the full triage payload');
     }
     logSuccess(`Listed ${assessments.length} assessment(s)`);
     
-    // 4D: Verify encounter triage data
     logSubSection('4D: Verify Encounter Triage Data');
     const updated = await prisma.encounter.findUnique({ where: { id: testState.encounter.id } });
-    if (updated.currentCtasLevel !== 2) {
-      logWarning(`CTAS not updated (got ${updated.currentCtasLevel})`);
-    } else {
-      logSuccess('Encounter updated with CTAS level');
+    if (updated.currentCtasLevel !== 2 || updated.currentPriorityScore !== assessment.priorityScore) {
+      throw new Error(`Encounter triage state mismatch: ${JSON.stringify(updated)}`);
     }
+    logSuccess('Encounter updated with triage level and priority score');
     
   } catch (error) {
     logError('Triage assessment test failed', error);
@@ -790,57 +1063,120 @@ async function testMessaging() {
   logSection('TEST 5: Messaging');
   
   try {
-    // 5A: Staff sends message
-    // DTO: { senderType, content, isInternal?, isWorsening? }
-    logSubSection('5A: Nurse Sends Message');
+    logSubSection('5A: Messaging Role Guard (Expected 403)');
+    await expectRequestFailure(
+      () => makeRequest('POST', `/messaging/encounters/${testState.encounter.id}/messages`, {
+        headers: staffAuth(testState.staffToken),
+        body: {
+          content: 'Staff role should not be able to send this.',
+        },
+      }),
+      ['403', 'Forbidden'],
+      'Staff role unexpectedly sent a staff message',
+    );
+    logSuccess('Role guard blocks staff messaging create');
+
+    logSubSection('5B: Nurse Sends Public Message');
     const message = await makeRequest('POST', `/messaging/encounters/${testState.encounter.id}/messages`, {
       headers: staffAuth(testState.nurseToken),
       body: {
         content: 'Your EKG results look stable. The doctor will see you shortly.',
-        senderType: 'USER',
       },
     });
     if (!message.id) throw new Error('Message not created');
     testState.message = message;
     logSuccess('Message sent');
     logVerbose(`  ID: ${message.id}, Content: ${message.content}`);
+
+    logSubSection('5C: Nurse Sends Internal Message');
+    const internalMessage = await makeRequest('POST', `/messaging/encounters/${testState.encounter.id}/messages`, {
+      headers: staffAuth(testState.nurseToken),
+      body: {
+        content: 'Internal note: patient calm, bed 4 ready.',
+        isInternal: true,
+      },
+    });
+    if (!internalMessage.id || internalMessage.isInternal !== true) {
+      throw new Error('Internal message not created correctly');
+    }
+    testState.internalMessage = internalMessage;
+    logSuccess('Internal staff message sent');
     
-    // 5B: List messages (staff — paginated)
-    logSubSection('5B: List Encounter Messages');
+    logSubSection('5D: List Encounter Messages');
     const messages = await makeRequest('GET', `/messaging/encounters/${testState.encounter.id}/messages`, {
       headers: staffAuth(testState.staffToken),
     });
     if (!messages.data || !Array.isArray(messages.data)) {
       throw new Error('Expected paginated { data: [...] }');
     }
+    if (!messages.data.some((entry) => entry.id === message.id) || !messages.data.some((entry) => entry.id === internalMessage.id)) {
+      throw new Error('Staff message history is missing public or internal messages');
+    }
     logSuccess(`Listed ${messages.data.length} message(s)`);
     
-    // 5C: Mark message as read
-    logSubSection('5C: Mark Message as Read');
-    await makeRequest('POST', `/messaging/messages/${message.id}/read`, {
+    logSubSection('5E: Initial Read State');
+    const initialReadState = await makeRequest('GET', `/messaging/encounters/${testState.encounter.id}/read-state`, {
       headers: staffAuth(testState.staffToken),
     });
+    if (initialReadState.lastReadMessageId !== null) {
+      throw new Error(`Expected null lastReadMessageId before reading, got ${initialReadState.lastReadMessageId}`);
+    }
+    logSuccess('Initial read-state is empty');
+
+    logSubSection('5F: Mark Message as Read');
+    const readResult = await makeRequest('POST', `/messaging/messages/${message.id}/read`, {
+      headers: staffAuth(testState.staffToken),
+    });
+    if (readResult.ok !== true || readResult.lastReadMessageId !== message.id) {
+      throw new Error('Read acknowledgement did not persist the expected cursor');
+    }
     logSuccess('Message marked as read');
+
+    logSubSection('5G: Read State After Read');
+    const readState = await makeRequest('GET', `/messaging/encounters/${testState.encounter.id}/read-state`, {
+      headers: staffAuth(testState.staffToken),
+    });
+    if (readState.lastReadMessageId !== message.id || !readState.lastReadAt) {
+      throw new Error('Encounter read-state did not update after reading the message');
+    }
+    logSuccess('Encounter read-state updated');
     
-    // 5D: Patient sends message (via patient endpoint)
     if (testState.patientToken && testState.encounter) {
-      logSubSection('5D: Patient Sends Message');
+      logSubSection('5H: Patient Sends Worsening Message');
       const patientMsg = await makeRequest('POST', `/patient/encounters/${testState.encounter.id}/messages`, {
         headers: patientAuth(testState.patientToken),
         body: { content: 'The pain is getting worse, please hurry.', isWorsening: true },
       });
       if (!patientMsg.id) throw new Error('Patient message not created');
+      testState.patientWorseningMessage = patientMsg;
       logSuccess('Patient message sent (with worsening flag)');
       
-      // 5E: Patient lists own messages
-      logSubSection('5E: Patient Lists Messages');
+      logSubSection('5I: Patient Lists Messages');
       const patientMessages = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}/messages`, {
         headers: patientAuth(testState.patientToken),
       });
       if (!Array.isArray(patientMessages)) {
         throw new Error('Expected array of messages');
       }
+      if (!patientMessages.some((entry) => entry.id === message.id) || !patientMessages.some((entry) => entry.id === patientMsg.id)) {
+        throw new Error('Patient-visible messages are missing public or patient-authored content');
+      }
+      if (patientMessages.some((entry) => entry.id === internalMessage.id || entry.isInternal)) {
+        throw new Error('Patient-visible messages leaked internal staff content');
+      }
       logSuccess(`Patient sees ${patientMessages.length} message(s)`);
+
+      if (testState.intruderEncounterId) {
+        logSubSection('5J: Patient Ownership Guard on Messaging');
+        await expectRequestFailure(
+          () => makeRequest('GET', `/patient/encounters/${testState.intruderEncounterId}/messages`, {
+            headers: patientAuth(testState.patientToken),
+          }),
+          ['403', 'own encounters'],
+          'Patient unexpectedly read another patient message thread',
+        );
+        logSuccess('Patient cannot read another patient message thread');
+      }
     } else {
       logWarning('Skipping patient messaging — no patient token');
       testState.testsSkipped++;
@@ -860,9 +1196,6 @@ async function testAlerts() {
   logSection('TEST 6: Alerts');
   
   try {
-    // 6A: Create alert
-    // DTO: { encounterId, type, severity?, metadata? }
-    // hospitalId + actorUserId come from JWT
     logSubSection('6A: Create Alert');
     const alert = await makeRequest('POST', '/alerts', {
       headers: staffAuth(testState.nurseToken),
@@ -878,34 +1211,50 @@ async function testAlerts() {
     logSuccess('Alert created');
     logVerbose(`  ID: ${alert.id}, Type: ${alert.type}, Severity: ${alert.severity}`);
     
-    // 6B: List unacknowledged
     logSubSection('6B: List Unacknowledged Alerts');
     const unacked = await makeRequest('GET', `/alerts/hospitals/${testState.hospital.id}/unacknowledged`, {
       headers: staffAuth(testState.staffToken),
     });
     if (!Array.isArray(unacked)) throw new Error('Alerts not listed correctly');
+    if (!unacked.some((entry) => entry.id === alert.id)) {
+      throw new Error('Created alert missing from unacknowledged list');
+    }
+    if (!unacked.some((entry) => entry.type === 'PATIENT_WORSENING')) {
+      throw new Error('Patient worsening alert missing from unacknowledged list');
+    }
     logSuccess(`Listed ${unacked.length} unacknowledged alert(s)`);
     
-    // 6C: Acknowledge
     logSubSection('6C: Acknowledge Alert');
-    await makeRequest('POST', `/alerts/${alert.id}/acknowledge`, {
+    const acknowledged = await makeRequest('POST', `/alerts/${alert.id}/acknowledge`, {
       headers: staffAuth(testState.staffToken),
     });
+    if (!acknowledged.acknowledgedAt) {
+      throw new Error('Acknowledged alert did not persist acknowledgedAt');
+    }
     logSuccess('Alert acknowledged');
     
-    // 6D: Resolve
     logSubSection('6D: Resolve Alert');
-    await makeRequest('POST', `/alerts/${alert.id}/resolve`, {
+    const resolved = await makeRequest('POST', `/alerts/${alert.id}/resolve`, {
       headers: staffAuth(testState.nurseToken),
     });
+    if (!resolved.resolvedAt) {
+      throw new Error('Resolved alert did not persist resolvedAt');
+    }
     logSuccess('Alert resolved');
     
-    // 6E: List encounter alerts
     logSubSection('6E: List Encounter Alerts');
     const encounterAlerts = await makeRequest('GET', `/alerts/encounters/${testState.encounter.id}`, {
       headers: staffAuth(testState.staffToken),
     });
     if (!Array.isArray(encounterAlerts)) throw new Error('Not listed correctly');
+    const resolvedAlert = encounterAlerts.find((entry) => entry.id === alert.id);
+    const worseningAlert = encounterAlerts.find((entry) => entry.type === 'PATIENT_WORSENING');
+    if (!resolvedAlert?.acknowledgedAt || !resolvedAlert?.resolvedAt) {
+      throw new Error('Encounter alerts did not return the resolved alert state');
+    }
+    if (!worseningAlert || worseningAlert.severity !== 'HIGH') {
+      throw new Error('Encounter alerts did not include the expected patient worsening alert');
+    }
     logSuccess(`Listed ${encounterAlerts.length} alert(s) for encounter`);
     
   } catch (error) {
@@ -922,7 +1271,6 @@ async function testEncounterCompletion() {
   logSection('TEST 7: Encounter Completion');
   
   try {
-    // 7A: Move to waiting → WAITING
     logSubSection('7A: Move to Waiting Room');
     const waitingEncounter = await makeRequest('POST', `/encounters/${testState.encounter.id}/waiting`, {
       headers: staffAuth(testState.nurseToken),
@@ -934,8 +1282,16 @@ async function testEncounterCompletion() {
     logSuccess('Patient moved to waiting room → WAITING');
     logVerbose(`  Waiting since: ${waitingEncounter.waitingAt}`);
     
-    // 7B: Discharge → COMPLETE
-    logSubSection('7B: Discharge Patient');
+    logSubSection('7B: Verify Patient Queue While Waiting');
+    const queue = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}/queue`, {
+      headers: patientAuth(testState.patientToken),
+    });
+    if (queue.position !== 1 || queue.estimatedMinutes !== 15 || queue.totalInQueue < 1) {
+      throw new Error(`Unexpected waiting queue state: ${JSON.stringify(queue)}`);
+    }
+    logSuccess('Patient queue reflects WAITING semantics');
+
+    logSubSection('7C: Discharge Patient');
     const discharged = await makeRequest('POST', `/encounters/${testState.encounter.id}/discharge`, {
       headers: staffAuth(testState.doctorToken),
     });
@@ -950,31 +1306,56 @@ async function testEncounterCompletion() {
     const durationSec = Math.round((new Date(discharged.departedAt) - new Date(discharged.createdAt)) / 1000);
     logInfo(`Encounter duration: ${durationSec}s`);
     
-    // 7C: Verify final state
-    logSubSection('7C: Verify Final State');
+    logSubSection('7D: Verify Final State');
     const final = await prisma.encounter.findUnique({
       where: { id: testState.encounter.id },
       include: { triageAssessments: true, messages: true, alerts: true, events: true },
     });
+    if (!final || final.status !== 'COMPLETE' || !final.departedAt || !final.waitingAt || !final.triagedAt || !final.arrivedAt) {
+      throw new Error('Final encounter state is missing expected COMPLETE timestamps');
+    }
+    if (!final.triageAssessments.some((entry) => entry.id === testState.triageAssessment.id)) {
+      throw new Error('Final encounter state is missing the created triage assessment');
+    }
+    if (!final.messages.some((entry) => entry.id === testState.message.id)
+      || !final.messages.some((entry) => entry.id === testState.internalMessage.id)
+      || !final.messages.some((entry) => entry.id === testState.patientWorseningMessage.id)) {
+      throw new Error('Final encounter state is missing expected messages');
+    }
+    if (!final.alerts.some((entry) => entry.id === testState.alert.id)
+      || !final.alerts.some((entry) => entry.type === 'PATIENT_WORSENING')) {
+      throw new Error('Final encounter state is missing expected alerts');
+    }
+    const finalEventTypes = new Set(final.events.map((event) => event.type));
+    for (const eventType of ['STATUS_CHANGE', 'TRIAGE_CREATED', 'MESSAGE_CREATED', 'MESSAGE_READ', 'ALERT_CREATED']) {
+      if (!finalEventTypes.has(eventType)) {
+        throw new Error(`Final encounter state is missing event type ${eventType}`);
+      }
+    }
     logSuccess('Final encounter state verified');
     logVerbose(`  Status: ${final.status}`);
     logVerbose(`  Assessments: ${final.triageAssessments.length}, Messages: ${final.messages.length}`);
     logVerbose(`  Alerts: ${final.alerts.length}, Events: ${final.events.length}`);
     
-    // 7D: Terminal status protection
-    logSubSection('7D: Terminal Status Protection');
-    try {
-      await makeRequest('POST', `/encounters/${testState.encounter.id}/cancel`, {
+    logSubSection('7E: Terminal Status Protection');
+    await expectRequestFailure(
+      () => makeRequest('POST', `/encounters/${testState.encounter.id}/cancel`, {
         headers: staffAuth(testState.nurseToken),
-      });
-      logError('Should have rejected transition from COMPLETE', 'No error');
-    } catch (error) {
-      if (error.message.includes('409') || error.message.includes('400') || error.message.includes('Conflict')) {
-        logSuccess('Terminal status protected — cannot transition from COMPLETE');
-      } else {
-        throw error;
-      }
-    }
+      }),
+      ['400', '409', 'terminal', 'Conflict'],
+      'Terminal encounter unexpectedly accepted a new transition',
+    );
+    logSuccess('Terminal status protected — cannot transition from COMPLETE');
+
+    logSubSection('7F: Patient Session Hidden After Terminal Status');
+    await expectRequestFailure(
+      () => makeRequest('GET', `/patient/encounters/${testState.encounter.id}`, {
+        headers: patientAuth(testState.patientToken),
+      }),
+      ['401', 'no longer active', 'Unauthorized'],
+      'Completed encounter unexpectedly remained patient-visible',
+    );
+    logSuccess('Completed encounter is hidden behind an inactive patient session');
     
   } catch (error) {
     logError('Encounter completion test failed', error);

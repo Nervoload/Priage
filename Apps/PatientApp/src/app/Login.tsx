@@ -13,11 +13,20 @@ export function Login() {
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
   const [chiefComplaint, setChiefComplaint] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (!firstName.trim()) {
+      showToast('Please enter your first name.');
+      return;
+    }
+    if (!phone.trim()) {
+      showToast('Please enter your phone number.');
+      return;
+    }
     if (!chiefComplaint.trim()) {
       showToast('Please describe what brings you in today.');
       return;
@@ -26,8 +35,9 @@ export function Login() {
     setSubmitting(true);
     try {
       const result = await createIntent({
-        firstName: firstName.trim() || undefined,
+        firstName: firstName.trim(),
         lastName: lastName.trim() || undefined,
+        phone: phone.trim(),
         chiefComplaint: chiefComplaint.trim(),
       });
 
@@ -37,7 +47,7 @@ export function Login() {
         encounterId: result.encounterId,
         hospitalSlug: null,
       });
-      navigate('/guest/pre-triage');
+      navigate('/guest/routing');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not start guest check-in.');
     } finally {
@@ -62,7 +72,7 @@ export function Login() {
         <form onSubmit={handleSubmit} style={styles.form}>
           <div style={styles.twoCol}>
             <label style={styles.fieldLabel}>
-              First name
+              First name *
               <input
                 style={styles.input}
                 value={firstName}
@@ -72,16 +82,28 @@ export function Login() {
               />
             </label>
             <label style={styles.fieldLabel}>
-              Last name
+              Phone number *
               <input
                 style={styles.input}
-                value={lastName}
-                onChange={(event) => setLastName(event.target.value)}
-                autoComplete="family-name"
-                placeholder="Last name"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value)}
+                autoComplete="tel"
+                inputMode="tel"
+                placeholder="(555) 123-4567"
               />
             </label>
           </div>
+
+          <label style={styles.fieldLabel}>
+            Last name
+            <input
+              style={styles.input}
+              value={lastName}
+              onChange={(event) => setLastName(event.target.value)}
+              autoComplete="family-name"
+              placeholder="Last name"
+            />
+          </label>
 
           <label style={styles.fieldLabel}>
             What brings you in today? *
@@ -95,12 +117,12 @@ export function Login() {
           </label>
 
           <button style={styles.primaryButton} type="submit" disabled={submitting}>
-            {submitting ? 'Starting check-in…' : 'Continue to pre-triage'}
+            {submitting ? 'Starting check-in…' : 'Choose hospital'}
           </button>
         </form>
 
         <footer style={styles.footer}>
-          <strong>What happens next:</strong> complete quick pre-triage questions, choose your hospital, and open live visit tracking.
+          <strong>What happens next:</strong> choose your hospital, notify the care team, then fill in any optional health details while you are on the way.
         </footer>
       </section>
     </main>

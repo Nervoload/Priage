@@ -11,6 +11,7 @@
 
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AssetContext, AssetStatus, EncounterStatus, EventType, Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
 import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
 import { EventsService } from '../events/events.service';
@@ -135,6 +136,7 @@ export class EncountersService {
       const { encounter, event } = await this.prisma.$transaction(async (tx) => {
         const created = await tx.encounter.create({
           data: {
+            publicId: `enc_${randomUUID()}`,
             status: EncounterStatus.EXPECTED,
             hospitalId,
             patientId: dto.patientId,

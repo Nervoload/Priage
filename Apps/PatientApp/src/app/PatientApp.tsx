@@ -14,9 +14,9 @@ import { ChatPage } from '../pages/ChatPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { WelcomePage } from './WelcomePage';
 import { Login as GuestCheckInStart } from './Login';
-import { PreTriage } from '../features/pre-triage/PreTriage';
 import { Enroute } from '../features/enroute/Enroute';
 import { EncounterWorkspace } from '../features/encounter-workspace/EncounterWorkspace';
+import { Routing } from '../features/pre-triage/Routing';
 import type { EncounterSummary } from '../shared/types/domain';
 
 export function PatientApp() {
@@ -26,7 +26,7 @@ export function PatientApp() {
   const guestPath = guestSession?.encounterId
     ? `/guest/enroute/${guestSession.encounterId}`
     : guestSession
-      ? '/guest/pre-triage'
+      ? '/guest/routing'
       : '/welcome';
 
   if (loading) {
@@ -57,8 +57,20 @@ export function PatientApp() {
         element={session ? <Navigate to="/" replace /> : <GuestCheckInStart />}
       />
       <Route
+        path="/guest/routing"
+        element={
+          session
+            ? <Navigate to="/" replace />
+            : guestSession?.encounterId
+              ? <Navigate to={`/guest/enroute/${guestSession.encounterId}`} replace />
+              : guestSession
+                ? <GuestRoutingRoute />
+                : <Navigate to="/guest/start" replace />
+        }
+      />
+      <Route
         path="/guest/pre-triage"
-        element={session ? <Navigate to="/" replace /> : guestSession ? <PreTriage /> : <Navigate to="/guest/start" replace />}
+        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to="/guest/routing" replace /> : <Navigate to="/guest/start" replace />}
       />
       <Route
         path="/guest/enroute/:encounterId"
@@ -149,6 +161,11 @@ function LoginRoute() {
 function SignupRoute() {
   const navigate = useNavigate();
   return <SignupPage onSwitchToLogin={() => navigate('/auth/login')} onBack={() => navigate('/welcome')} />;
+}
+
+function GuestRoutingRoute() {
+  const navigate = useNavigate();
+  return <Routing onConfirmed={(encounterId) => navigate(`/guest/enroute/${encounterId}`)} onBack={() => navigate('/guest/start')} />;
 }
 
 function HomeRoute() {

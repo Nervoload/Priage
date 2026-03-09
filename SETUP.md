@@ -262,6 +262,24 @@ Or run the E2E frontend-flow test:
 node scripts/e2e-frontend-flows.js --seed --verbose
 ```
 
+## 7.5 One-Line Dev Launcher
+
+From the repo root:
+
+```bash
+./priage-dev
+```
+
+Variants:
+
+```bash
+./priage-dev reseed
+./priage-dev test
+./priage-dev reseed test
+```
+
+The launcher verifies Docker + local tooling, installs dependencies in all three apps, runs `npx prisma generate` plus `npx prisma migrate deploy`, optionally clears patient-facing dev data before reseeding, opens the backend and both Vite apps in separate macOS Terminal tabs, and can finish by running `npm run test:smoke`.
+
 ---
 
 ## 8. Useful Commands

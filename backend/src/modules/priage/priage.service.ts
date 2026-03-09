@@ -5,10 +5,9 @@
 // Designed to be swapped with an LLM-based implementation later.
 
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
-import { EncounterStatus, EventType } from '@prisma/client';
+import { ContextSourceType, ReviewState, TrustTier, VisibilityScope } from '@prisma/client';
 
-import { EventsService } from '../events/events.service';
+import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PriageChatDto, PriageAdmitDto } from './dto/chat.dto';
@@ -33,7 +32,7 @@ const MEDIUM_KEYWORDS = ['fever', 'vomiting', 'dizziness', 'sprain', 'burn', 'cu
 export class PriageService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly events: EventsService,
+    private readonly intakeSessions: IntakeSessionsService,
     private readonly loggingService: LoggingService,
   ) {}
 
@@ -141,51 +140,56 @@ export class PriageService {
       hospitalId = hospital.id;
     }
 
-    // Create encounter in a transaction
-    const { encounter, event } = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.encounter.create({
-        data: {
-          patientId,
-          hospitalId,
-          status: EncounterStatus.EXPECTED,
+    await this.intakeSessions.appendContextItemByAuthSession(
+      sessionId,
+      patientId,
+      {
+        itemType: 'patient_report',
+        schemaVersion: 'v1',
+        payload: {
           chiefComplaint: dto.chiefComplaint,
           details: dto.details,
-          expectedAt: new Date(),
         },
-        include: {
-          patient: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              age: true,
-            },
-          },
-        },
-      });
-
-      // Link session to encounter
-      await tx.patientSession.update({
-        where: { id: sessionId },
-        data: { encounterId: created.id },
-      });
-
-      const createdEvent = await this.events.emitEncounterEventTx(tx, {
-        encounterId: created.id,
+        sourceType: ContextSourceType.PATIENT,
+        trustTier: TrustTier.UNTRUSTED,
+        reviewState: ReviewState.UNREVIEWED,
+        visibilityScope: VisibilityScope.STORED_ONLY,
+        patientId,
         hospitalId,
-        type: EventType.ENCOUNTER_CREATED,
-        metadata: {
-          status: created.status,
-          source: 'priage_ai',
-          severity: dto.severity,
+      },
+      correlationId,
+    );
+
+    await this.intakeSessions.appendContextItemByAuthSession(
+      sessionId,
+      patientId,
+      {
+        itemType: 'ai_summary',
+        schemaVersion: 'v1',
+        payload: {
+          severity: dto.severity ?? null,
+          chiefComplaint: dto.chiefComplaint,
+          details: dto.details ?? null,
         },
-        actor: { actorPatientId: patientId },
-      });
+        sourceType: ContextSourceType.AI,
+        trustTier: TrustTier.UNTRUSTED,
+        reviewState: ReviewState.UNREVIEWED,
+        visibilityScope: VisibilityScope.STORED_ONLY,
+        patientId,
+        hospitalId,
+      },
+      correlationId,
+    );
 
-      return { encounter: created, event: createdEvent };
-    });
-
-    void this.events.dispatchEncounterEventAndMarkProcessed(event);
+    const encounter = await this.intakeSessions.confirmByAuthSession(
+      sessionId,
+      patientId,
+      {
+        hospitalId,
+        sourceLabel: 'priage_ai',
+      },
+      correlationId,
+    );
 
     return {
       encounter,

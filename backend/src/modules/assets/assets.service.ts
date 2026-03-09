@@ -11,6 +11,7 @@ import {
   Prisma,
 } from '@prisma/client';
 
+import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssetStorageService } from './asset-storage.service';
@@ -43,6 +44,7 @@ type AssetActorContext =
 export class AssetsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly intakeSessions: IntakeSessionsService,
     private readonly storage: AssetStorageService,
     private readonly loggingService: LoggingService,
   ) {}
@@ -71,13 +73,16 @@ export class AssetsService {
       throw new NotFoundException('Patient session not found');
     }
 
+    const intakeSession = await this.intakeSessions.getLatestForAuthSession(session.id);
+
     return this.persistUploadedImages(
       files,
       {
         context: AssetContext.INTAKE_IMAGE,
         patientSessionId: session.id,
-        encounterId: session.encounterId,
-        hospitalId: session.encounter?.hospitalId ?? null,
+        intakeSessionId: intakeSession?.id ?? null,
+        encounterId: intakeSession?.encounterId ?? session.encounterId,
+        hospitalId: intakeSession?.hospitalId ?? session.encounter?.hospitalId ?? null,
         createdByPatientId: patientId,
       },
       'patient',
@@ -91,16 +96,23 @@ export class AssetsService {
   ): Promise<AssetSummaryDto[]> {
     const session = await this.prisma.patientSession.findUnique({
       where: { id: sessionId },
-      select: { id: true, patientId: true },
+      select: {
+        id: true,
+        patientId: true,
+      },
     });
 
     if (!session || session.patientId !== patientId) {
       throw new NotFoundException('Patient session not found');
     }
 
+    const intakeSession = await this.intakeSessions.getLatestForAuthSession(session.id);
     const assets = await this.prisma.asset.findMany({
       where: {
-        patientSessionId: sessionId,
+        OR: [
+          { patientSessionId: sessionId },
+          ...(intakeSession?.id ? [{ intakeSessionId: intakeSession.id }] : []),
+        ],
         context: AssetContext.INTAKE_IMAGE,
         status: AssetStatus.READY,
       },
@@ -120,8 +132,18 @@ export class AssetsService {
   ): Promise<void> {
     await tx.asset.updateMany({
       where: {
-        patientSessionId: sessionId,
-        createdByPatientId: patientId,
+        OR: [
+          {
+            patientSessionId: sessionId,
+            createdByPatientId: patientId,
+          },
+          {
+            intakeSession: {
+              authSessionId: sessionId,
+            },
+            createdByPatientId: patientId,
+          },
+        ],
         context: AssetContext.INTAKE_IMAGE,
         status: AssetStatus.READY,
       },
@@ -160,6 +182,41 @@ export class AssetsService {
         createdByPatientId: patientId,
       },
       'patient',
+      correlationId,
+    );
+  }
+
+  async uploadIntakeImagesForPlatformSession(
+    publicId: string,
+    hospitalId: number,
+    files: UploadedImageFile[],
+    correlationId?: string,
+  ): Promise<AssetSummaryDto[]> {
+    const intakeSession = await this.prisma.intakeSession.findFirst({
+      where: {
+        publicId,
+        OR: [{ hospitalId }, { hospitalId: null }],
+      },
+      select: {
+        id: true,
+        encounterId: true,
+        hospitalId: true,
+      },
+    });
+
+    if (!intakeSession) {
+      throw new NotFoundException(`Intake session ${publicId} not found`);
+    }
+
+    return this.persistUploadedImages(
+      files,
+      {
+        context: AssetContext.INTAKE_IMAGE,
+        intakeSessionId: intakeSession.id,
+        encounterId: intakeSession.encounterId,
+        hospitalId: intakeSession.hospitalId ?? hospitalId,
+      },
+      'staff',
       correlationId,
     );
   }
@@ -413,6 +470,7 @@ export class AssetsService {
     context: {
       context: AssetContext;
       patientSessionId?: number | null;
+      intakeSessionId?: number | null;
       encounterId?: number | null;
       hospitalId?: number | null;
       createdByUserId?: number;
@@ -444,6 +502,7 @@ export class AssetsService {
             height,
             sha256,
             patientSessionId: context.patientSessionId ?? null,
+            intakeSessionId: context.intakeSessionId ?? null,
             encounterId: context.encounterId ?? null,
             hospitalId: context.hospitalId ?? null,
             createdByUserId: context.createdByUserId,

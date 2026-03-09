@@ -253,21 +253,6 @@ function PatientProfile({ encounter, latestTriage }: { encounter: Encounter; lat
         </div>
       </div>
 
-      {/* Decorative action buttons */}
-      <div className="flex gap-2 flex-wrap pt-2">
-        <button className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-lg text-xs font-medium cursor-not-allowed" disabled>
-          Order Lab Work
-        </button>
-        <button className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-lg text-xs font-medium cursor-not-allowed" disabled>
-          Assign Bed
-        </button>
-        <button className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-lg text-xs font-medium cursor-not-allowed" disabled>
-          Transfer Department
-        </button>
-        <button className="px-3 py-1.5 bg-gray-100 text-gray-400 rounded-lg text-xs font-medium cursor-not-allowed" disabled>
-          Flag for Review
-        </button>
-      </div>
     </div>
   );
 }

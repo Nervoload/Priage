@@ -5,11 +5,11 @@ import { IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-va
 import { Sanitize } from '../../../common/decorators/sanitize.decorator';
 
 export class CreateIntentDto {
-  @IsOptional()
   @IsString()
+  @MinLength(1)
   @MaxLength(120)
   @Sanitize()
-  firstName?: string;
+  firstName!: string;
 
   @IsOptional()
   @IsString()
@@ -17,16 +17,22 @@ export class CreateIntentDto {
   @Sanitize()
   lastName?: string;
 
+  @IsString()
+  @MinLength(1)
+  @MaxLength(20)
+  @Sanitize()
+  phone!: string;
+
   @IsOptional()
   @IsInt()
   @Min(0)
   age?: number;
 
-  @IsOptional()
   @IsString()
+  @MinLength(1)
   @MaxLength(240)
   @Sanitize()
-  chiefComplaint?: string;
+  chiefComplaint!: string;
 
   @IsOptional()
   @IsString()
