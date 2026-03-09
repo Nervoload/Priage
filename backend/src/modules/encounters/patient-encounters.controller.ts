@@ -2,7 +2,7 @@
 // Patient-facing encounter endpoints.
 // Protected by PatientGuard — only the patient who owns the encounter can access it.
 
-import { Controller, Get, Param, ParseIntPipe, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Post, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 
 import { CurrentPatient } from '../auth/decorators/current-patient.decorator';
@@ -61,7 +61,26 @@ export class PatientEncountersController {
     if (!patient.hospitalId) {
       return { position: 0, estimatedMinutes: 0, totalInQueue: 0 };
     }
-    return this.encountersService.getQueuePosition(
+    return this.encountersService.getQueuePositionForPatient(
+      patient.patientId,
+      id,
+      patient.hospitalId,
+      req.correlationId,
+    );
+  }
+
+  /**
+   * POST /patient/encounters/:id/cancel
+   * Cancel the patient's own encounter (demo restart / self-cancel flow).
+   */
+  @Post(':id/cancel')
+  async cancelOwn(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentPatient() patient: PatientContext,
+    @Req() req: Request,
+  ) {
+    return this.encountersService.cancelEncounterForPatient(
+      patient.patientId,
       id,
       patient.hospitalId,
       req.correlationId,

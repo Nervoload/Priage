@@ -219,6 +219,16 @@ async function getCorrelationLogs(correlationId) {
   }
 }
 
+function getStatsErrorCount(stats) {
+  return stats?.countsByLevel?.error ?? 0;
+}
+
+function logPromotedCorrelationNote(testName) {
+  logInfo(
+    `${testName}: Success-only correlations are not persisted unless the request is promoted by warn/error logging`
+  );
+}
+
 async function verifyLogsExist(correlationId, expectedMessages = [], testName = '') {
   await sleep(500); // Give logs time to be written
   
@@ -315,16 +325,7 @@ async function testAuthenticationLogging() {
       logSuccess('Test 1B: Successfully logged in');
       logInfo(`Test 1B: User ID: ${testState.userId}, Hospital ID: ${testState.hospitalId}`);
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Login attempt', 'Login successful'],
-        'Test 1B'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 1B: Auth success logging verified');
-      }
+      logPromotedCorrelationNote('Test 1B');
     } else {
       logError(`Test 1B: Login failed with status ${response.statusCode}`);
       logError('Test 1B: Cannot continue without authentication');
@@ -384,16 +385,7 @@ async function testEncounterWorkflowLogging() {
       testState.encounterId = response.data.id;
       logSuccess(`Test 2A: Encounter created - ID: ${testState.encounterId}`);
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Creating new encounter', 'Encounter created successfully'],
-        'Test 2A'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 2A: Encounter creation logging verified');
-      }
+      logPromotedCorrelationNote('Test 2A');
     } else {
       logError(`Test 2A: Failed to create encounter: ${response.statusCode}`);
       logInfo(`Test 2A: Response: ${JSON.stringify(response.data)}`);
@@ -424,12 +416,7 @@ async function testEncounterWorkflowLogging() {
     if (response.statusCode === 200) {
       logSuccess(`Test 2B: Listed ${response.data?.data?.length ?? response.data?.length ?? 0} encounters`);
       
-      // Verify logs
-      await verifyLogsExist(
-        correlationId,
-        ['Listing encounters'],
-        'Test 2B'
-      );
+      logPromotedCorrelationNote('Test 2B');
     } else {
       logError(`Test 2B: Failed: ${response.statusCode}`);
     }
@@ -456,16 +443,7 @@ async function testEncounterWorkflowLogging() {
     if (response.statusCode === 200 || response.statusCode === 201) {
       logSuccess('Test 2C: Encounter confirmed');
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Starting encounter transition', 'Encounter transition completed successfully'],
-        'Test 2C'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 2C: State transition logging verified');
-      }
+      logPromotedCorrelationNote('Test 2C');
     } else {
       logError(`Test 2C: Failed: ${response.statusCode}`);
     }
@@ -497,16 +475,7 @@ async function testDatabaseLogging() {
       logSuccess(`Test 3A: Found ${logs.length} PrismaService logs`);
       
       // Check for connection logs
-      const hasConnectionLog = logs.some(log => 
-        log.message.includes('Connecting to database') ||
-        log.message.includes('Database connection established')
-      );
-      
-      if (hasConnectionLog) {
-        logSuccess('Test 3A: Database connection logging verified');
-      } else {
-        logWarning('Test 3A: No connection logs found (might be from earlier)');
-      }
+      logInfo('Test 3A: Startup/info logs are not persisted unless a correlation is promoted');
       
       // Check for pool stats
       const hasPoolStats = logs.some(log => 
@@ -541,15 +510,7 @@ async function testDatabaseLogging() {
       const logs = response.data.logs || response.data;
       logSuccess(`Test 3B: Found ${logs.length} RealtimeGateway logs`);
       
-      const hasInitLog = logs.some(log => 
-        log.message.includes('WebSocket Gateway initialized')
-      );
-      
-      if (hasInitLog) {
-        logSuccess('Test 3B: WebSocket initialization logging verified');
-      } else {
-        logInfo('Test 3B: WebSocket logs may be from earlier startup');
-      }
+      logInfo('Test 3B: Realtime startup/info logs are not expected unless a flow is promoted');
     } else {
       logError(`Test 3B: Failed to query logs: ${response.statusCode}`);
     }
@@ -681,7 +642,7 @@ async function testFatalErrorSimulation() {
       // Verify logs
       const logsValid = await verifyLogsExist(
         correlationId,
-        ['Invalid transition', 'transition not allowed'],
+        ['Starting encounter transition', 'Invalid state transition attempted'],
         'Test 5A'
       );
       
@@ -707,7 +668,8 @@ async function testFatalErrorSimulation() {
     if (statsResponse.statusCode === 200) {
       logSuccess('Test 5B: Retrieved logging stats');
       logInfo(`Test 5B: Total logs: ${statsResponse.data.totalLogs}`);
-      logInfo(`Test 5B: Total correlations: ${statsResponse.data.totalCorrelations}`);
+      logInfo(`Test 5B: Total reports: ${statsResponse.data.totalReports ?? 0}`);
+      logInfo(`Test 5B: Persisted error logs: ${getStatsErrorCount(statsResponse.data)}`);
     }
     
     // Try to generate error report
@@ -754,8 +716,11 @@ async function testLoggerServiceHealth() {
     if (response.statusCode === 200) {
       const stats = response.data;
       logSuccess('Test 6A: Logging stats retrieved');
-      logInfo(`Test 6A: Total correlations: ${stats.totalCorrelations}`);
       logInfo(`Test 6A: Total logs: ${stats.totalLogs}`);
+      logInfo(`Test 6A: Total reports: ${stats.totalReports ?? 0}`);
+      logInfo(`Test 6A: DB logging enabled: ${stats.dbLoggingEnabled}`);
+      logInfo(`Test 6A: DB min level: ${stats.dbMinLevel}`);
+      logInfo(`Test 6A: Error count (window): ${getStatsErrorCount(stats)}`);
       logInfo(`Test 6A: Memory usage: ${Math.round(stats.memoryUsage?.heapUsed / 1024 / 1024)}MB`);
       
       if (stats.totalLogs > 0) {
@@ -872,16 +837,7 @@ async function testAdditionalServicesLogging() {
     if (response.statusCode === 200 || response.statusCode === 201) {
       logSuccess('Test 7A: Message created');
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Creating message', 'Message created successfully'],
-        'Test 7A'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 7A: Messaging service logging verified');
-      }
+      logPromotedCorrelationNote('Test 7A');
     } else {
       logError(`Test 7A: Failed: ${response.statusCode}`);
     }
@@ -908,16 +864,7 @@ async function testAdditionalServicesLogging() {
     if (response.statusCode === 200 || response.statusCode === 201) {
       logSuccess('Test 7B: Alert created');
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Creating alert', 'Alert created successfully'],
-        'Test 7B'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 7B: Alerts service logging verified');
-      }
+      logPromotedCorrelationNote('Test 7B');
     } else {
       logError(`Test 7B: Failed: ${response.statusCode}`);
     }
@@ -944,16 +891,7 @@ async function testAdditionalServicesLogging() {
     if (response.statusCode === 200 || response.statusCode === 201) {
       logSuccess('Test 7C: Triage assessment created');
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Creating triage assessment', 'Triage assessment created successfully'],
-        'Test 7C'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 7C: Triage service logging verified');
-      }
+      logPromotedCorrelationNote('Test 7C');
     } else {
       logError(`Test 7C: Failed: ${response.statusCode}`);
     }
@@ -995,16 +933,7 @@ async function testNewServicesLogging() {
       testState.intakePatientId = response.data.patientId;
       logSuccess('Test 8A: Patient intent created');
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Creating patient intent', 'Patient intent created successfully'],
-        'Test 8A'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 8A: Intake service create intent logging verified');
-      }
+      logPromotedCorrelationNote('Test 8A');
     } else {
       logError(`Test 8A: Failed: ${response.statusCode}`);
     }
@@ -1030,16 +959,7 @@ async function testNewServicesLogging() {
       if (response.statusCode === 200 || response.statusCode === 201) {
         logSuccess('Test 8B: Patient intent confirmed');
         
-// Verify logs (IntakeService only logs after the transaction, no "start" log)
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Patient intent confirmed successfully'],
-          'Test 8B'
-        );
-        
-        if (logsValid) {
-          logSuccess('Test 8B: Intake service confirm intent logging verified');
-        }
+        logPromotedCorrelationNote('Test 8B');
       } else {
         logError(`Test 8B: Failed: ${response.statusCode}`);
       }
@@ -1073,16 +993,7 @@ async function testNewServicesLogging() {
       if (response.statusCode === 200) {
         logSuccess('Test 8C: Patient intake details updated');
         
-        // Verify logs
-        const logsValid = await verifyLogsExist(
-          correlationId,
-          ['Updating patient intake details', 'Patient intake details updated successfully'],
-          'Test 8C'
-        );
-        
-        if (logsValid) {
-          logSuccess('Test 8C: Intake service update details logging verified');
-        }
+        logPromotedCorrelationNote('Test 8C');
       } else {
         logError(`Test 8C: Failed: ${response.statusCode}`);
       }
@@ -1111,16 +1022,7 @@ async function testNewServicesLogging() {
     if (response.statusCode === 200) {
       logSuccess('Test 8D: Patient profile fetched');
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Fetching patient profile', 'Patient profile fetched successfully'],
-        'Test 8D'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 8D: Patients service logging verified');
-      }
+      logPromotedCorrelationNote('Test 8D');
     } else {
       logError(`Test 8D: Failed: ${response.statusCode}`);
     }
@@ -1145,16 +1047,7 @@ async function testNewServicesLogging() {
     if (response.statusCode === 200) {
       logSuccess(`Test 8E: Listed ${response.data.length} users`);
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Fetching hospital users', 'Hospital users fetched'],
-        'Test 8E'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 8E: Users service list logging verified');
-      }
+      logPromotedCorrelationNote('Test 8E');
     } else {
       logError(`Test 8E: Failed: ${response.statusCode}`);
     }
@@ -1179,16 +1072,7 @@ async function testNewServicesLogging() {
     if (response.statusCode === 200) {
       logSuccess('Test 8F: Current user details fetched');
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Fetching user by ID', 'User fetched successfully'],
-        'Test 8F'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 8F: Users service get user logging verified');
-      }
+      logPromotedCorrelationNote('Test 8F');
     } else {
       logError(`Test 8F: Failed: ${response.statusCode}`);
     }
@@ -1213,16 +1097,7 @@ async function testNewServicesLogging() {
     if (response.statusCode === 200) {
       logSuccess('Test 8G: Hospital details fetched');
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Fetching hospital details', 'Hospital details fetched'],
-        'Test 8G'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 8G: Hospitals service get hospital logging verified');
-      }
+      logPromotedCorrelationNote('Test 8G');
     } else {
       logError(`Test 8G: Failed: ${response.statusCode}`);
     }
@@ -1249,16 +1124,7 @@ async function testNewServicesLogging() {
       logInfo(`Test 8H: Active encounters: ${response.data.activeEncounters}`);
       logInfo(`Test 8H: Triage queue: ${response.data.triageQueue}`);
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Fetching hospital dashboard', 'Hospital dashboard fetched'],
-        'Test 8H'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 8H: Hospitals service dashboard logging verified');
-      }
+      logPromotedCorrelationNote('Test 8H');
     } else {
       logError(`Test 8H: Failed: ${response.statusCode}`);
     }
@@ -1283,16 +1149,7 @@ async function testNewServicesLogging() {
     if (response.statusCode === 200) {
       logSuccess(`Test 8I: Queue status fetched (${response.data.queueLength} encounters)`);
       
-      // Verify logs
-      const logsValid = await verifyLogsExist(
-        correlationId,
-        ['Fetching hospital queue status', 'Hospital queue status fetched'],
-        'Test 8I'
-      );
-      
-      if (logsValid) {
-        logSuccess('Test 8I: Hospitals service queue status logging verified');
-      }
+      logPromotedCorrelationNote('Test 8I');
     } else {
       logError(`Test 8I: Failed: ${response.statusCode}`);
     }

@@ -1,0 +1,159 @@
+@import "tailwindcss";
+
+/* ─── Priage Custom Theme ─────────────────────────────────────────────────── */
+
+@theme {
+  /* Primary navy palette */
+  --color-priage-50: #eff6ff;
+  --color-priage-100: #dbeafe;
+  --color-priage-200: #bfdbfe;
+  --color-priage-300: #93c5fd;
+  --color-priage-400: #60a5fa;
+  --color-priage-500: #3b82f6;
+  --color-priage-600: #1e3a5f;
+  --color-priage-700: #172d4a;
+  --color-priage-800: #111f36;
+  --color-priage-900: #0b1423;
+
+  /* Accent red palette */
+  --color-accent-50: #fef2f2;
+  --color-accent-100: #fee2e2;
+  --color-accent-200: #fecaca;
+  --color-accent-300: #fca5a5;
+  --color-accent-400: #f87171;
+  --color-accent-500: #ef4444;
+  --color-accent-600: #dc2626;
+  --color-accent-700: #b91c1c;
+  --color-accent-800: #991b1b;
+  --color-accent-900: #7f1d1d;
+
+  /* CTAS severity colors */
+  --color-ctas-1: #ef4444;
+  --color-ctas-2: #f97316;
+  --color-ctas-3: #eab308;
+  --color-ctas-4: #22c55e;
+  --color-ctas-5: #3b82f6;
+
+  /* Alert severity */
+  --color-alert-critical: #ef4444;
+  --color-alert-high: #f97316;
+  --color-alert-medium: #eab308;
+  --color-alert-low: #3b82f6;
+
+  /* Vitals status */
+  --color-vital-normal: #22c55e;
+  --color-vital-warn: #f59e0b;
+  --color-vital-danger: #ef4444;
+
+  /* Font family */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* ─── Base Styles ─────────────────────────────────────────────────────────── */
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #f8fafc;
+  color: #1f2937;
+  margin: 0;
+}
+
+/* ─── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* ─── Utility Classes ─────────────────────────────────────────────────────── */
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.25s ease-out;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s ease-out;
+}
+
+/* Scrollbar styling for a cleaner look */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #d1d5db;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #9ca3af;
+}

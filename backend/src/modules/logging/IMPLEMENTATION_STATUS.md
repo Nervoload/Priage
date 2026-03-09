@@ -26,10 +26,10 @@ All core logging infrastructure has been successfully implemented and tested.
   - Accepts existing correlation IDs from clients
 
 - **REST API** (`logging.controller.ts`)
-  - `POST /logging/reports` - Generate error report
-  - `GET /logging/reports/:id` - Get existing report
-  - `GET /logging/reports/:id/export` - Export report for users
-  - `GET /logging/logs` - Query logs with filters
+  - `GET /logging/error-reports/generate?correlationId=xxx` - Generate error report
+  - `GET /logging/error-reports/:reportId` - Get existing report
+  - `GET /logging/error-reports/:reportId/export` - Export report for users
+  - `GET /logging/query` - Query logs with filters
   - `GET /logging/stats` - Get logging statistics
 
 ### Services with Comprehensive Logging
@@ -212,16 +212,16 @@ All core logging infrastructure has been successfully implemented and tested.
 
 **Trade-off**: More verbose, but critical for hospital-grade software where clarity > brevity
 
-### ✅ In-Memory Storage (Phase 1)
-**Decision**: Store logs in Map<correlationId, LogEntry[]> in memory
+### ✅ Database-Backed Storage
+**Decision**: Persist operational logs and error report snapshots in Postgres via Prisma
 
 **Why**:
-1. **Development simplicity**: No external dependencies
-2. **Fast queries**: O(1) lookup by correlation ID
-3. **Automatic cleanup**: Built-in retention and limits
-4. **Zero infrastructure**: Works immediately
+1. **Environment consistency**: Local Docker/Postgres matches deployed behavior
+2. **Persistence**: Logs survive process restarts and multi-instance execution
+3. **Privacy**: Strict allowlisting reduces retained sensitive data
+4. **Operations**: Admin query/report endpoints now read a real shared store
 
-**Future**: Phase 2 can add database/OpenTelemetry without changing service interfaces
+**Current behavior**: `warn` and `error` persist by default, and failing correlations flush buffered `debug`/`info` steps when they are promoted
 
 ### ✅ Correlation Middleware
 **Decision**: Express middleware adds correlation ID to all HTTP requests
@@ -235,10 +235,10 @@ All core logging infrastructure has been successfully implemented and tested.
 ## Known Limitations & Future Work
 
 ### Current Limitations
-1. **In-memory only**: Logs lost on server restart (dev-only limitation)
-2. **Single instance**: No distributed correlation across multiple servers
-3. **No persistence**: Can't query historical logs beyond 24 hours
-4. **No alerting**: No automatic alerts for critical errors
+1. **Selective persistence**: `info` and `debug` are not persisted by default
+2. **Single database target**: No external observability sink yet
+3. **No alerting**: No automatic alerts for critical errors
+4. **Docs/tests still need routine upkeep as the logging contract evolves**
 
 ### Phase 2 Roadmap (Future)
 1. **Persistent storage**:

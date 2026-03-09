@@ -118,10 +118,10 @@ export function TriageForm({ encounterId, onCreated, onCancel }: TriageFormProps
               style={{
                 flex: 1,
                 padding: '0.6rem',
-                border: ctasLevel === level ? '2px solid #7c3aed' : '1px solid #d1d5db',
+                border: ctasLevel === level ? '2px solid #1e3a5f' : '1px solid #d1d5db',
                 borderRadius: '8px',
-                backgroundColor: ctasLevel === level ? '#7c3aed10' : 'white',
-                color: ctasLevel === level ? '#7c3aed' : '#374151',
+                backgroundColor: ctasLevel === level ? '#1e3a5f10' : 'white',
+                color: ctasLevel === level ? '#1e3a5f' : '#374151',
                 fontWeight: ctasLevel === level ? 700 : 500,
                 fontSize: '1rem',
                 cursor: 'pointer',
@@ -142,7 +142,7 @@ export function TriageForm({ encounterId, onCreated, onCancel }: TriageFormProps
           max={10}
           value={painLevel}
           onChange={(e) => setPainLevel(Number(e.target.value))}
-          style={{ width: '100%', accentColor: '#7c3aed' }}
+          style={{ width: '100%', accentColor: '#1e3a5f' }}
         />
       </div>
 
@@ -255,7 +255,7 @@ export function TriageForm({ encounterId, onCreated, onCancel }: TriageFormProps
           style={{
             flex: 1,
             padding: '0.75rem',
-            backgroundColor: submitting ? '#a78bfa' : '#7c3aed',
+            backgroundColor: submitting ? '#93c5fd' : '#dc2626',
             color: 'white',
             border: 'none',
             borderRadius: '10px',

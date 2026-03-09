@@ -1,8 +1,8 @@
 // backend/src/modules/triage/triage.service.ts
 // Triage assessments service.
 
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { EventType, Prisma } from '@prisma/client';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { EncounterStatus, EventType, Prisma } from '@prisma/client';
 
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
@@ -46,7 +46,13 @@ export class TriageService {
     try {
       const priorityScore = this.computePriorityScore(dto.ctasLevel, dto.painLevel);
 
-      const { assessment, event } = await this.prisma.$transaction(async (tx) => {
+const { assessment, event } = await this.prisma.$transaction(async (tx) => {
+        const allowedStatuses = new Set<EncounterStatus>([
+          EncounterStatus.ADMITTED,
+          EncounterStatus.TRIAGE,
+          EncounterStatus.WAITING,
+        ]);
+
         const encounter = await tx.encounter.findUnique({
           where: {
             id_hospitalId: {
@@ -54,10 +60,10 @@ export class TriageService {
               hospitalId,
             },
           },
-          select: { id: true, hospitalId: true },
+          select: { id: true, hospitalId: true, status: true },
         });
         if (!encounter) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Encounter not found for triage',
             {
               service: 'TriageService',
@@ -68,6 +74,11 @@ export class TriageService {
             },
           );
           throw new NotFoundException(`Encounter ${dto.encounterId} not found for hospital`);
+        }
+        if (!allowedStatuses.has(encounter.status)) {
+          throw new BadRequestException(
+            `Encounter ${dto.encounterId} cannot be triaged while in status ${encounter.status}`,
+          );
         }
 
         const created = await tx.triageAssessment.create({
@@ -137,10 +148,10 @@ export class TriageService {
 
       return assessment;
     } catch (error) {
-      if (error instanceof NotFoundException) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
         throw error;
       }
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to create triage assessment',
         {
           service: 'TriageService',
@@ -193,7 +204,7 @@ export class TriageService {
 
       return assessments;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to list triage assessments',
         {
           service: 'TriageService',

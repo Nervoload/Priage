@@ -10,8 +10,10 @@
 // Auth enforced at controller layer via JwtAuthGuard/PatientGuard.
 
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { EncounterStatus, EventType, Prisma } from '@prisma/client';
+import { AssetContext, AssetStatus, EncounterStatus, EventType, Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
+import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -36,6 +38,26 @@ const TERMINAL_STATUSES = new Set<EncounterStatus>([
   EncounterStatus.CANCELLED,
   EncounterStatus.UNRESOLVED,
 ]);
+
+const PRIORITY_ORDER: Prisma.EncounterOrderByWithRelationInput[] = [
+  { currentPriorityScore: { sort: 'desc', nulls: 'last' } },
+  { createdAt: 'asc' },
+];
+
+const encounterMessageSelect = {
+  id: true,
+  createdAt: true,
+  senderType: true,
+  content: true,
+  isInternal: true,
+  createdByUserId: true,
+  createdByPatientId: true,
+  assets: {
+    where: { status: AssetStatus.READY },
+    select: assetSummarySelect,
+    orderBy: { createdAt: 'asc' as const },
+  },
+} satisfies Prisma.MessageSelect;
 
 // TRANSTIONS --> changing Encounter.status throughout the lifecycle
 
@@ -114,6 +136,7 @@ export class EncountersService {
       const { encounter, event } = await this.prisma.$transaction(async (tx) => {
         const created = await tx.encounter.create({
           data: {
+            publicId: `enc_${randomUUID()}`,
             status: EncounterStatus.EXPECTED,
             hospitalId,
             patientId: dto.patientId,
@@ -170,7 +193,7 @@ export class EncountersService {
 
       return encounter;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to create encounter',
         {
           service: 'EncountersService',
@@ -227,10 +250,7 @@ export class EncountersService {
       const [encounters, total] = await Promise.all([
         this.prisma.encounter.findMany({
           where,
-          orderBy: [
-            { currentPriorityScore: 'desc' },
-            { createdAt: 'asc' },
-          ],
+          orderBy: PRIORITY_ORDER,
           take: limit,
           include: {
             patient: {
@@ -240,6 +260,11 @@ export class EncountersService {
                 lastName: true,
                 phone: true,
                 age: true,
+                gender: true,
+                preferredLanguage: true,
+                allergies: true,
+                conditions: true,
+                optionalHealthInfo: true,
               },
             },
           },
@@ -266,7 +291,7 @@ export class EncountersService {
         total,
       };
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to list encounters',
         {
           service: 'EncountersService',
@@ -321,14 +346,24 @@ export class EncountersService {
             },
           },
           triageAssessments: { orderBy: { createdAt: 'asc' } },
-          messages: { orderBy: { createdAt: 'asc' } },
+          messages: {
+            orderBy: { createdAt: 'asc' },
+            select: encounterMessageSelect,
+          },
           alerts: { orderBy: { createdAt: 'asc' } },
-          assets: { orderBy: { createdAt: 'asc' } },
+          assets: {
+            where: {
+              status: AssetStatus.READY,
+              context: AssetContext.INTAKE_IMAGE,
+            },
+            select: assetSummarySelect,
+            orderBy: { createdAt: 'asc' },
+          },
         },
       });
 
       if (!encounter) {
-        this.loggingService.warn(
+        await this.loggingService.warn(
           'Encounter not found',
           {
             service: 'EncountersService',
@@ -355,12 +390,21 @@ export class EncountersService {
         },
       );
 
-      return encounter;
+      const { assets, ...encounterWithoutAssets } = encounter;
+
+      return {
+        ...encounterWithoutAssets,
+        messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
+          ...message,
+          attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
+        })),
+        intakeImages: assets.map((asset) => mapAssetSummary(asset, 'staff')),
+      };
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
       }
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to fetch encounter',
         {
           service: 'EncountersService',
@@ -408,7 +452,7 @@ export class EncountersService {
   ) {
     const transition = TRANSITIONS[transitionKey];
     if (!transition) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Unknown transition attempted',
         {
           service: 'EncountersService',
@@ -456,7 +500,7 @@ export class EncountersService {
           },
         });
         if (!current) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Encounter not found during transition',
             {
               service: 'EncountersService',
@@ -474,7 +518,7 @@ export class EncountersService {
         }
 
         if (TERMINAL_STATUSES.has(current.status)) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Transition attempted on terminal status',
             {
               service: 'EncountersService',
@@ -492,7 +536,7 @@ export class EncountersService {
         }
 
         if (!transition.allowedFrom.includes(current.status)) {
-          this.loggingService.warn(
+          await this.loggingService.warn(
             'Invalid state transition attempted',
             {
               service: 'EncountersService',
@@ -610,7 +654,7 @@ export class EncountersService {
         throw error;
       }
 
-      this.loggingService.error(
+      await this.loggingService.error(
         'Encounter transition failed',
         {
           service: 'EncountersService',
@@ -669,14 +713,15 @@ export class EncountersService {
             messages: {
               where: { isInternal: false },
               orderBy: { createdAt: 'asc' },
-              select: {
-                id: true,
-                createdAt: true,
-                senderType: true,
-                content: true,
-                createdByUserId: true,
-                createdByPatientId: true,
+              select: encounterMessageSelect,
+            },
+            assets: {
+              where: {
+                status: AssetStatus.READY,
+                context: AssetContext.INTAKE_IMAGE,
               },
+              select: assetSummarySelect,
+              orderBy: { createdAt: 'asc' },
             },
           },
         })
@@ -686,14 +731,15 @@ export class EncountersService {
             messages: {
               where: { isInternal: false },
               orderBy: { createdAt: 'asc' },
-              select: {
-                id: true,
-                createdAt: true,
-                senderType: true,
-                content: true,
-                createdByUserId: true,
-                createdByPatientId: true,
+              select: encounterMessageSelect,
+            },
+            assets: {
+              where: {
+                status: AssetStatus.READY,
+                context: AssetContext.INTAKE_IMAGE,
               },
+              select: assetSummarySelect,
+              orderBy: { createdAt: 'asc' },
             },
           },
         });
@@ -715,7 +761,11 @@ export class EncountersService {
       hospitalId: encounter.hospitalId,
       expectedAt: encounter.expectedAt,
       arrivedAt: encounter.arrivedAt,
-      messages: encounter.messages,
+      messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
+        ...message,
+        attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'patient')),
+      })),
+      intakeImages: encounter.assets.map((asset) => mapAssetSummary(asset, 'patient')),
     };
   }
 
@@ -753,6 +803,69 @@ export class EncountersService {
     return encounters;
   }
 
+  /**
+   * Cancel an encounter from patient context (used by patient demo restart flow).
+   * Enforces encounter ownership before running the standard cancel transition.
+   */
+  async cancelEncounterForPatient(
+    patientId: number,
+    encounterId: number,
+    hospitalId: number | null,
+    correlationId?: string,
+  ) {
+    this.loggingService.info(
+      'Patient requested encounter cancellation',
+      {
+        service: 'EncountersService',
+        operation: 'cancelEncounterForPatient',
+        correlationId,
+        encounterId,
+        patientId,
+      },
+      {
+        hospitalId,
+      },
+    );
+
+    const encounter = hospitalId
+      ? await this.prisma.encounter.findUnique({
+          where: {
+            id_hospitalId: {
+              id: encounterId,
+              hospitalId,
+            },
+          },
+          select: {
+            id: true,
+            hospitalId: true,
+            patientId: true,
+          },
+        })
+      : await this.prisma.encounter.findUnique({
+          where: { id: encounterId },
+          select: {
+            id: true,
+            hospitalId: true,
+            patientId: true,
+          },
+        });
+
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
+
+    if (encounter.patientId !== patientId) {
+      throw new ForbiddenException('You can only cancel your own encounter');
+    }
+
+    return this.cancel(
+      encounter.hospitalId,
+      encounter.id,
+      { actorPatientId: patientId },
+      correlationId,
+    );
+  }
+
   // ─── Wait time estimation ───────────────────────────────────────────────────
 
   /**
@@ -781,15 +894,26 @@ export class EncountersService {
       },
     );
 
+    const encounter = await this.prisma.encounter.findUnique({
+      where: {
+        id_hospitalId: {
+          id: encounterId,
+          hospitalId,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
+
     const waiting = await this.prisma.encounter.findMany({
       where: {
         hospitalId,
         status: EncounterStatus.WAITING,
       },
-      orderBy: [
-        { currentPriorityScore: 'desc' },
-        { createdAt: 'asc' },
-      ],
+      orderBy: PRIORITY_ORDER,
       select: { id: true },
     });
 
@@ -802,5 +926,43 @@ export class EncountersService {
       estimatedMinutes: index === -1 ? 0 : (index + 1) * AVG_MINUTES_PER_PATIENT,
       totalInQueue: waiting.length,
     };
+  }
+
+  async getQueuePositionForPatient(
+    patientId: number,
+    encounterId: number,
+    hospitalId: number,
+    correlationId?: string,
+  ): Promise<{
+    position: number;
+    estimatedMinutes: number;
+    totalInQueue: number;
+  }> {
+    const encounter = await this.prisma.encounter.findUnique({
+      where: {
+        id_hospitalId: {
+          id: encounterId,
+          hospitalId,
+        },
+      },
+      select: { patientId: true },
+    });
+
+    if (!encounter || encounter.patientId !== patientId) {
+      await this.loggingService.warn(
+        'Patient attempted to access queue position for another encounter',
+        {
+          service: 'EncountersService',
+          operation: 'getQueuePositionForPatient',
+          correlationId,
+          encounterId,
+          hospitalId,
+          patientId,
+        },
+      );
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
+
+    return this.getQueuePosition(encounterId, hospitalId, correlationId);
   }
 }

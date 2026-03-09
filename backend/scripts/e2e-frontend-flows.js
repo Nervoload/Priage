@@ -17,6 +17,8 @@
 //       List Alerts → Discharge → Verify Terminal State
 
 require('dotenv').config();
+const { io } = require('socket.io-client');
+const { randomUUID } = require('crypto');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const VERBOSE = process.argv.includes('--verbose');
@@ -35,6 +37,21 @@ const C = {
 let passed = 0;
 let failed = 0;
 let token = null;
+let socket = null;
+
+function patientHeaders(sessionToken) {
+  return { 'x-patient-token': sessionToken };
+}
+
+function deriveCriticalComplaint(encounter) {
+  const complaint = encounter?.chiefComplaint?.toLowerCase() ?? '';
+  if (!complaint) return null;
+  if (encounter?.status !== 'EXPECTED' && encounter?.status !== 'ADMITTED') return null;
+  const criticalKeywords = ['chest pain', 'difficulty breathing', 'shortness of breath'];
+  return criticalKeywords.some((keyword) => complaint.includes(keyword))
+    ? 'CRITICAL_COMPLAINT'
+    : null;
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -71,6 +88,26 @@ function section(name) {
   console.log(`\n${C.cyan}${C.bold}── ${name} ──${C.reset}`);
 }
 
+async function connectSocket() {
+  if (socket?.connected) {
+    return socket;
+  }
+
+  socket = io(BASE, {
+    auth: { token },
+    transports: ['websocket'],
+    autoConnect: false,
+  });
+
+  await new Promise((resolve, reject) => {
+    socket.once('connect', resolve);
+    socket.once('connect_error', reject);
+    socket.connect();
+  });
+
+  return socket;
+}
+
 // ─── Seed (optional) ────────────────────────────────────────────────────────
 
 async function seedTestUser() {
@@ -97,7 +134,7 @@ async function seedTestUser() {
     const hash = await bcrypt.hash('TestPassword123!', 10);
     await prisma.user.upsert({
       where: { email },
-      update: { password: hash },
+      update: { password: hash, hospitalId: hospital.id, role: 'ADMIN' },
       create: { email, password: hash, role: 'ADMIN', hospitalId: hospital.id },
     });
     console.log(`  Seeded user: ${email}`);
@@ -145,7 +182,7 @@ async function flowListEncounters() {
   return json;
 }
 
-async function flowCreatePatientAndEncounter() {
+async function flowCreatePatientAndEncounter(hospitalSlug) {
   section('4. Create patient via intake (POST /intake/intent)');
   const phone = `+1555${Date.now().toString().slice(-7)}`;
   const { status: s1, json: intent } = await api('POST', '/intake/intent', {
@@ -153,6 +190,8 @@ async function flowCreatePatientAndEncounter() {
     firstName: 'E2E',
     lastName: 'TestPatient',
     age: 30,
+    chiefComplaint: 'Chest pain and shortness of breath',
+    details: 'Symptoms escalated over the last hour.',
   }, false);
 
   assert('Intent returns 201', s1 === 201);
@@ -162,14 +201,67 @@ async function flowCreatePatientAndEncounter() {
   // Confirm the encounter using the patient session token (x-patient-token header)
   section('5. Confirm encounter (POST /intake/confirm)');
   const { status: s2, json: confirm } = await api('POST', '/intake/confirm', {
-    hospitalSlug: 'priage-general',
+    hospitalSlug,
   }, false, { 'x-patient-token': intent?.sessionToken });
 
   assert('Confirm returns 201', s2 === 201);
   assert('Has encounter id', typeof confirm?.id === 'number');
   assert('Status is EXPECTED', confirm?.status === 'EXPECTED');
 
-  return confirm;
+  return {
+    encounter: confirm,
+    patientToken: intent?.sessionToken,
+  };
+}
+
+async function flowPatientEncounterApis(encounterId, patientToken) {
+  section('5A. Patient encounter APIs');
+
+  const headers = patientHeaders(patientToken);
+  const { status: listStatus, json: encounters } = await api('GET', '/patient/encounters', null, false, headers);
+  assert('Patient encounter list returns 200', listStatus === 200);
+  assert('Patient encounter list is an array', Array.isArray(encounters));
+  assert('Patient encounter list includes active encounter', encounters?.some((encounter) => encounter.id === encounterId));
+
+  const { status: detailStatus, json: encounter } = await api('GET', `/patient/encounters/${encounterId}`, null, false, headers);
+  assert('Patient encounter detail returns 200', detailStatus === 200);
+  assert('Patient encounter detail matches encounter id', encounter?.id === encounterId);
+  assert('Patient encounter detail includes non-internal messages array', Array.isArray(encounter?.messages));
+
+  const { status: queueStatus, json: queue } = await api('GET', `/patient/encounters/${encounterId}/queue`, null, false, headers);
+  assert('Patient queue returns 200', queueStatus === 200);
+  assert('Patient queue exposes numeric position', typeof queue?.position === 'number');
+  assert('Patient queue exposes numeric estimate', typeof queue?.estimatedMinutes === 'number');
+  assert('Patient queue exposes numeric totalInQueue', typeof queue?.totalInQueue === 'number');
+}
+
+async function flowDerivedAlertRule(encounterId) {
+  section('5B. Derived alert rule check');
+  const { status, json } = await api('GET', `/encounters/${encounterId}`);
+  assert('Encounter detail returns 200', status === 200);
+  assert('Critical complaint rule would fire for this encounter', deriveCriticalComplaint(json) === 'CRITICAL_COMPLAINT');
+}
+
+async function flowPatientCancel(hospitalSlug) {
+  section('5C. Patient cancel flow');
+  const suffix = randomUUID().slice(0, 8);
+  const { status: intentStatus, json: intent } = await api('POST', '/intake/intent', {
+    phone: `+1555${Date.now().toString().slice(-7)}`,
+    firstName: 'Cancel',
+    lastName: suffix,
+    chiefComplaint: 'Abdominal pain',
+  }, false);
+  assert('Cancel-flow intent returns 201', intentStatus === 201);
+
+  const headers = patientHeaders(intent?.sessionToken);
+  const { status: confirmStatus, json: encounter } = await api('POST', '/intake/confirm', {
+    hospitalSlug,
+  }, false, headers);
+  assert('Cancel-flow confirm returns 201', confirmStatus === 201);
+
+  const { status: cancelStatus, json: cancelled } = await api('POST', `/patient/encounters/${encounter?.id}/cancel`, null, false, headers);
+  assert('Patient cancel returns 200/201', cancelStatus === 200 || cancelStatus === 201);
+  assert('Cancelled encounter is terminal', cancelled?.status === 'CANCELLED');
 }
 
 async function flowConfirmArrival(encounterId) {
@@ -231,40 +323,93 @@ async function flowMoveToWaiting(encounterId) {
 }
 
 async function flowSendMessage(encounterId) {
-  section('11. Send message (POST /messaging/encounters/:id/messages)');
-  const { status, json } = await api('POST', `/messaging/encounters/${encounterId}/messages`, {
-    senderType: 'USER',
-    content: 'E2E test: how are you feeling?',
-    isInternal: false,
+  section('11. Send message (Socket.IO message.send)');
+  const realtime = await connectSocket();
+  const outgoing = 'E2E socket message: how are you feeling?';
+
+  const messageCreated = new Promise((resolve, reject) => {
+    let lastPayload = null;
+    const timeout = setTimeout(() => {
+      realtime.off('message.created', handleCreated);
+      const suffix = lastPayload ? `; last payload=${JSON.stringify(lastPayload)}` : '';
+      reject(new Error(`Timed out waiting for message.created${suffix}`));
+    }, 5000);
+
+    const handleCreated = (payload) => {
+      lastPayload = payload;
+      if (payload?.encounterId !== encounterId) {
+        return;
+      }
+      clearTimeout(timeout);
+      realtime.off('message.created', handleCreated);
+      resolve(payload);
+    };
+
+    realtime.on('message.created', handleCreated);
   });
 
-  assert('Returns 201', status === 201);
-  assert('Has message id', typeof json?.id === 'number');
-  assert('Content matches', json?.content === 'E2E test: how are you feeling?');
+  const ack = await new Promise((resolve) => {
+    realtime.emit('message.send', {
+      encounterId,
+      content: outgoing,
+      isInternal: false,
+    }, resolve);
+  });
 
-  section('12. List messages (GET /messaging/encounters/:id/messages)');
+  if (VERBOSE) {
+    console.log(`  ${C.dim}socket ack: ${JSON.stringify(ack)}${C.reset}`);
+  }
+
+  assert('Ack returns ok=true', ack?.ok === true);
+  assert('Ack includes created message', typeof ack?.message?.id === 'number');
+  assert('Ack message content matches', ack?.message?.content === outgoing);
+
+  const createdPayload = await messageCreated;
+  assert('Receives message.created event', createdPayload?.metadata?.messageId === ack?.message?.id);
+
+  section('12. Reject invalid socket message payload');
+  const invalidAck = await new Promise((resolve) => {
+    realtime.emit('message.send', {
+      encounterId,
+      content: '   ',
+      isInternal: false,
+    }, resolve);
+  });
+  assert('Invalid payload returns ok=false', invalidAck?.ok === false);
+  assert('Invalid payload code is VALIDATION_ERROR', invalidAck?.error?.code === 'VALIDATION_ERROR');
+
+  section('13. List messages (GET /messaging/encounters/:id/messages)');
   const { status: s2, json: list } = await api('GET', `/messaging/encounters/${encounterId}/messages`);
   assert('Returns 200', s2 === 200);
   assert('Has data array', Array.isArray(list?.data));
   assert('Has at least 1 message', list?.data?.length >= 1);
+  assert('Persisted socket message appears in history', list?.data?.some((item) => item.id === ack?.message?.id));
 
-  if (json?.id) {
-    section('13. Mark message read (POST /messaging/messages/:id/read)');
-    const { status: s3, json: readRes } = await api('POST', `/messaging/messages/${json.id}/read`);
+  if (ack?.message?.id) {
+    section('14. Mark message read (POST /messaging/messages/:id/read)');
+    const { status: initialReadStateStatus, json: initialReadState } = await api('GET', `/messaging/encounters/${encounterId}/read-state`);
+    assert('Initial read-state returns 200', initialReadStateStatus === 200);
+    assert('Initial read-state is empty', initialReadState?.lastReadMessageId == null);
+
+    const { status: s3, json: readRes } = await api('POST', `/messaging/messages/${ack.message.id}/read`);
     assert('Returns 200/201', s3 === 200 || s3 === 201);
     assert('Returns { ok: true }', readRes?.ok === true);
+
+    const { status: finalReadStateStatus, json: finalReadState } = await api('GET', `/messaging/encounters/${encounterId}/read-state`);
+    assert('Updated read-state returns 200', finalReadStateStatus === 200);
+    assert('Read-state points at the message just read', finalReadState?.lastReadMessageId === ack.message.id);
   }
 }
 
 async function flowAlerts(hospitalId) {
-  section('14. List alerts (GET /alerts/hospitals/:hospitalId/unacknowledged)');
+  section('15. List alerts (GET /alerts/hospitals/:hospitalId/unacknowledged)');
   const { status, json } = await api('GET', `/alerts/hospitals/${hospitalId}/unacknowledged`);
   assert('Returns 200', status === 200);
   assert('Is array', Array.isArray(json));
 }
 
 async function flowDischarge(encounterId) {
-  section('15. Discharge (POST /encounters/:id/discharge)');
+  section('16. Discharge (POST /encounters/:id/discharge)');
   const { status, json } = await api('POST', `/encounters/${encounterId}/discharge`);
   assert('Returns 200/201', status === 200 || status === 201);
   assert('Status is COMPLETE', json?.status === 'COMPLETE');
@@ -272,7 +417,7 @@ async function flowDischarge(encounterId) {
 }
 
 async function flowTokenExpired() {
-  section('16. Token expiration handling (GET /auth/me with bad token)');
+  section('17. Token expiration handling (GET /auth/me with bad token)');
   const savedToken = token;
   token = 'expired.invalid.token';
   const { status } = await api('GET', '/auth/me');
@@ -300,12 +445,15 @@ async function main() {
     await flowGetMe();
     await flowListEncounters();
 
-    const encounter = await flowCreatePatientAndEncounter();
-    if (!encounter?.id) {
+    const { encounter, patientToken } = await flowCreatePatientAndEncounter(user.hospital.slug);
+    if (!encounter?.id || !patientToken) {
       console.log(`\n${C.red}${C.bold}Could not create encounter — cannot continue.${C.reset}`);
       process.exit(1);
     }
 
+    await flowPatientEncounterApis(encounter.id, patientToken);
+    await flowDerivedAlertRule(encounter.id);
+    await flowPatientCancel(user.hospital.slug);
     await flowConfirmArrival(encounter.id);
     await flowStartExam(encounter.id);
     await flowCreateAssessment(encounter.id);
@@ -328,6 +476,10 @@ async function main() {
   } catch (err) {
     console.error(`\n${C.red}${C.bold}Fatal error:${C.reset}`, err);
     process.exit(1);
+  } finally {
+    if (socket) {
+      socket.disconnect();
+    }
   }
 }
 

@@ -2,7 +2,14 @@
 
 ## Overview
 
-The Priage logging system is a hospital-grade, production-ready logging infrastructure designed to provide comprehensive request tracing, error reporting, and system monitoring across the entire NestJS backend. The system implements correlation-based request tracking, in-memory log storage with automatic retention management, and rich contextual logging to support debugging, auditing, and performance analysis.
+The Priage logging system is a hospital-grade, production-ready logging infrastructure designed to provide comprehensive request tracing, error reporting, and system monitoring across the entire NestJS backend. The system now uses correlation-based request tracking, Postgres-backed log persistence for `warn` and `error`, promoted-correlation flushing for failing request chains, strict metadata allowlisting, and BullMQ-driven retention cleanup.
+
+## Current storage defaults
+
+- persisted levels: `warn`, `error`
+- console-only by default: `info`, `debug` unless a correlation is promoted by a `warn`/`error`
+- query/report endpoints read from Postgres, not process memory
+- default retention: 30 days
 
 ## Architecture
 
@@ -20,9 +27,11 @@ The logging system consists of three primary components working together:
 1. HTTP Request arrives → CorrelationMiddleware assigns correlationId
 2. Controller receives request → Passes correlationId to service layer
 3. Service performs operations → Calls loggingService.info/warn/error/debug
-4. LoggingService stores log → In-memory Map with 24hr retention
-5. Developer queries logs → REST API or direct service access
-6. Error occurs → ErrorReportService generates comprehensive report
+4. LoggingService writes console output for all levels, buffers correlated entries in memory, and persists `warn`/`error` to Postgres
+5. Developer queries persisted logs/report snapshots → REST API
+6. Retention cleanup runs daily via BullMQ
+7. Error or warning promotes the correlation → buffered debug/info steps are flushed to Postgres
+8. ErrorReportService generates and stores a sanitized snapshot from persisted rows
 ```
 
 ## Features
@@ -32,7 +41,7 @@ The logging system consists of three primary components working together:
 Every HTTP request receives a unique correlation ID that follows the request through its entire lifecycle. This enables developers to:
 
 - Track a single request across multiple services and operations
-- Reconstruct the complete execution path for any request
+- Reconstruct the complete execution path for failing/promoted requests
 - Group related log entries together for analysis
 - Debug complex issues by following the request flow
 
@@ -56,21 +65,22 @@ this.loggingService.info('Creating encounter', {
 });
 ```
 
-### 2. In-Memory Log Storage
+### 2. Database-Backed Log Storage
 
-Logs are stored in memory using a Map-based structure that provides fast access and automatic cleanup:
+Operational logs are persisted in Postgres via Prisma:
 
-- **Storage Structure:** `Map<correlationId, LogEntry[]>`
-- **Retention Period:** 24 hours (configurable)
-- **Size Limit:** 10,000 logs maximum (oldest removed first)
-- **Performance:** O(1) lookup by correlation ID
-- **Auto-Cleanup:** Background job runs every hour to remove expired logs
+- **Persisted levels:** `warn`, `error` by default
+- **Console-only by default:** `info`, `debug`
+- **Promoted failing correlations:** buffered `debug`/`info` steps are flushed when a correlation hits `warn`/`error`
+- **Storage tables:** `LogRecord`, `ErrorReportSnapshot`
+- **Retention Period:** 30 days by default (`LOG_RETENTION_DAYS`)
+- **Auto-Cleanup:** Daily BullMQ `logging` job removes expired rows
 
 **Benefits:**
-- No database writes during normal operations (performance)
-- Fast log retrieval for recent requests
-- Automatic memory management prevents unbounded growth
-- Suitable for production environments with reasonable traffic
+- Survives process restarts and multi-instance deployment
+- Queryable through admin logging endpoints
+- Supports local Docker/Postgres and future AWS Postgres without behavior drift
+- Reduces privacy exposure through strict allowlisting before persistence
 
 ### 3. Structured Logging Context
 
@@ -149,7 +159,9 @@ Downloads error report as a formatted text file for offline analysis.
 Retrieves an existing error report by its ID.
 
 #### GET `/logging/correlation/:correlationId`
-Retrieves all log entries for a specific correlation ID.
+Retrieves persisted log entries for a specific correlation ID.
+
+For failing/promoted correlations, this includes buffered pre-error `debug`/`info` steps that were flushed during promotion. Success-only correlations may return no rows.
 
 **Response:**
 ```json
@@ -179,10 +191,12 @@ Retrieves logging system statistics.
 ```json
 {
   "totalLogs": 1247,
-  "byLevel": { "debug": 823, "info": 389, "warn": 31, "error": 4 },
-  "byService": { "EncountersService": 456, "AlertsService": 123, /* ... */ },
+  "totalReports": 12,
+  "countsByLevel": { "debug": 0, "info": 0, "warn": 31, "error": 4 },
   "oldestLog": "2026-01-19T08:15:22.000Z",
-  "newestLog": "2026-01-20T12:34:56.789Z"
+  "dbLoggingEnabled": true,
+  "dbMinLevel": "warn",
+  "retentionDays": 30
 }
 ```
 
@@ -434,15 +448,15 @@ The logging system is integrated into 13 of 15 backend modules (87% coverage):
 
 ## Performance Considerations
 
-### Memory Usage
+### Storage and Retention
 
-The in-memory log storage is designed for production use with automatic size management:
+The current logging system uses Postgres-backed storage for persisted operational logs:
 
-- **Average log size:** ~500 bytes
-- **Maximum logs:** 10,000
-- **Maximum memory:** ~5 MB
-- **Retention period:** 24 hours
-- **Cleanup frequency:** Every 1 hour
+- **Persisted levels:** `warn`, `error`
+- **Console-only by default:** `info`, `debug`
+- **Retention period:** 30 days by default
+- **Cleanup frequency:** Daily BullMQ retention job
+- **Query pagination:** defaults to 100 rows, capped at 500
 
 ### Performance Impact
 
@@ -517,7 +531,7 @@ When errors occur, users can generate comprehensive error reports to send to dev
 1. User encounters an error in the UI
 2. UI displays correlation ID (from response headers)
 3. User clicks "Report Error" button
-4. System calls `GET /logging/report/:correlationId`
+4. System calls `GET /logging/error-reports/generate?correlationId=:correlationId`
 5. User receives formatted report with all context
 6. User sends report to development team
 

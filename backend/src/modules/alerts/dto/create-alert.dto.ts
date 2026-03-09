@@ -2,6 +2,7 @@
 
 import { AlertSeverity } from '@prisma/client';
 import { IsEnum, IsInt, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Sanitize } from '../../../common/decorators/sanitize.decorator';
 
 export class CreateAlertDto {
   @IsInt()
@@ -9,6 +10,7 @@ export class CreateAlertDto {
 
   @IsString()
   @MaxLength(120)
+  @Sanitize()
   type!: string;
 
   @IsOptional()

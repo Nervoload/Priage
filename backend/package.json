@@ -10,9 +10,14 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
+    "test:realtime": "node scripts/realtime-smoke.js",
     "test:smoke": "node scripts/smoke-test-v2.js",
     "test:smoke:verbose": "node scripts/smoke-test-v2.js --verbose",
-    "test:logging": "node scripts/test-logging.js"
+    "test:dev-pipeline": "node scripts/dev-pipeline.js",
+    "test:logging": "node scripts/test-logging.js",
+    "test:logging:db": "node scripts/test-logging.js",
+    "demo:seed": "node scripts/demo-seed.js",
+    "test:platform": "node scripts/platform-smoke.js"
   },
   "dependencies": {
     "@nestjs/bullmq": "11.0.4",
@@ -26,6 +31,7 @@
     "@nestjs/websockets": "11.1.11",
     "@prisma/adapter-pg": "^7.2.0",
     "@prisma/client": "7.2.0",
+    "@socket.io/redis-adapter": "^8.3.0",
     "bcrypt": "^6.0.0",
     "bullmq": "5.58.5",
     "class-transformer": "0.5.1",
@@ -47,6 +53,7 @@
     "@types/passport-jwt": "^4.0.1",
     "@types/pg": "^8.16.0",
     "prisma": "7.2.0",
+    "socket.io-client": "^4.8.3",
     "typescript": "5.9.3"
   }
 }

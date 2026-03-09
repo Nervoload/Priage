@@ -68,46 +68,42 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     
     this.pool = pool; // Store pool reference for cleanup
 
-    // Subscribe to Prisma's query events for performance monitoring
-    this.$on('warn' as never, async (e: any) => {
-      if (this.loggingService) {
-        this.loggingService.warn(
-          'Prisma warning',
-          {
-            service: 'PrismaService',
-            operation: 'prismaWarning',
-            correlationId: undefined,
-          },
-          {
+    // Subscribe to Prisma's log events for monitoring.
+    // Wrapped in try-catch: $on() may not be available in future Prisma versions.
+    try {
+      this.$on('warn' as never, async (e: any) => {
+        if (this.loggingService) {
+          await this.loggingService.warn(
+            'Prisma warning',
+            {
+              service: 'PrismaService',
+              operation: 'prismaWarning',
+              correlationId: undefined,
+            },
+            {
+              warning: e.message,
+            },
+          );
+        } else {
+          this.logger.warn({
+            message: 'Prisma warning',
             warning: e.message,
-          },
-        );
-      } else {
-        this.logger.warn({
-          message: 'Prisma warning',
-          warning: e.message,
-        });
-      }
-    });
+          });
+        }
+      });
 
-    this.$on('error' as never, async (e: any) => {
-      if (this.loggingService) {
-        this.loggingService.error(
-          'Prisma error',
-          {
-            service: 'PrismaService',
-            operation: 'prismaError',
-            correlationId: undefined,
-          },
-          new Error(e.message),
-        );
-      } else {
+      this.$on('error' as never, async (e: any) => {
+        // Always use console fallback here to avoid recursive logging loops:
+        // If logRecord.create() fails → Prisma emits 'error' → this handler fires
+        // → loggingService.error() → persistEntry() → logRecord.create() fails → loop
         this.logger.error({
           message: 'Prisma error',
           error: e.message,
         });
-      }
-    });
+      });
+    } catch {
+      this.logger.warn('Prisma $on() event subscription unavailable — log events will not be captured');
+    }
 
     Logger.log('PrismaService pool configuration:', 'PrismaService');
     Logger.log(`  - Max connections: 20`, 'PrismaService');
@@ -131,7 +127,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         await this.$queryRaw`SELECT 1`;
         
         if (this.loggingService) {
-          this.loggingService.info(
+          await this.loggingService.info(
             'Database connection established successfully',
             {
               service: 'PrismaService',
@@ -158,7 +154,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         return;
       } catch (error) {
         if (this.loggingService) {
-          this.loggingService.error(
+          await this.loggingService.error(
             'Failed to connect to database',
             {
               service: 'PrismaService',
@@ -200,7 +196,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     try {
       await this.$disconnect();
       if (this.loggingService) {
-        this.loggingService.info(
+        await this.loggingService.info(
           'Prisma client disconnected',
           {
             service: 'PrismaService',
@@ -213,7 +209,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       }
     } catch (error) {
       if (this.loggingService) {
-        this.loggingService.error(
+        await this.loggingService.error(
           'Error disconnecting Prisma client',
           {
             service: 'PrismaService',
@@ -234,7 +230,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     try {
       await this.pool.end();
       if (this.loggingService) {
-        this.loggingService.info(
+        await this.loggingService.info(
           'Database connection pool closed',
           {
             service: 'PrismaService',
@@ -253,7 +249,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       }
     } catch (error) {
       if (this.loggingService) {
-        this.loggingService.error(
+        await this.loggingService.error(
           'Error closing database pool',
           {
             service: 'PrismaService',

@@ -457,12 +457,12 @@ services:
 
 Both are complementary and should be run together.
 
-### vs. test-auth.js
+### vs. e2e-frontend-flows.js
 
-- **test-auth.js**: Quick authentication validation
-- **smoke-test-v2.js**: Comprehensive testing including authentication plus all other modules
+- **e2e-frontend-flows.js**: Focuses on backend support for Hospital App-style flows
+- **smoke-test-v2.js**: Comprehensive testing across the broader encounter lifecycle
 
-Use `test-auth.js` for quick checks, `smoke-test-v2.js` for complete validation.
+Use `e2e-frontend-flows.js` for Hospital App flow validation, `smoke-test-v2.js` for broader backend coverage.
 
 ## Best Practices
 

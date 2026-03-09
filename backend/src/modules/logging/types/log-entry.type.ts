@@ -16,7 +16,8 @@ export interface LogContext {
   encounterId?: number;
   service: string;
   operation: string;
-  [key: string]: any;
+  // Extra runtime-only context is allowed, but persistence only keeps the strict allowlist.
+  [key: string]: unknown;
 }
 
 export interface LogEntry {
@@ -40,6 +41,9 @@ export interface LogQuery {
   startTime?: Date;
   endTime?: Date;
   userId?: number;
+  patientId?: number;
   hospitalId?: number;
   encounterId?: number;
+  limit?: number;
+  offset?: number;
 }

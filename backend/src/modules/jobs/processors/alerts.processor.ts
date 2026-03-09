@@ -7,6 +7,7 @@ import { Job } from 'bullmq';
 
 import { AlertsService } from '../../alerts/alerts.service';
 import { EventsService } from '../../events/events.service';
+import { LoggingService } from '../../logging/logging.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const DEFAULT_REASSESSMENT_MINUTES = 30;
@@ -20,6 +21,7 @@ export class AlertsProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly alerts: AlertsService,
     private readonly events: EventsService,
+    private readonly loggingService: LoggingService,
   ) {
     super();
     this.logger.log('AlertsProcessor initialized');
@@ -28,12 +30,19 @@ export class AlertsProcessor extends WorkerHost {
   async process(job: Job<any, any, string>): Promise<void> {
     const startTime = Date.now();
     
-    this.logger.debug({
-      message: 'Processing alert job',
-      jobId: job.id,
-      jobName: job.name,
-      attemptsMade: job.attemptsMade,
-    });
+    await this.loggingService.debug(
+      'Processing alert job',
+      {
+        service: 'AlertsProcessor',
+        operation: 'process',
+        correlationId: undefined,
+      },
+      {
+        jobId: job.id ? String(job.id) : undefined,
+        jobName: job.name,
+        attemptsMade: job.attemptsMade,
+      },
+    );
 
     try {
       switch (job.name) {
@@ -41,33 +50,54 @@ export class AlertsProcessor extends WorkerHost {
           await this.handleTriageReassessment();
           break;
         default:
-          this.logger.error({
-            message: 'Unknown alert job name',
-            jobId: job.id,
-            jobName: job.name,
-          });
+          await this.loggingService.error(
+            'Unknown alert job name',
+            {
+              service: 'AlertsProcessor',
+              operation: 'process',
+              correlationId: undefined,
+            },
+            new Error(`Unknown job name: ${job.name}`),
+            {
+              jobId: job.id ? String(job.id) : undefined,
+              jobName: job.name,
+            },
+          );
           throw new Error(`Unknown job name: ${job.name}`);
       }
 
       const duration = Date.now() - startTime;
       // Only log completion in debug mode to reduce noise
-      this.logger.debug({
-        message: 'Alert job completed successfully',
-        jobId: job.id,
-        jobName: job.name,
-        durationMs: duration,
-      });
+      await this.loggingService.debug(
+        'Alert job completed successfully',
+        {
+          service: 'AlertsProcessor',
+          operation: 'process',
+          correlationId: undefined,
+        },
+        {
+          jobId: job.id ? String(job.id) : undefined,
+          jobName: job.name,
+          durationMs: duration,
+        },
+      );
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.logger.error({
-        message: 'Alert job processing failed',
-        jobId: job.id,
-        jobName: job.name,
-        attemptsMade: job.attemptsMade,
-        durationMs: duration,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Alert job processing failed',
+        {
+          service: 'AlertsProcessor',
+          operation: 'process',
+          correlationId: undefined,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          jobId: job.id ? String(job.id) : undefined,
+          jobName: job.name,
+          attemptsMade: job.attemptsMade,
+          durationMs: duration,
+        },
+      );
       throw error;
     }
   }
@@ -78,11 +108,17 @@ export class AlertsProcessor extends WorkerHost {
     );
     const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000);
 
-    this.logger.debug({
-      message: 'Checking for overdue triage reassessments',
-      thresholdMinutes,
-      cutoff,
-    });
+    await this.loggingService.debug(
+      'Checking for overdue triage reassessments',
+      {
+        service: 'AlertsProcessor',
+        operation: 'handleTriageReassessment',
+        correlationId: undefined,
+      },
+      {
+        thresholdMinutes,
+      },
+    );
 
     try {
       const encounters = await this.prisma.encounter.findMany({
@@ -97,15 +133,29 @@ export class AlertsProcessor extends WorkerHost {
       if (encounters.length === 0) {
         // Silently return when no alerts needed - reduces log noise
         // Set LOG_LEVEL=debug to see these messages
-        this.logger.debug('No encounters requiring triage reassessment alerts');
+        await this.loggingService.debug(
+          'No encounters requiring triage reassessment alerts',
+          {
+            service: 'AlertsProcessor',
+            operation: 'handleTriageReassessment',
+            correlationId: undefined,
+          },
+        );
         return;
       }
 
-      this.logger.log({
-        message: 'Found encounters requiring reassessment check',
-        count: encounters.length,
-        thresholdMinutes,
-      });
+      await this.loggingService.info(
+        'Found encounters requiring reassessment check',
+        {
+          service: 'AlertsProcessor',
+          operation: 'handleTriageReassessment',
+          correlationId: undefined,
+        },
+        {
+          count: encounters.length,
+          thresholdMinutes,
+        },
+      );
 
       let alertsCreated = 0;
       let alertsSkipped = 0;
@@ -123,11 +173,19 @@ export class AlertsProcessor extends WorkerHost {
           });
 
           if (existingAlert) {
-            this.logger.debug({
-              message: 'Alert already exists for encounter',
-              encounterId: encounter.id,
-              alertId: existingAlert.id,
-            });
+            await this.loggingService.debug(
+              'Alert already exists for encounter',
+              {
+                service: 'AlertsProcessor',
+                operation: 'handleTriageReassessment',
+                correlationId: undefined,
+                encounterId: encounter.id,
+                hospitalId: encounter.hospitalId,
+              },
+              {
+                alertId: existingAlert.id,
+              },
+            );
             alertsSkipped++;
             continue;
           }
@@ -144,40 +202,63 @@ export class AlertsProcessor extends WorkerHost {
 
           void this.events.dispatchEncounterEventAndMarkProcessed(event);
 
-          this.logger.log({
-            message: 'Triage reassessment alert created',
-            encounterId: encounter.id,
-            alertId: alert.id,
-            eventId: event.id,
-          });
+          await this.loggingService.info(
+            'Triage reassessment alert created',
+            {
+              service: 'AlertsProcessor',
+              operation: 'handleTriageReassessment',
+              correlationId: undefined,
+              encounterId: encounter.id,
+              hospitalId: encounter.hospitalId,
+            },
+            {
+              alertId: alert.id,
+              eventId: event.id,
+            },
+          );
 
           alertsCreated++;
         } catch (error) {
           errors++;
-          this.logger.error({
-            message: 'Failed to create triage reassessment alert',
-            encounterId: encounter.id,
-            hospitalId: encounter.hospitalId,
-            error: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined,
-          });
+          await this.loggingService.error(
+            'Failed to create triage reassessment alert',
+            {
+              service: 'AlertsProcessor',
+              operation: 'handleTriageReassessment',
+              correlationId: undefined,
+              encounterId: encounter.id,
+              hospitalId: encounter.hospitalId,
+            },
+            error instanceof Error ? error : new Error(String(error)),
+          );
           // Continue processing other encounters even if one fails
         }
       }
 
-      this.logger.log({
-        message: 'Triage reassessment check completed',
-        totalEncounters: encounters.length,
-        alertsCreated,
-        alertsSkipped,
-        errors,
-      });
+      await this.loggingService.info(
+        'Triage reassessment check completed',
+        {
+          service: 'AlertsProcessor',
+          operation: 'handleTriageReassessment',
+          correlationId: undefined,
+        },
+        {
+          totalEncounters: encounters.length,
+          alertsCreated,
+          alertsSkipped,
+          errors,
+        },
+      );
     } catch (error) {
-      this.logger.error({
-        message: 'Triage reassessment job failed',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      await this.loggingService.error(
+        'Triage reassessment job failed',
+        {
+          service: 'AlertsProcessor',
+          operation: 'handleTriageReassessment',
+          correlationId: undefined,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
       throw error;
     }
   }

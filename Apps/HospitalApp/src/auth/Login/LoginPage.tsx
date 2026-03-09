@@ -1,5 +1,5 @@
 // HospitalApp/src/auth/Login/LoginPage.tsx
-// Login page matching the Priage landing page design
+// Login page — Tailwind-styled.
 
 import { useState } from 'react';
 import { useAuth } from '../AuthContext';
@@ -34,249 +34,67 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #e0f2fe 0%, #e9d5ff 100%)',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '2rem',
-    }}>
-      {/* Title Section */}
-      <div style={{ textAlign: 'center', marginBottom: '3rem' }}>
-        <h1 style={{
-          fontSize: '4rem',
-          fontWeight: 'bold',
-          color: '#2563eb',
-          margin: 0,
-          marginBottom: '0.5rem',
-        }}>
-          Priage
-        </h1>
-        <p style={{
-          fontSize: '1.125rem',
-          color: '#6b7280',
-          margin: 0,
-        }}>
-          Emergency Room Information & Monitoring Pipeline
-        </p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex flex-col items-center justify-center p-8">
+      {/* Branding */}
+      <div className="text-center mb-10 animate-fade-in-up">
+        <h1 className="text-5xl font-bold text-priage-600 mb-1">Priage</h1>
+        <p className="text-gray-500 text-sm">Emergency Room Information &amp; Monitoring Pipeline</p>
       </div>
 
-      {/* Login Card */}
-      <div style={{
-        backgroundColor: 'white',
-        borderRadius: '16px',
-        padding: '2.5rem',
-        boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
-        width: '100%',
-        maxWidth: '400px',
-      }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginBottom: '1.5rem',
-        }}>
-          <div style={{
-            width: '80px',
-            height: '80px',
-            borderRadius: '50%',
-            backgroundColor: '#7c3aed',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            <svg
-              width="40"
-              height="40"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="white"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="7" r="4" />
-              <path d="M5 21c0-3.5 3-5 7-5s7 1.5 7 5" />
+      {/* Card */}
+      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-[400px] animate-fade-in-up">
+        {/* Avatar */}
+        <div className="flex justify-center mb-5">
+          <div className="w-16 h-16 rounded-full bg-priage-600 flex items-center justify-center">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="7" r="4"/>
+              <path d="M5 21c0-3.5 3-5 7-5s7 1.5 7 5"/>
             </svg>
           </div>
         </div>
 
-        <h2 style={{
-          fontSize: '1.5rem',
-          fontWeight: 'bold',
-          color: '#1f2937',
-          textAlign: 'center',
-          marginBottom: '0.5rem',
-        }}>
-          Hospital App
-        </h2>
+        <h2 className="text-xl font-bold text-gray-900 text-center mb-0.5">Hospital App</h2>
+        <p className="text-xs text-gray-400 text-center mb-6">Manage patients, triage, and monitor the ER pipeline</p>
 
-        <p style={{
-          fontSize: '0.875rem',
-          color: '#9ca3af',
-          textAlign: 'center',
-          marginBottom: '2rem',
-        }}>
-          Manage patients, triage, and monitor the ER pipeline
-        </p>
-
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
-            <div style={{
-              backgroundColor: '#fef2f2',
-              border: '1px solid #fecaca',
-              borderRadius: '8px',
-              padding: '0.75rem',
-              marginBottom: '1.5rem',
-              fontSize: '0.875rem',
-              color: '#b91c1c',
-            }}>
+            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">
               {error}
             </div>
           )}
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label
-              htmlFor="email"
-              style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '500',
-                color: '#374151',
-                marginBottom: '0.5rem',
-              }}
-            >
-              Email
-            </label>
+
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
               id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '8px',
-                fontSize: '1rem',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = '#7c3aed';
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = '#d1d5db';
-              }}
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
             />
           </div>
 
-          <div style={{ marginBottom: '2rem' }}>
-            <label
-              htmlFor="password"
-              style={{
-                display: 'block',
-                fontSize: '0.875rem',
-                fontWeight: '500',
-                color: '#374151',
-                marginBottom: '0.5rem',
-              }}
-            >
-              Password
-            </label>
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
             <input
               id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                border: '1px solid #d1d5db',
-                borderRadius: '8px',
-                fontSize: '1rem',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-              onFocus={(e) => {
-                e.target.style.borderColor = '#7c3aed';
-              }}
-              onBlur={(e) => {
-                e.target.style.borderColor = '#d1d5db';
-              }}
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
             />
           </div>
 
           <button
             type="submit"
             disabled={loggingIn}
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              backgroundColor: loggingIn ? '#a78bfa' : '#7c3aed',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '1rem',
-              fontWeight: '600',
-              cursor: loggingIn ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s',
-              opacity: loggingIn ? 0.7 : 1,
-            }}
-            onMouseOver={(e) => {
-              if (!loggingIn) e.currentTarget.style.backgroundColor = '#6d28d9';
-            }}
-            onMouseOut={(e) => {
-              if (!loggingIn) e.currentTarget.style.backgroundColor = '#7c3aed';
-            }}
+            className="w-full py-2.5 bg-accent-600 text-white rounded-lg font-semibold text-sm hover:bg-accent-700 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {loggingIn ? 'Signing In…' : 'Sign In'}
           </button>
         </form>
-      </div>
-
-      {/* Footer */}
-      <div style={{
-        position: 'fixed',
-        bottom: '1rem',
-        left: 0,
-        right: 0,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '0 2rem',
-      }}>
-        <div style={{
-          backgroundColor: '#1f2937',
-          color: 'white',
-          padding: '0.5rem 1rem',
-          borderRadius: '4px',
-          fontSize: '0.75rem',
-        }}>
-          Do not sell or share my personal info
-        </div>
-        <button
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '50%',
-            backgroundColor: '#1f2937',
-            color: 'white',
-            border: 'none',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '1rem',
-            fontWeight: 'bold',
-          }}
-          onClick={() => alert('Help')}
-        >
-          ?
-        </button>
       </div>
     </div>
   );

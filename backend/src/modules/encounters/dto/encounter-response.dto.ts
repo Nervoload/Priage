@@ -3,6 +3,7 @@
 // These define the shape of data returned to clients — staff vs patient views.
 
 import { EncounterStatus } from '@prisma/client';
+import { AssetSummaryDto } from '../../assets/asset-summary.dto';
 
 // ─── Patient summary included in encounter responses ────────────────────────
 
@@ -78,7 +79,10 @@ export interface EncounterDetailDto extends EncounterSummaryDto {
     isInternal: boolean;
     createdByUserId: number | null;
     createdByPatientId: number | null;
+    attachments: AssetSummaryDto[];
   }>;
+
+  intakeImages: AssetSummaryDto[];
 
   alerts: Array<{
     id: number;
@@ -119,5 +123,8 @@ export interface PatientEncounterDto {
     content: string;
     createdByUserId: number | null;
     createdByPatientId: number | null;
+    attachments: AssetSummaryDto[];
   }>;
+
+  intakeImages: AssetSummaryDto[];
 }

@@ -1,27 +1,17 @@
 // HospitalApp/src/features/waitingroom/ChatPanel.tsx
-// Private chat panel for a single patient – admin side
-// TODO: Connect to backend WebSocket for real-time messaging
-//
-// Phase 6.2: Replace the local-only messaging flow with live WebSocket chat:
-//   1. Import { getSocket } from '../../shared/realtime/socket' and listen for
-//      'message.created' events filtered to this encounter.id.
-//   2. Wire handleSend to emit via socket (or call sendMessage from messaging.ts
-//      API) instead of the parent’s local-state onSendMessage callback.
-//   3. Remove the placeholder banner below once messages flow through the backend.
-//   4. Fetch message history on mount via listMessages() from messaging.ts.
-
 import { useState, useRef, useEffect } from 'react';
-import type { Encounter, ChatMessage } from '../../app/HospitalApp';
-import { patientName } from '../../app/HospitalApp';
+import type { Encounter, ChatMessage } from '../../shared/types/domain';
+import { patientName } from '../../shared/types/domain';
 
 interface ChatPanelProps {
     encounter: Encounter;
     messages: ChatMessage[];
-    onSendMessage: (encounterId: number, text: string) => void;
+    onSendMessage: (encounterId: number, text: string) => Promise<void>;
 }
 
 export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps) {
     const [draft, setDraft] = useState('');
+    const [sending, setSending] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     // Auto-scroll to bottom when new messages arrive
@@ -29,17 +19,22 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages.length]);
 
-    const handleSend = () => {
+    const handleSend = async () => {
         const text = draft.trim();
-        if (!text) return;
-        onSendMessage(encounter.id, text);
-        setDraft('');
+        if (!text || sending) return;
+        try {
+            setSending(true);
+            await onSendMessage(encounter.id, text);
+            setDraft('');
+        } finally {
+            setSending(false);
+        }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            handleSend();
+            void handleSend();
         }
     };
 
@@ -65,7 +60,7 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                         width: '36px',
                         height: '36px',
                         borderRadius: '50%',
-                        backgroundColor: '#7c3aed',
+                        backgroundColor: '#1e3a5f',
                         color: 'white',
                         display: 'flex',
                         alignItems: 'center',
@@ -97,26 +92,7 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                     gap: '0.75rem',
                 }}
             >
-                {/* Placeholder banner */}
-                {/* TODO: Remove this banner once backend WebSocket is connected */}
-                <div
-                    style={{
-                        backgroundColor: '#eff6ff',
-                        border: '1px solid #bfdbfe',
-                        borderRadius: '8px',
-                        padding: '0.75rem 1rem',
-                        fontSize: '0.8rem',
-                        color: '#1e40af',
-                        textAlign: 'center',
-                        marginBottom: '0.5rem',
-                    }}
-                >
-                    💬 Patient messages will appear here once the backend is connected.
-                    <br />
-                    <span style={{ fontSize: '0.7rem', color: '#3b82f6' }}>
-                        Admin messages are saved locally for now.
-                    </span>
-                </div>
+
 
                 {messages.length === 0 && (
                     <div
@@ -144,22 +120,22 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                     >
                         <div
                             style={{
-                                maxWidth: '75%',
-                                padding: '0.6rem 0.9rem',
+                                maxWidth: '70%',
+                                padding: '0.45rem 0.75rem',
                                 borderRadius: msg.sender === 'admin'
-                                    ? '12px 12px 4px 12px'
-                                    : '12px 12px 12px 4px',
-                                backgroundColor: msg.sender === 'admin' ? '#7c3aed' : '#f3f4f6',
+                                    ? '10px 10px 3px 10px'
+                                    : '10px 10px 10px 3px',
+                                backgroundColor: msg.sender === 'admin' ? '#1e3a5f' : '#f3f4f6',
                                 color: msg.sender === 'admin' ? 'white' : '#1f2937',
-                                fontSize: '0.875rem',
-                                lineHeight: 1.5,
+                                fontSize: '0.78rem',
+                                lineHeight: 1.45,
                             }}
                         >
                             <div>{msg.text}</div>
                             <div
                                 style={{
-                                    fontSize: '0.65rem',
-                                    marginTop: '0.25rem',
+                                    fontSize: '0.6rem',
+                                    marginTop: '0.15rem',
                                     opacity: 0.7,
                                     textAlign: 'right',
                                 }}
@@ -205,28 +181,28 @@ export function ChatPanel({ encounter, messages, onSendMessage }: ChatPanelProps
                     }}
                 />
                 <button
-                    onClick={handleSend}
-                    disabled={!draft.trim()}
+                    onClick={() => { void handleSend(); }}
+                    disabled={!draft.trim() || sending}
                     style={{
                         padding: '0.6rem 1.15rem',
-                        backgroundColor: draft.trim() ? '#7c3aed' : '#d1d5db',
+                        backgroundColor: draft.trim() && !sending ? '#dc2626' : '#d1d5db',
                         color: 'white',
                         border: 'none',
                         borderRadius: '8px',
-                        cursor: draft.trim() ? 'pointer' : 'default',
+                        cursor: draft.trim() && !sending ? 'pointer' : 'default',
                         fontWeight: 600,
                         fontSize: '0.875rem',
                         transition: 'background-color 0.15s',
                         whiteSpace: 'nowrap',
                     }}
                     onMouseOver={(e) => {
-                        if (draft.trim()) e.currentTarget.style.backgroundColor = '#6d28d9';
+                        if (draft.trim() && !sending) e.currentTarget.style.backgroundColor = '#b91c1c';
                     }}
                     onMouseOut={(e) => {
-                        if (draft.trim()) e.currentTarget.style.backgroundColor = '#7c3aed';
+                        if (draft.trim() && !sending) e.currentTarget.style.backgroundColor = '#dc2626';
                     }}
                 >
-                    Send
+                    {sending ? 'Sending…' : 'Send'}
                 </button>
             </div>
         </div>

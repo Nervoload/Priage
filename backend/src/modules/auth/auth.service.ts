@@ -39,7 +39,10 @@ export class AuthService {
       operation: 'login',
       correlationId,
       userId: undefined,
-    }, { email: dto.email });
+    }, {
+      hasEmail: !!dto.email,
+      loginMethod: 'password',
+    });
 
     try {
       const user = await this.prisma.user.findUnique({
@@ -48,12 +51,15 @@ export class AuthService {
       });
 
       if (!user) {
-        this.loggingService.warn('Login failed - user not found', {
+        await this.loggingService.warn('Login failed - user not found', {
           service: 'AuthService',
           operation: 'login',
           correlationId,
           userId: undefined,
-        }, { email: dto.email });
+        }, {
+          hasEmail: !!dto.email,
+          loginMethod: 'password',
+        });
         throw new UnauthorizedException('Invalid credentials');
       }
 
@@ -61,12 +67,15 @@ export class AuthService {
       const isPasswordValid = await bcrypt.compare(dto.password, user.password);
 
       if (!isPasswordValid) {
-        this.loggingService.warn('Login failed - invalid password', {
+        await this.loggingService.warn('Login failed - invalid password', {
           service: 'AuthService',
           operation: 'login',
           correlationId,
           userId: user.id,
-        }, { email: dto.email });
+        }, {
+          hasEmail: !!dto.email,
+          loginMethod: 'password',
+        });
         throw new UnauthorizedException('Invalid credentials');
       }
 
@@ -85,7 +94,10 @@ export class AuthService {
         correlationId,
         userId: user.id,
         hospitalId: user.hospitalId,
-      }, { email: user.email, role: user.role });
+      }, {
+        role: user.role,
+        loginMethod: 'password',
+      });
 
       return {
         access_token,
@@ -105,14 +117,14 @@ export class AuthService {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      this.loggingService.error('Login error', {
+      await this.loggingService.error('Login error', {
         service: 'AuthService',
         operation: 'login',
         correlationId,
         userId: undefined,
       }, error instanceof Error ? error : undefined, {
-        email: dto.email,
-        error: error instanceof Error ? error.message : String(error),
+        hasEmail: !!dto.email,
+        loginMethod: 'password',
       });
       throw error;
     }
@@ -124,7 +136,9 @@ export class AuthService {
       operation: 'validateUser',
       correlationId,
       userId: payload.userId,
-    }, { email: payload.email });
+    }, {
+      role: payload.role,
+    });
 
     try {
       const user = await this.prisma.user.findUnique({
@@ -133,12 +147,14 @@ export class AuthService {
       });
 
       if (!user) {
-        this.loggingService.warn('JWT validation failed - user not found', {
+        await this.loggingService.warn('JWT validation failed - user not found', {
           service: 'AuthService',
           operation: 'validateUser',
           correlationId,
           userId: payload.userId,
-        }, { email: payload.email });
+        }, {
+          role: payload.role,
+        });
         throw new UnauthorizedException('User not found');
       }
 
@@ -148,7 +164,9 @@ export class AuthService {
         correlationId,
         userId: user.id,
         hospitalId: user.hospitalId,
-      }, { email: user.email, role: user.role });
+      }, {
+        role: user.role,
+      });
 
       return {
         userId: user.id,
@@ -161,14 +179,13 @@ export class AuthService {
       if (error instanceof UnauthorizedException) {
         throw error;
       }
-      this.loggingService.error('JWT validation error', {
+      await this.loggingService.error('JWT validation error', {
         service: 'AuthService',
         operation: 'validateUser',
         correlationId,
         userId: payload.userId,
       }, error instanceof Error ? error : undefined, {
-        email: payload.email,
-        error: error instanceof Error ? error.message : String(error),
+        role: payload.role,
       });
       throw error;
     }

@@ -8,6 +8,7 @@ import { EventsModule } from '../events/events.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AlertsProcessor } from './processors/alerts.processor';
 import { EventsProcessor } from './processors/events.processor';
+import { LoggingProcessor } from './processors/logging.processor';
 import { JobsService } from './jobs.service';
 
 const redisHost = process.env.REDIS_HOST ?? 'localhost';
@@ -29,10 +30,14 @@ const redisPort = Number(process.env.REDIS_PORT ?? '6379');
       name: 'alerts',
       defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
     }),
+    BullModule.registerQueue({
+      name: 'logging',
+      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+    }),
     PrismaModule,
     EventsModule,
     AlertsModule,
   ],
-  providers: [JobsService, EventsProcessor, AlertsProcessor],
+  providers: [JobsService, EventsProcessor, AlertsProcessor, LoggingProcessor],
 })
 export class JobsModule {}

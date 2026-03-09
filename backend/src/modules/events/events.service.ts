@@ -1,7 +1,7 @@
 // backend/src/modules/events/events.service.ts
 // Domain event helpers for encounter-centric events.
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { EncounterEvent, EventType, Prisma } from '@prisma/client';
 
 import { LoggingService } from '../logging/logging.service';
@@ -10,6 +10,7 @@ import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   EncounterUpdatedPayload,
   MessageCreatedPayload,
+  MessageReadPayload,
   AlertCreatedPayload,
   AlertAcknowledgedPayload,
   AlertResolvedPayload,
@@ -33,6 +34,7 @@ export class EventsService {
   private readonly logger = new Logger(EventsService.name);
 
   constructor(
+    @Inject(forwardRef(() => RealtimeGateway))
     private readonly realtime: RealtimeGateway,
     private readonly loggingService: LoggingService,
     private readonly prisma: PrismaService,
@@ -91,7 +93,7 @@ export class EventsService {
 
       return event;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to create encounter event in transaction',
         {
           service: 'EventsService',
@@ -141,19 +143,46 @@ export class EventsService {
         case EventType.STATUS_CHANGE:
         case EventType.TRIAGE_CREATED:
         case EventType.TRIAGE_COMPLETED:
-          this.realtime.emitEncounterUpdated(event.hospitalId, event.encounterId, payloadBase as EncounterUpdatedPayload);
+          await this.realtime.emitEncounterUpdated(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as EncounterUpdatedPayload,
+          );
           break;
         case EventType.MESSAGE_CREATED:
-          this.realtime.emitMessageCreated(event.hospitalId, event.encounterId, payloadBase as MessageCreatedPayload);
+          await this.realtime.emitMessageCreated(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as MessageCreatedPayload,
+          );
+          break;
+        case EventType.MESSAGE_READ:
+          await this.realtime.emitMessageRead(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as unknown as MessageReadPayload,
+          );
           break;
         case EventType.ALERT_CREATED:
-          this.realtime.emitAlertCreated(event.hospitalId, event.encounterId, payloadBase as AlertCreatedPayload);
+          await this.realtime.emitAlertCreated(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as AlertCreatedPayload,
+          );
           break;
         case EventType.ALERT_ACKNOWLEDGED:
-          this.realtime.emitAlertAcknowledged(event.hospitalId, event.encounterId, payloadBase as unknown as AlertAcknowledgedPayload);
+          await this.realtime.emitAlertAcknowledged(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as unknown as AlertAcknowledgedPayload,
+          );
           break;
         case EventType.ALERT_RESOLVED:
-          this.realtime.emitAlertResolved(event.hospitalId, event.encounterId, payloadBase as unknown as AlertResolvedPayload);
+          await this.realtime.emitAlertResolved(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as unknown as AlertResolvedPayload,
+          );
           break;
         default:
           this.loggingService.debug(
@@ -188,7 +217,7 @@ export class EventsService {
       );
       return true;
     } catch (error) {
-      this.loggingService.error(
+      await this.loggingService.error(
         'Failed to dispatch encounter event to realtime',
         {
           service: 'EventsService',
@@ -238,11 +267,4 @@ export class EventsService {
 
     return this.dispatchEncounterEventAndMarkProcessed(event);
   }
-
-  // Phase 6.1: Add an SSE stream method here, e.g.:
-  //   subscribeToHospitalStream(hospitalId: number): Observable<MessageEvent>
-  // This would use an RxJS Subject per hospital to push encounter events,
-  // alerts, and triage updates to connected EventSource clients on the frontend.
-  // The frontend useAlerts hook would replace its setInterval polling with
-  // new EventSource('/events/stream') for instant, low-overhead updates.
 }

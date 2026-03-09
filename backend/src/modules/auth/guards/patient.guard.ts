@@ -4,6 +4,7 @@
 // Attaches { patientId, sessionId, encounterId, hospitalId } to request.patientUser.
 
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { EncounterStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface PatientContext {
@@ -33,7 +34,10 @@ export class PatientGuard implements CanActivate {
         encounterId: true,
         expiresAt: true,
         encounter: {
-          select: { hospitalId: true },
+          select: {
+            hospitalId: true,
+            status: true,
+          },
         },
       },
     });
@@ -45,6 +49,17 @@ export class PatientGuard implements CanActivate {
     // Check expiry if set
     if (session.expiresAt && session.expiresAt < new Date()) {
       throw new UnauthorizedException('Patient session has expired');
+    }
+
+    if (
+      session.encounter &&
+      (
+        session.encounter.status === EncounterStatus.COMPLETE ||
+        session.encounter.status === EncounterStatus.CANCELLED ||
+        session.encounter.status === EncounterStatus.UNRESOLVED
+      )
+    ) {
+      throw new UnauthorizedException('Patient session is no longer active');
     }
 
     const patientUser: PatientContext = {

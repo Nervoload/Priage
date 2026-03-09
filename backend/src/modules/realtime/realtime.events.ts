@@ -13,6 +13,7 @@
 export const RealtimeEvents = {
   EncounterUpdated: 'encounter.updated',
   MessageCreated: 'message.created',
+  MessageRead: 'message.read',
   AlertCreated: 'alert.created',
   AlertAcknowledged: 'alert.acknowledged',
   AlertResolved: 'alert.resolved',
@@ -60,6 +61,15 @@ export interface MessageCreatedPayload extends BaseEventPayload {
     messageId: number;
     senderType: 'PATIENT' | 'USER' | 'SYSTEM';
     isInternal: boolean;
+    attachmentCount?: number;
+  };
+}
+
+export interface MessageReadPayload extends BaseEventPayload {
+  metadata: {
+    messageId: number;
+    lastReadMessageId: number;
+    lastReadAt: Date;
   };
 }
 
@@ -91,6 +101,7 @@ export interface AlertResolvedPayload extends BaseEventPayload {
 export interface RealtimeEventMap {
   [RealtimeEvents.EncounterUpdated]: EncounterUpdatedPayload;
   [RealtimeEvents.MessageCreated]: MessageCreatedPayload;
+  [RealtimeEvents.MessageRead]: MessageReadPayload;
   [RealtimeEvents.AlertCreated]: AlertCreatedPayload;
   [RealtimeEvents.AlertAcknowledged]: AlertAcknowledgedPayload;
   [RealtimeEvents.AlertResolved]: AlertResolvedPayload;

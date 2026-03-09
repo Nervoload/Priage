@@ -2,43 +2,58 @@
 // realtime.gateway.ts
 // Written by: John Surette
 // Date Created: Dec 8 2025
-// Last Edited: Jan 6 2026
+// Last Edited: Feb 28 2026
 // WebSocket gateway (Socket.IO) for pushing live updates to patient + hospital apps.
 
+import { BadRequestException, ForbiddenException, Inject, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import {
+  ConnectedSocket,
+  MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
   OnGatewayInit,
+  SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
-import jwt from 'jsonwebtoken';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { randomUUID } from 'crypto';
+import { Role } from '@prisma/client';
 import type { Server, Socket } from 'socket.io';
 
 import { LoggingService } from '../logging/logging.service';
+import { CreateMessageDto } from '../messaging/dto/create-message.dto';
+import { MessagingService } from '../messaging/messaging.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SendMessageWsDto } from './dto/send-message.ws.dto';
+import { RealtimeAuthService, TrustedRealtimeUser } from './realtime-auth.service';
+import { RealtimeRedisAdapterService } from './realtime-redis-adapter.service';
 import {
   AlertAcknowledgedPayload,
   AlertCreatedPayload,
   AlertResolvedPayload,
   EncounterUpdatedPayload,
   MessageCreatedPayload,
+  MessageReadPayload,
   RealtimeEvents,
 } from './realtime.events';
 import { encounterRoomKey, hospitalRoomKey } from './realtime.rooms';
 
-type StaffSocketClaims = {
-  userId: number;
-  hospitalId: number;
-  role?: string;
-};
+type MessageSendAck =
+  | { ok: true; message: unknown }
+  | { ok: false; error: { code: string; message: string } };
 
 @WebSocketGateway({
   cors: { origin: true, credentials: true },
 })
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
+  private static readonly MESSAGE_SEND_ALLOWED_ROLES = new Set<Role>([
+    Role.NURSE,
+    Role.DOCTOR,
+    Role.ADMIN,
+  ]);
 
   @WebSocketServer()
   private readonly server!: Server;
@@ -48,28 +63,39 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   constructor(
     private readonly prisma: PrismaService,
     private readonly loggingService: LoggingService,
+    private readonly realtimeRedisAdapter: RealtimeRedisAdapterService,
+    private readonly realtimeAuthService: RealtimeAuthService,
+    @Inject(forwardRef(() => MessagingService))
+    private readonly messagingService: MessagingService,
   ) {}
 
-  afterInit(server: Server) {
+  async afterInit(server: Server) {
+    try {
+      await this.realtimeRedisAdapter.attach(server);
+    } catch (error) {
+      this.logger.error(
+        'Failed to attach Redis adapter, falling back to default in-memory adapter',
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
     this.logger.log('WebSocket Gateway initialized');
-    this.logger.log(`CORS enabled for all origins`);
-    
+    this.logger.log('CORS enabled for all origins');
+
     this.loggingService.info('WebSocket Gateway initialized', {
       service: 'RealtimeGateway',
       operation: 'afterInit',
     }, {
       corsEnabled: true,
     });
-    
-    // Set up server-level error handling
+
     server.on('error', (error) => {
       this.logger.error({
         message: 'WebSocket server error',
         error: error.message,
         stack: error.stack,
       });
-      
-      this.loggingService.error('WebSocket server error', {
+
+      void this.loggingService.error('WebSocket server error', {
         service: 'RealtimeGateway',
         operation: 'serverError',
       }, error);
@@ -78,13 +104,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   async handleConnection(client: Socket): Promise<void> {
     const clientId = client.id;
-    
+
     this.logger.log({
       message: 'New WebSocket connection attempt',
       clientId,
       remoteAddress: client.handshake.address,
     });
-    
+
     this.loggingService.info('New WebSocket connection attempt', {
       service: 'RealtimeGateway',
       operation: 'handleConnection',
@@ -96,128 +122,35 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const token = this.extractToken(client);
       if (!token) {
-        this.logger.warn({
-          message: 'Connection rejected: No authentication token',
-          clientId,
-        });
-        
-        this.loggingService.warn('Connection rejected - no authentication token', {
+        await this.loggingService.warn('Connection rejected - no authentication token', {
           service: 'RealtimeGateway',
           operation: 'handleConnection',
         }, {
           clientId,
         });
-        
         client.disconnect();
         return;
       }
 
-      const secret = process.env.JWT_SECRET;
-      if (!secret) {
-        this.loggingService.error('Connection rejected - JWT_SECRET is not configured', {
-          service: 'RealtimeGateway',
-          operation: 'handleConnection',
-        }, new Error('JWT_SECRET environment variable is required'), {
-          clientId,
-        });
-        client.disconnect();
-        return;
-      }
+      const trustedUser = await this.realtimeAuthService.validateStaffToken(token);
+      client.data.user = trustedUser;
 
-      let claims: StaffSocketClaims;
-      try {
-        claims = jwt.verify(token, secret) as StaffSocketClaims;
-      } catch (jwtError) {
-        this.logger.warn({
-          message: 'Connection rejected: Invalid JWT token',
-          clientId,
-          error: jwtError instanceof Error ? jwtError.message : String(jwtError),
-        });
-        
-        this.loggingService.warn('Connection rejected - invalid JWT token', {
-          service: 'RealtimeGateway',
-          operation: 'handleConnection',
-        }, {
-          clientId,
-          error: jwtError instanceof Error ? jwtError.message : String(jwtError),
-        });
-        
-        client.disconnect();
-        return;
-      }
-
-      if (!claims?.userId || !claims?.hospitalId) {
-        this.logger.warn({
-          message: 'Connection rejected: Invalid token claims',
-          clientId,
-          claims,
-        });
-        
-        this.loggingService.warn('Connection rejected - invalid token claims', {
-          service: 'RealtimeGateway',
-          operation: 'handleConnection',
-        }, {
-          clientId,
-          hasClaims: !!claims,
-          hasUserId: !!claims?.userId,
-          hasHospitalId: !!claims?.hospitalId,
-        });
-        
-        client.disconnect();
-        return;
-      }
-
-      const user = await this.prisma.user.findUnique({
-        where: { id: claims.userId },
-        select: { id: true, hospitalId: true, role: true },
-      });
-
-      if (!user || user.hospitalId !== claims.hospitalId) {
-        this.loggingService.warn('Connection rejected - token claims do not match current user state', {
-          service: 'RealtimeGateway',
-          operation: 'handleConnection',
-        }, {
-          clientId,
-          tokenUserId: claims.userId,
-          tokenHospitalId: claims.hospitalId,
-          userFound: !!user,
-          actualHospitalId: user?.hospitalId,
-        });
-        client.disconnect();
-        return;
-      }
-
-      const trustedClaims: StaffSocketClaims = {
-        userId: user.id,
-        hospitalId: user.hospitalId,
-        role: user.role,
-      };
-
-      client.data.user = trustedClaims;
       this.connectedClients.set(clientId, {
-        userId: user.id,
-        hospitalId: user.hospitalId,
+        userId: trustedUser.userId,
+        hospitalId: trustedUser.hospitalId,
         connectedAt: new Date(),
       });
 
-      await client.join(hospitalRoomKey(user.hospitalId));
-      
-      this.logger.log({
-        message: 'Client joined hospital room',
-        clientId,
-        userId: user.id,
-        hospitalId: user.hospitalId,
-        role: user.role,
-      });
-      
+      await client.join(hospitalRoomKey(trustedUser.hospitalId));
+
       this.loggingService.info('Client joined hospital room', {
         service: 'RealtimeGateway',
         operation: 'handleConnection',
-        userId: user.id,
-        hospitalId: user.hospitalId,
+        userId: trustedUser.userId,
+        hospitalId: trustedUser.hospitalId,
       }, {
         clientId,
-        role: user.role,
+        role: trustedUser.role,
       });
 
       const requestedEncounterIds = this.getEncounterIdsFromHandshake(client);
@@ -226,7 +159,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
           const encounters = await this.prisma.encounter.findMany({
             where: {
               id: { in: requestedEncounterIds },
-              hospitalId: user.hospitalId,
+              hospitalId: trustedUser.hospitalId,
             },
             select: { id: true },
           });
@@ -235,81 +168,48 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
             await client.join(encounterRoomKey(encounter.id));
           }
 
-          this.logger.log({
-            message: 'Client subscribed to encounter rooms',
-            clientId,
-            userId: user.id,
-            requestedCount: requestedEncounterIds.length,
-            subscribedCount: encounters.length,
-            encounterIds: encounters.map(e => e.id),
-          });
-          
           this.loggingService.info('Client subscribed to encounter rooms', {
             service: 'RealtimeGateway',
             operation: 'handleConnection',
-            userId: user.id,
-            hospitalId: user.hospitalId,
+            userId: trustedUser.userId,
+            hospitalId: trustedUser.hospitalId,
           }, {
             clientId,
             requestedCount: requestedEncounterIds.length,
             subscribedCount: encounters.length,
-            encounterIds: encounters.map(e => e.id),
+            encounterIds: encounters.map((encounter) => encounter.id),
           });
         } catch (dbError) {
-          this.logger.error({
-            message: 'Failed to subscribe to encounter rooms',
-            clientId,
-            userId: user.id,
-            requestedEncounterIds,
-            error: dbError instanceof Error ? dbError.message : String(dbError),
-            stack: dbError instanceof Error ? dbError.stack : undefined,
-          });
-          
-          this.loggingService.error('Failed to subscribe to encounter rooms', {
+          await this.loggingService.error('Failed to subscribe to encounter rooms', {
             service: 'RealtimeGateway',
             operation: 'handleConnection',
-            userId: user.id,
-            hospitalId: user.hospitalId,
+            userId: trustedUser.userId,
+            hospitalId: trustedUser.hospitalId,
           }, dbError instanceof Error ? dbError : undefined, {
             clientId,
             requestedEncounterIds,
           });
-          // Don't disconnect - hospital room subscription is still valid
         }
       }
 
-      this.logger.log({
-        message: 'WebSocket connection established successfully',
-        clientId,
-        userId: user.id,
-        hospitalId: user.hospitalId,
-        totalConnections: this.connectedClients.size,
-      });
-      
       this.loggingService.info('WebSocket connection established successfully', {
         service: 'RealtimeGateway',
         operation: 'handleConnection',
-        userId: user.id,
-        hospitalId: user.hospitalId,
+        userId: trustedUser.userId,
+        hospitalId: trustedUser.hospitalId,
       }, {
         clientId,
         totalConnections: this.connectedClients.size,
       });
     } catch (error) {
-      this.logger.error({
-        message: 'Unexpected error during connection handling',
-        clientId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      
-      this.loggingService.error('Unexpected error during WebSocket connection', {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.loggingService.warn('Connection rejected during authentication', {
         service: 'RealtimeGateway',
         operation: 'handleConnection',
-      }, error instanceof Error ? error : undefined, {
+      }, {
         clientId,
+        error: message,
       });
-      
       client.disconnect();
     }
   }
@@ -317,19 +217,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   handleDisconnect(client: Socket): void {
     const clientId = client.id;
     const clientInfo = this.connectedClients.get(clientId);
-    
+
     if (clientInfo) {
       const connectionDuration = Date.now() - clientInfo.connectedAt.getTime();
-      
-      this.logger.log({
-        message: 'WebSocket client disconnected',
-        clientId,
-        userId: clientInfo.userId,
-        hospitalId: clientInfo.hospitalId,
-        connectionDurationMs: connectionDuration,
-        totalConnections: this.connectedClients.size - 1,
-      });
-      
+
       this.loggingService.info('WebSocket client disconnected', {
         service: 'RealtimeGateway',
         operation: 'handleDisconnect',
@@ -340,14 +231,9 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         connectionDurationMs: connectionDuration,
         totalConnections: this.connectedClients.size - 1,
       });
-      
+
       this.connectedClients.delete(clientId);
     } else {
-      this.logger.log({
-        message: 'Unknown client disconnected',
-        clientId,
-      });
-      
       this.loggingService.debug('Unknown client disconnected', {
         service: 'RealtimeGateway',
         operation: 'handleDisconnect',
@@ -357,21 +243,155 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  emitEncounterUpdated(hospitalId: number, encounterId: number, payload: EncounterUpdatedPayload): void {
+  @SubscribeMessage('message.send')
+  async handleMessageSend(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() rawPayload: unknown,
+  ): Promise<MessageSendAck> {
+    let trustedUser = this.getTrustedUser(client);
+    if (!trustedUser) {
+      trustedUser = await this.hydrateTrustedUser(client);
+    }
+    if (!trustedUser) {
+      return {
+        ok: false,
+        error: { code: 'UNAUTHORIZED', message: 'Socket is not authenticated' },
+      };
+    }
+
+    if (!RealtimeGateway.MESSAGE_SEND_ALLOWED_ROLES.has(trustedUser.role as Role)) {
+      await this.loggingService.warn('Socket message rejected - role not permitted', {
+        service: 'RealtimeGateway',
+        operation: 'handleMessageSend',
+        userId: trustedUser.userId,
+        hospitalId: trustedUser.hospitalId,
+        encounterId: undefined,
+      }, {
+        clientId: client.id,
+        role: trustedUser.role,
+      });
+
+      return {
+        ok: false,
+        error: { code: 'FORBIDDEN', message: 'User role cannot send staff messages' },
+      };
+    }
+
+    const correlationId = `ws-${randomUUID()}`;
+    const payload = plainToInstance(SendMessageWsDto, rawPayload);
+    const errors = await validate(payload);
+    const trimmedContent = payload.content?.trim();
+    const assetIds = [...new Set((payload.assetIds ?? []).filter((value) => Number.isInteger(value) && value > 0))];
+
+    if (errors.length > 0 || (!trimmedContent && assetIds.length === 0)) {
+      const message = errors.length > 0
+        ? this.formatValidationErrors(errors)
+        : 'content or assetIds is required';
+
+      await this.loggingService.warn('Socket message rejected - validation failed', {
+        service: 'RealtimeGateway',
+        operation: 'handleMessageSend',
+        correlationId,
+        userId: trustedUser.userId,
+        hospitalId: trustedUser.hospitalId,
+        encounterId: payload.encounterId,
+      }, {
+        clientId: client.id,
+        error: message,
+      });
+
+      return {
+        ok: false,
+        error: { code: 'VALIDATION_ERROR', message },
+      };
+    }
+
+    const dto: CreateMessageDto = {
+      content: trimmedContent,
+      isInternal: payload.isInternal ?? false,
+      assetIds,
+    };
+
+    try {
+      const message = await this.messagingService.createMessage(
+        payload.encounterId,
+        trustedUser.hospitalId,
+        trustedUser.userId,
+        dto,
+        correlationId,
+      );
+
+      this.loggingService.info('Socket message created successfully', {
+        service: 'RealtimeGateway',
+        operation: 'handleMessageSend',
+        correlationId,
+        userId: trustedUser.userId,
+        hospitalId: trustedUser.hospitalId,
+        encounterId: payload.encounterId,
+      }, {
+        clientId: client.id,
+        messageId: message.id,
+      });
+
+      return { ok: true, message };
+    } catch (error) {
+      const mapped = this.mapMessageSendError(error);
+
+      if (mapped.code === 'INTERNAL_ERROR') {
+        await this.loggingService.error(
+          'Socket message send failed',
+          {
+            service: 'RealtimeGateway',
+            operation: 'handleMessageSend',
+            correlationId,
+            userId: trustedUser.userId,
+            hospitalId: trustedUser.hospitalId,
+            encounterId: payload.encounterId,
+          },
+          error instanceof Error ? error : undefined,
+          {
+            clientId: client.id,
+            errorCode: mapped.code,
+            errorMessage: mapped.message,
+          },
+        );
+      } else {
+        await this.loggingService.warn(
+          'Socket message send failed',
+          {
+            service: 'RealtimeGateway',
+            operation: 'handleMessageSend',
+            correlationId,
+            userId: trustedUser.userId,
+            hospitalId: trustedUser.hospitalId,
+            encounterId: payload.encounterId,
+          },
+          {
+            clientId: client.id,
+            errorCode: mapped.code,
+            errorMessage: mapped.message,
+          },
+        );
+      }
+
+      return {
+        ok: false,
+        error: mapped,
+      };
+    }
+  }
+
+  async emitEncounterUpdated(
+    hospitalId: number,
+    encounterId: number,
+    payload: EncounterUpdatedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).emit(RealtimeEvents.EncounterUpdated, payload);
-      this.server.to(encounterRoom).emit(RealtimeEvents.EncounterUpdated, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.EncounterUpdated, payload);
 
-      this.logger.debug({
-        message: 'Encounter update emitted',
-        hospitalId,
-        encounterId,
-        event: RealtimeEvents.EncounterUpdated,
-      });
-      
       this.loggingService.debug('Encounter update emitted', {
         service: 'RealtimeGateway',
         operation: 'emitEncounterUpdated',
@@ -381,15 +401,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         event: RealtimeEvents.EncounterUpdated,
       });
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to emit encounter update',
-        hospitalId,
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      
-      this.loggingService.error('Failed to emit encounter update', {
+      await this.loggingService.error('Failed to emit encounter update', {
         service: 'RealtimeGateway',
         operation: 'emitEncounterUpdated',
         hospitalId,
@@ -398,107 +410,136 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  // Phase 6.2: Add a @SubscribeMessage('message.send') handler here to accept
-  // incoming chat messages via WebSocket instead of REST POST. This would allow
-  // the frontend ChatPanel to send messages over the existing Socket.IO connection
-  // instead of calling POST /messaging/encounters/:id/messages, reducing latency
-  // for the staff chat experience. The handler should validate the JWT, call
-  // MessagingService.createMessage(), and emit the result to the encounter room.
-  emitMessageCreated(hospitalId: number, encounterId: number, payload: MessageCreatedPayload): void {
+  async emitMessageCreated(
+    hospitalId: number,
+    encounterId: number,
+    payload: MessageCreatedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).emit(RealtimeEvents.MessageCreated, payload);
-      this.server.to(encounterRoom).emit(RealtimeEvents.MessageCreated, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageCreated, payload);
 
-      this.logger.debug({
-        message: 'Message created event emitted',
+      this.loggingService.debug('Message created event emitted', {
+        service: 'RealtimeGateway',
+        operation: 'emitMessageCreated',
         hospitalId,
         encounterId,
+      }, {
+        event: RealtimeEvents.MessageCreated,
       });
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to emit message created',
+      await this.loggingService.error('Failed to emit message created', {
+        service: 'RealtimeGateway',
+        operation: 'emitMessageCreated',
         hospitalId,
         encounterId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      }, error instanceof Error ? error : undefined);
     }
   }
 
-  emitAlertCreated(hospitalId: number, encounterId: number, payload: AlertCreatedPayload): void {
+  async emitAlertCreated(
+    hospitalId: number,
+    encounterId: number,
+    payload: AlertCreatedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).emit(RealtimeEvents.AlertCreated, payload);
-      this.server.to(encounterRoom).emit(RealtimeEvents.AlertCreated, payload);
-
-      this.logger.debug({
-        message: 'Alert created event emitted',
-        hospitalId,
-        encounterId,
-      });
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertCreated, payload);
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to emit alert created',
-        hospitalId,
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      await this.loggingService.error(
+        'Failed to emit alert created',
+        {
+          service: 'RealtimeGateway',
+          operation: 'emitAlertCreated',
+          hospitalId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 
-  emitAlertAcknowledged(hospitalId: number, encounterId: number, payload: AlertAcknowledgedPayload): void {
+  async emitMessageRead(
+    hospitalId: number,
+    encounterId: number,
+    payload: MessageReadPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
-      this.server.to(encounterRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageRead, payload);
 
-      this.logger.debug({
-        message: 'Alert acknowledged event emitted',
+      this.loggingService.debug('Message read event emitted', {
+        service: 'RealtimeGateway',
+        operation: 'emitMessageRead',
         hospitalId,
         encounterId,
+      }, {
+        event: RealtimeEvents.MessageRead,
       });
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to emit alert acknowledged',
+      await this.loggingService.error('Failed to emit message read', {
+        service: 'RealtimeGateway',
+        operation: 'emitMessageRead',
         hospitalId,
         encounterId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      }, error instanceof Error ? error : undefined);
     }
   }
 
-  emitAlertResolved(hospitalId: number, encounterId: number, payload: AlertResolvedPayload): void {
+  async emitAlertAcknowledged(
+    hospitalId: number,
+    encounterId: number,
+    payload: AlertAcknowledgedPayload,
+  ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).emit(RealtimeEvents.AlertResolved, payload);
-      this.server.to(encounterRoom).emit(RealtimeEvents.AlertResolved, payload);
-
-      this.logger.debug({
-        message: 'Alert resolved event emitted',
-        hospitalId,
-        encounterId,
-      });
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
     } catch (error) {
-      this.logger.error({
-        message: 'Failed to emit alert resolved',
-        hospitalId,
-        encounterId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      await this.loggingService.error(
+        'Failed to emit alert acknowledged',
+        {
+          service: 'RealtimeGateway',
+          operation: 'emitAlertAcknowledged',
+          hospitalId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 
-  /**
-   * Get connection statistics for monitoring
-   */
+  async emitAlertResolved(
+    hospitalId: number,
+    encounterId: number,
+    payload: AlertResolvedPayload,
+  ): Promise<void> {
+    try {
+      const hospitalRoom = hospitalRoomKey(hospitalId);
+      const encounterRoom = encounterRoomKey(encounterId);
+
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertResolved, payload);
+    } catch (error) {
+      await this.loggingService.error(
+        'Failed to emit alert resolved',
+        {
+          service: 'RealtimeGateway',
+          operation: 'emitAlertResolved',
+          hospitalId,
+          encounterId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+
   getConnectionStats() {
     const stats = {
       totalConnections: this.connectedClients.size,
@@ -533,5 +574,75 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       return ids.map((value) => Number(value)).filter((value) => Number.isFinite(value));
     }
     return [];
+  }
+
+  private getTrustedUser(client: Socket): TrustedRealtimeUser | null {
+    const user = client.data.user as TrustedRealtimeUser | undefined;
+    return user?.userId && user?.hospitalId ? user : null;
+  }
+
+  private async hydrateTrustedUser(client: Socket): Promise<TrustedRealtimeUser | null> {
+    const existing = this.getTrustedUser(client);
+    if (existing) {
+      return existing;
+    }
+
+    const token = this.extractToken(client);
+    if (!token) {
+      return null;
+    }
+
+    try {
+      const trustedUser = await this.realtimeAuthService.validateStaffToken(token);
+      client.data.user = trustedUser;
+
+      if (!this.connectedClients.has(client.id)) {
+        this.connectedClients.set(client.id, {
+          userId: trustedUser.userId,
+          hospitalId: trustedUser.hospitalId,
+          connectedAt: new Date(),
+        });
+      }
+
+      await client.join(hospitalRoomKey(trustedUser.hospitalId));
+
+      const requestedEncounterIds = this.getEncounterIdsFromHandshake(client);
+      if (requestedEncounterIds.length > 0) {
+        const encounters = await this.prisma.encounter.findMany({
+          where: {
+            id: { in: requestedEncounterIds },
+            hospitalId: trustedUser.hospitalId,
+          },
+          select: { id: true },
+        });
+
+        for (const encounter of encounters) {
+          await client.join(encounterRoomKey(encounter.id));
+        }
+      }
+
+      return trustedUser;
+    } catch {
+      return null;
+    }
+  }
+
+  private formatValidationErrors(errors: Awaited<ReturnType<typeof validate>>): string {
+    return errors
+      .flatMap((error) => Object.values(error.constraints ?? {}))
+      .join(', ');
+  }
+
+  private mapMessageSendError(error: unknown): { code: string; message: string } {
+    if (error instanceof NotFoundException) {
+      return { code: 'NOT_FOUND', message: error.message };
+    }
+    if (error instanceof ForbiddenException) {
+      return { code: 'FORBIDDEN', message: error.message };
+    }
+    if (error instanceof BadRequestException) {
+      return { code: 'VALIDATION_ERROR', message: error.message };
+    }
+    return { code: 'INTERNAL_ERROR', message: 'Failed to send message' };
   }
 }
