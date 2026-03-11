@@ -80,13 +80,11 @@ export interface UpgradeGuestPayload {
 }
 
 export interface AuthenticatedPatientSession {
-  sessionToken: string;
   patientId: number;
   patient: PatientProfile;
 }
 
 export interface GuestIntakeSession {
-  sessionToken: string;
   patientId: number;
   encounterId: number | null;
   hospitalSlug: string | null;
