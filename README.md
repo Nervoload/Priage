@@ -216,6 +216,8 @@ Useful variants:
 ```bash
 ./priage-dev reseed
 ./priage-dev test
+./priage-dev logs
+./priage-dev logs -v
 ./priage-dev reseed test
 ./priage-dev -k
 ```
@@ -227,10 +229,13 @@ What the launcher does:
 - runs `npm install` in `backend`, `Apps/PatientApp`, and `Apps/HospitalApp` only when `node_modules` is missing
 - runs `npx prisma generate`
 - runs `npx prisma migrate deploy`
-- optionally clears patient-facing dev data and re-runs `backend/scripts/seed.js`
+- creates or reuses a private local admin in `.priage-dev/accounts.json`
+- can optionally create an additional local hospital user in an existing hospital
+- optionally clears patient-facing dev data and re-runs `backend/scripts/seed.js` against the bootstrap admin hospital
 - opens the backend, Hospital App, and Patient App in separate macOS Terminal windows
 - `./priage-dev -k` or `./priage-dev kill` stops those three managed dev services and closes their Terminal windows
-- optionally runs the backend smoke tests after the API is reachable
+- optionally runs the logging test suite when `logs` or `-l` is passed
+- optionally runs the backend confidence pipeline after the API is reachable
 
 ### Manual Setup
 
@@ -273,10 +278,12 @@ npx prisma generate
 npx prisma migrate deploy
 ```
 
-#### 6. Seed local demo data if needed
+#### 6. Create a private local admin and seed demo data if needed
 
 ```bash
-node scripts/seed.js
+cd backend
+node scripts/bootstrap-dev-accounts.js
+TARGET_HOSPITAL_SLUG=<your-hospital-slug> node scripts/seed.js
 ```
 
 #### 7. Start the apps manually
@@ -383,6 +390,7 @@ npx prisma migrate dev --name <describe-change>
 npx prisma studio
 node scripts/seed.js
 node scripts/reseed-dev.js
+node scripts/bootstrap-dev-accounts.js
 ```
 
 ### Smoke And Platform Tests
@@ -392,6 +400,8 @@ cd backend
 npm run test:smoke
 npm run test:smoke:verbose
 npm run test:platform
+npm run test:logging
+npm run test:logging:verbose
 node scripts/e2e-frontend-flows.js --seed --verbose
 ```
 

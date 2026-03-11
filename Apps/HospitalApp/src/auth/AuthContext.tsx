@@ -5,7 +5,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AuthUser, LoginResponse } from '../shared/types/domain';
-import { login as apiLogin, getMe, logout as apiLogout, hasToken } from '../shared/api/auth';
+import { login as apiLogin, getMe, logout as apiLogout } from '../shared/api/auth';
 import { connectSocket, disconnectSocket } from '../shared/realtime/socket';
 
 // ─── Context shape ──────────────────────────────────────────────────────────
@@ -38,10 +38,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!hasToken()) {
-        setInitializing(false);
-        return;
-      }
       try {
         const me = await getMe();
         if (!cancelled) {
@@ -49,8 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           connectSocket();
         }
       } catch {
-        // Token expired or invalid — clear it silently
-        apiLogout();
+        // No active cookie-backed session.
       } finally {
         if (!cancelled) setInitializing(false);
       }
@@ -79,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     disconnectSocket();
-    apiLogout();
+    void apiLogout().catch(() => undefined);
     setUser(null);
   }, []);
 

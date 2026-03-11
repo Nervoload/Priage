@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto';
 import { ContextSourceType, EncounterStatus, ReviewState, TrustTier, VisibilityScope } from '@prisma/client';
 import Redis from 'ioredis';
 
+import { PATIENT_SESSION_TTL_MS } from '../../common/http/auth-cookie.util';
 import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,7 +23,6 @@ import { LocationPingDto } from './dto/location-ping.dto';
 import { UpdateIntakeDetailsDto } from './dto/update-intake-details.dto';
 
 const LOCATION_TTL_SECONDS = 600; // 10 minutes
-const PATIENT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type LocationEntry = {
   latitude: number;

@@ -17,6 +17,8 @@ const args = new Set(process.argv.slice(2));
 const wantsHelp = args.has('--help') || args.has('-h');
 const wantsReseed = args.has('reseed');
 const wantsSmoke = args.has('test') || args.has('-t');
+const wantsLogs = args.has('logs') || args.has('-l');
+const wantsVerbose = args.has('--verbose') || args.has('-v');
 const wantsKill = args.has('kill') || args.has('-k') || args.has('--kill');
 
 const services = [
@@ -27,7 +29,10 @@ const services = [
     cwd: backendDir,
     port: 3000,
     command: 'npm run start:dev',
-    env: (version) => ({ APP_VERSION: version }),
+    env: (version) => ({
+      APP_VERSION: version,
+      ...(wantsVerbose ? { LOG_LEVEL: 'verbose' } : {}),
+    }),
   },
   {
     id: 'hospital',
@@ -78,28 +83,55 @@ async function main() {
   ensureDockerServices();
   installDependencies();
   runPrismaSetup();
+  runStep('Ensuring local dev accounts', 'node', ['scripts/bootstrap-dev-accounts.js'], {
+    cwd: backendDir,
+    env: { PRIAGE_DEV_RUNTIME_DIR: runtimeDir },
+  });
+  const devAccountEnv = loadDevAccountEnv();
   if (wantsReseed) {
-    runStep('Reseeding patient-facing dev data', 'node', ['scripts/reseed-dev.js'], { cwd: backendDir });
-    runStep('Running standard seed script', 'node', ['scripts/seed.js'], { cwd: backendDir });
+    runStep('Reseeding patient-facing dev data', 'node', ['scripts/reseed-dev.js'], {
+      cwd: backendDir,
+      env: devAccountEnv,
+    });
+    runStep('Running standard seed script', 'node', ['scripts/seed.js'], {
+      cwd: backendDir,
+      env: buildSeedEnv(devAccountEnv),
+    });
   }
-  const launchedServices = launchServices(version);
-  if (wantsSmoke) {
+  const launchedServices = launchServices(version, devAccountEnv);
+  if (wantsSmoke || wantsLogs) {
     await waitForBackend(launchedServices);
+  }
+  if (wantsLogs && !wantsSmoke) {
+    const loggingScript = wantsVerbose ? 'test:logging:verbose' : 'test:logging';
+    runStep('Running logging tests', 'npm', ['run', loggingScript], {
+      cwd: backendDir,
+      env: devAccountEnv,
+    });
+  }
+  if (wantsSmoke) {
     await waitForFrontendService(services[1], 'http://localhost:5173', launchedServices);
     await waitForFrontendService(services[2], 'http://localhost:5174', launchedServices);
-    runStep('Running developer confidence pipeline', 'npm', ['run', 'test:dev-pipeline'], { cwd: backendDir });
+    runStep('Running developer confidence pipeline', 'npm', ['run', 'test:dev-pipeline'], {
+      cwd: backendDir,
+      env: devAccountEnv,
+    });
   }
   console.log('Dev stack launcher finished.');
 }
 
 function printUsage() {
-  console.log(`Usage: ./priage-dev [reseed] [test|-t]
+  console.log(`Usage: ./priage-dev [reseed] [test|-t] [logs|-l] [--verbose|-v]
 
 Options:
   kill, -k, --kill
             Stop Priage dev services and close their Terminal windows
   reseed    Wipe patient-facing dev data and run backend/scripts/seed.js
-  test, -t  Wait for the API and run backend smoke tests
+  test, -t  Wait for the API and run the backend confidence pipeline
+  logs, -l  Wait for the API and run the logging test suite
+  --verbose, -v
+            Start the backend with LOG_LEVEL=verbose and run test
+            scripts in verbose mode (extra NestJS + test detail)
   --help    Show this help text
 `);
 }
@@ -287,7 +319,7 @@ function capture(cmd, commandArgs, options = {}) {
   return result.stdout ?? '';
 }
 
-function launchServices(version) {
+function launchServices(version, sharedEnv = {}) {
   console.log('\n== Dev Servers ==');
   const launched = new Set();
   for (const service of services) {
@@ -304,7 +336,10 @@ function launchServices(version) {
       continue;
     }
 
-    const env = service.env(version);
+    const env = {
+      ...sharedEnv,
+      ...service.env(version),
+    };
     openTerminalWindow(service, env);
     launched.add(service.id);
     console.log(`[priage-dev] Opened ${service.name} on port ${service.port}.`);
@@ -679,4 +714,54 @@ function ensureManagedServiceAlive(service, launchedServices) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function loadDevAccountEnv() {
+  const manifestPath = join(runtimeDir, 'accounts.json');
+  if (!existsSync(manifestPath)) {
+    return {};
+  }
+
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const env = {};
+    if (manifest?.admin?.email) {
+      env.PRIAGE_DEV_ADMIN_EMAIL = manifest.admin.email;
+    }
+    if (manifest?.admin?.password) {
+      env.PRIAGE_DEV_ADMIN_PASSWORD = manifest.admin.password;
+    }
+    if (manifest?.admin?.hospitalSlug) {
+      env.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG = manifest.admin.hospitalSlug;
+    }
+
+    const lastAccount = Array.isArray(manifest?.accounts) && manifest.accounts.length > 0
+      ? manifest.accounts.at(-1)
+      : null;
+    if (lastAccount?.email) {
+      env.PRIAGE_DEV_LAST_USER_EMAIL = lastAccount.email;
+    }
+    if (lastAccount?.password) {
+      env.PRIAGE_DEV_LAST_USER_PASSWORD = lastAccount.password;
+    }
+    if (lastAccount?.role) {
+      env.PRIAGE_DEV_LAST_USER_ROLE = lastAccount.role;
+    }
+    if (lastAccount?.hospitalSlug) {
+      env.PRIAGE_DEV_LAST_USER_HOSPITAL_SLUG = lastAccount.hospitalSlug;
+    }
+
+    return env;
+  } catch {
+    return {};
+  }
+}
+
+function buildSeedEnv(devAccountEnv) {
+  const targetHospitalSlug = devAccountEnv.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG
+    || devAccountEnv.PRIAGE_DEV_LAST_USER_HOSPITAL_SLUG;
+  return {
+    ...devAccountEnv,
+    ...(targetHospitalSlug ? { TARGET_HOSPITAL_SLUG: targetHospitalSlug } : {}),
+  };
 }

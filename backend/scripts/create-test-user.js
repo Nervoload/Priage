@@ -3,6 +3,7 @@
 
 require('dotenv').config();
 const bcrypt = require('bcrypt');
+const { randomUUID } = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const { Pool } = require('pg');
 const { PrismaPg } = require('@prisma/adapter-pg');
@@ -15,7 +16,7 @@ const prisma = new PrismaClient({ adapter });
 async function createTestUsers() {
   console.log('Creating test users...\n');
   
-  const password = 'password123';
+  const password = process.env.TEST_USER_PASSWORD?.trim() || `Priage-${randomUUID()}`;
   const hashedPassword = await bcrypt.hash(password, 10);
   
   try {

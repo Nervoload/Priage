@@ -5,6 +5,7 @@
 
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -28,6 +29,13 @@ import { randomUUID } from 'crypto';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
+
+const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
+  EncounterStatus.EXPECTED,
+  EncounterStatus.ADMITTED,
+  EncounterStatus.TRIAGE,
+  EncounterStatus.WAITING,
+];
 
 type DraftProjection = {
   firstName?: string;
@@ -479,6 +487,8 @@ export class IntakeSessionsService {
     const projection = await this.buildOperationalProjectionTx(tx, intakeSessionId);
     const patientId = await this.resolvePatientForConfirmationTx(tx, session);
 
+    await this.assertPatientCanOpenEncounterTx(tx, patientId);
+
     const encounter = await tx.encounter.create({
       data: {
         publicId: this.newPublicId('enc'),
@@ -712,6 +722,41 @@ export class IntakeSessionsService {
     });
 
     return created.id;
+  }
+
+  private async assertPatientCanOpenEncounterTx(
+    tx: Prisma.TransactionClient,
+    patientId: number,
+  ): Promise<void> {
+    const lockedPatient = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+      SELECT "id"
+      FROM "PatientProfile"
+      WHERE "id" = ${patientId}
+      FOR UPDATE
+    `);
+
+    if (lockedPatient.length === 0) {
+      throw new NotFoundException(`Patient ${patientId} not found`);
+    }
+
+    const activeEncounter = await tx.encounter.findFirst({
+      where: {
+        patientId,
+        status: {
+          in: ACTIVE_ENCOUNTER_STATUSES,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (activeEncounter) {
+      throw new ConflictException(
+        `Patient ${patientId} already has an active encounter (${activeEncounter.status})`,
+      );
+    }
   }
 
   private async buildOperationalProjectionTx(

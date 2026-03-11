@@ -3,14 +3,14 @@ services:
     image: postgres:15
     container_name: priage-postgres
     environment:
-      POSTGRES_USER: priage
-      POSTGRES_PASSWORD: priage
-      POSTGRES_DB: priage
+      POSTGRES_USER: ${POSTGRES_USER:-priage}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-priage}
+      POSTGRES_DB: ${POSTGRES_DB:-priage}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   redis:
     image: redis:7
     container_name: priage-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"

@@ -1,11 +1,12 @@
 // Patient authentication service.
 // Handles registration, login, and profile management for patient users.
-// Uses bcrypt for password hashing and x-patient-token sessions.
+// Uses bcrypt for password hashing and opaque patient sessions.
 
 import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 
+import { PATIENT_SESSION_TTL_MS } from '../../common/http/auth-cookie.util';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterPatientDto } from './dto/register-patient.dto';
@@ -60,6 +61,7 @@ export class PatientAuthService {
       data: {
         token,
         patientId: patient.id,
+        expiresAt: this.buildSessionExpiry(),
       },
     });
 
@@ -113,6 +115,7 @@ export class PatientAuthService {
         token,
         patientId: patient.id,
         encounterId: latestSession?.encounterId ?? null,
+        expiresAt: this.buildSessionExpiry(),
       },
     });
 
@@ -250,6 +253,7 @@ export class PatientAuthService {
         token,
         patientId: patient.id,
         encounterId: currentSession?.encounterId ?? null,
+        expiresAt: this.buildSessionExpiry(),
       },
     });
 
@@ -269,5 +273,9 @@ export class PatientAuthService {
   private sanitizePatient(patient: any) {
     const { password, ...safe } = patient;
     return safe;
+  }
+
+  private buildSessionExpiry(): Date {
+    return new Date(Date.now() + PATIENT_SESSION_TTL_MS);
   }
 }

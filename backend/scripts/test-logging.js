@@ -10,7 +10,8 @@ const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
-const bcrypt = require('bcrypt');
+const { TestFixtureTracker } = require('./lib/test-fixtures');
+const { demoCookieHeader } = require('./lib/demo-gate');
 
 // Initialize Prisma with pg-adapter (Prisma 7 approach)
 const pool = new Pool({
@@ -21,6 +22,16 @@ const prisma = new PrismaClient({
   adapter,
   log: ['error', 'warn'],
 });
+const fixtures = new TestFixtureTracker(prisma, 'logging');
+
+// ============================================================================
+// CLI Options
+// ============================================================================
+
+const cliArgs = process.argv.slice(2);
+const options = {
+  verbose: cliArgs.includes('--verbose') || cliArgs.includes('-v'),
+};
 
 // ============================================================================
 // Test Configuration
@@ -48,6 +59,8 @@ let testState = {
   hospital: null,
   user: null,
   patient: null,
+  unassociatedPatientId: null,
+  intakePatientId: null,
   testEmail: null,
   accessToken: null,
   userId: null,
@@ -85,6 +98,12 @@ function logWarning(message) {
 
 function logInfo(message) {
   log(`ℹ️  ${message}`, CONFIG.colors.cyan);
+}
+
+function logVerbose(message) {
+  if (options.verbose) {
+    console.log(`  ${message}`);
+  }
 }
 
 function logSection(message) {
@@ -147,6 +166,7 @@ function makeRequest(options, body = null) {
 
 function buildRequestOptions(path, method = 'GET', includeAuth = false) {
   const url = new URL(CONFIG.baseUrl + path);
+  const demoCookie = demoCookieHeader();
   
   const options = {
     protocol: url.protocol,
@@ -156,6 +176,7 @@ function buildRequestOptions(path, method = 'GET', includeAuth = false) {
     method: method,
     headers: {
       'Content-Type': 'application/json',
+      ...(demoCookie ? { Cookie: demoCookie } : {}),
     },
   };
   
@@ -174,6 +195,7 @@ async function checkServerHealth() {
   try {
     const options = buildRequestOptions('/health');
     const response = await makeRequest(options);
+    logVerbose(`→ ${response.statusCode} ${JSON.stringify(response.data)}`);
     
     if (response.statusCode === 200) {
       logSuccess('Server health check passed');
@@ -189,7 +211,25 @@ async function checkServerHealth() {
 }
 
 async function getCorrelationLogs(correlationId) {
+  const loadFromDatabase = async () => prisma.logRecord.findMany({
+    where: { correlationId },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      createdAt: true,
+      level: true,
+      message: true,
+      service: true,
+      operation: true,
+      data: true,
+    },
+  });
+
   try {
+    if (!testState.accessToken) {
+      return loadFromDatabase();
+    }
+
     const options = buildRequestOptions(
       `/logging/correlation/${correlationId}`,
       'GET',
@@ -210,12 +250,15 @@ async function getCorrelationLogs(correlationId) {
       }
       return [];
     } else {
+      if (response.statusCode === 401 || response.statusCode === 403) {
+        return loadFromDatabase();
+      }
       logWarning(`Failed to get logs for correlation ${correlationId}: ${response.statusCode}`);
       return [];
     }
   } catch (error) {
-    logWarning(`Error getting logs: ${error.message}`);
-    return [];
+    logWarning(`Error getting logs via API, falling back to direct DB query: ${error.message}`);
+    return loadFromDatabase();
   }
 }
 
@@ -260,6 +303,12 @@ async function verifyLogsExist(correlationId, expectedMessages = [], testName = 
   }, {});
   
   logInfo(`${testName}: Log levels - ${JSON.stringify(logLevels)}`);
+
+  if (options.verbose) {
+    for (const entry of logs) {
+      logVerbose(`  [${entry.level}] ${entry.service || '-'}/${entry.operation || '-'}: ${entry.message}`);
+    }
+  }
   
   return allFound;
 }
@@ -369,6 +418,25 @@ async function testEncounterWorkflowLogging() {
   }
   
   // Test 2A: Create encounter
+  logInfo('Test 2A.0: Rejecting unassociated patient...');
+  try {
+    const options = buildRequestOptions('/encounters', 'POST', true);
+    const response = await makeRequest(options, {
+      patientId: testState.unassociatedPatientId,
+      chiefComplaint: 'Should be rejected',
+    });
+
+    if (response.statusCode === 404) {
+      logSuccess('Test 2A.0: Unassociated patient correctly rejected');
+    } else {
+      logError(`Test 2A.0: Expected 404, got ${response.statusCode}`);
+    }
+  } catch (error) {
+    logError(`Test 2A.0: Failed - ${error.message}`);
+  }
+
+  await sleep(1000);
+
   logInfo('Test 2A: Creating test encounter...');
   try {
     const options = buildRequestOptions('/encounters', 'POST', true);
@@ -625,7 +693,7 @@ async function testFatalErrorSimulation() {
     }
     
     const options = buildRequestOptions(
-      `/encounters/${testState.encounterId}/discharge`,
+      `/encounters/${testState.encounterId}/confirm`,
       'POST',
       true
     );
@@ -635,7 +703,7 @@ async function testFatalErrorSimulation() {
     
     const correlationId = response.headers['x-correlation-id'];
     
-    // This should fail because we can't discharge from CONFIRMED state
+    // This should fail because the encounter is already ADMITTED after confirm.
     if (response.statusCode === 400 || response.statusCode === 422) {
       logSuccess('Test 5A: Invalid transition rejected correctly');
       
@@ -921,6 +989,7 @@ async function testNewServicesLogging() {
     const response = await makeRequest(options, {
       firstName: 'Test',
       lastName: 'IntakePatient',
+      phone: '+15555550123',
       age: 30,
       chiefComplaint: 'Test intake logging',
       details: 'Testing patient intent creation logging',
@@ -1193,58 +1262,38 @@ async function setupTestData() {
   logSection('Setting Up Test Data');
   
   try {
-    const hashedPassword = await bcrypt.hash(CONFIG.testPassword, 10);
-    const hospitalSlug = `test-log-${randomUUID().slice(0, 8)}`;
-    const userEmail = `test-logger-${randomUUID().slice(0, 8)}@hospital.local`;
-    
-    // Create hospital
-    testState.hospital = await prisma.hospital.create({
-      data: {
-        name: 'Test Logging Hospital',
-        slug: hospitalSlug,
-        config: {
-          create: {
-            config: {
-              triageReassessmentMinutes: 30,
-              features: {
-                messaging: true,
-                alerts: true,
-              },
-            },
-          },
-        },
-      },
-      include: { config: true },
+    testState.hospital = await fixtures.createHospital({
+      namePrefix: 'Test Logging Hospital',
+      slugPrefix: 'test-log',
     });
     logSuccess(`Created test hospital: ${testState.hospital.name}`);
     testState.hospitalId = testState.hospital.id;
 
-    // Create user
-    testState.user = await prisma.user.create({
-      data: {
-        email: userEmail,
-        password: hashedPassword,
-        role: 'ADMIN',
-        hospitalId: testState.hospital.id,
-      },
+    testState.user = await fixtures.createUser({
+      hospitalId: testState.hospital.id,
+      password: CONFIG.testPassword,
+      role: 'ADMIN',
+      emailPrefix: 'test-logger',
     });
-    testState.testEmail = userEmail;
+    testState.testEmail = testState.user.email;
     testState.userId = testState.user.id;
-    logSuccess(`Created test user: ${userEmail}`);
+    logSuccess(`Created test user: ${testState.user.email}`);
 
-    // Create patient
-    testState.patient = await prisma.patientProfile.create({
-      data: {
-        email: `test-patient-${randomUUID().slice(0, 8)}@patient.local`,
-        password: hashedPassword,
-        firstName: 'Test',
-        lastName: 'Patient',
-        age: 35,
-        gender: 'other',
-        preferredLanguage: 'en',
-      },
+    testState.patient = await fixtures.createAssociatedPatient({
+      hospitalId: testState.hospital.id,
+      password: CONFIG.testPassword,
+      firstName: 'Test',
+      lastName: 'Patient',
+      emailPrefix: 'logging-associated',
+    });
+    const unassociatedPatient = await fixtures.createPatient({
+      password: CONFIG.testPassword,
+      firstName: 'Raw',
+      lastName: 'Patient',
+      emailPrefix: 'logging-raw',
     });
     testState.patientId = testState.patient.id;
+    testState.unassociatedPatientId = unassociatedPatient.id;
     logSuccess(`Created test patient: ${testState.patient.firstName} ${testState.patient.lastName}`);
     
     logInfo('✓ Test data setup complete\n');
@@ -1258,30 +1307,11 @@ async function cleanupTestData() {
   logSection('Cleaning Up Test Data');
   
   try {
-    if (testState.hospital) {
-      // Delete in correct order due to foreign keys
-      await prisma.alert.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.message.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.encounterEvent.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.triageAssessment.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.encounter.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.user.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.hospitalConfig.deleteMany({ where: { hospitalId: testState.hospital.id } });
-      await prisma.hospital.delete({ where: { id: testState.hospital.id } });
-      logSuccess('Deleted test hospital and related data');
-    }
-    
-    if (testState.patient) {
-      await prisma.patientProfile.delete({ where: { id: testState.patient.id } }).catch(() => {});
-      logSuccess('Deleted test patient');
-    }
-
-    // Clean up patient created by intake intent test (Test 8A)
     if (testState.intakePatientId && testState.intakePatientId !== testState.patientId) {
-      await prisma.patientSession.deleteMany({ where: { patientId: testState.intakePatientId } }).catch(() => {});
-      await prisma.patientProfile.delete({ where: { id: testState.intakePatientId } }).catch(() => {});
-      logSuccess('Deleted intake test patient');
+      fixtures.trackPatient(testState.intakePatientId);
     }
+    await fixtures.cleanup();
+    logSuccess('Deleted logging test fixtures');
 
     await prisma.$disconnect();
     await pool.end();
