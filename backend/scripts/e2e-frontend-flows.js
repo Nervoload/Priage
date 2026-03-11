@@ -19,15 +19,21 @@
 require('dotenv').config();
 const { io } = require('socket.io-client');
 const { randomUUID } = require('crypto');
+const { PrismaClient } = require('@prisma/client');
+const { PrismaPg } = require('@prisma/adapter-pg');
+const { Pool } = require('pg');
+const { TestFixtureTracker } = require('./lib/test-fixtures');
+const { demoCookieHeader, demoSocketHeaders } = require('./lib/demo-gate');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const VERBOSE = process.argv.includes('--verbose');
 const SEED = process.argv.includes('--seed');
+const FIXTURE_PASSWORD = 'TestPassword123!';
 
-// When --seed is used, the script creates its own e2e user.
-// Otherwise, use the standard credentials from `node scripts/seed.js`.
-const TEST_EMAIL = SEED ? 'e2e@priage.test' : 'admin@priage.dev';
-const TEST_PASSWORD = SEED ? 'TestPassword123!' : 'password123';
+let testEmail = SEED ? '' : (process.env.E2E_TEST_EMAIL || process.env.PRIAGE_DEV_ADMIN_EMAIL || '');
+let testPassword = SEED
+  ? ''
+  : (process.env.E2E_TEST_PASSWORD || process.env.PRIAGE_DEV_ADMIN_PASSWORD || process.env.DEMO_STAFF_PASSWORD || '');
 
 const C = {
   reset: '\x1b[0m', green: '\x1b[32m', red: '\x1b[31m',
@@ -38,6 +44,11 @@ let passed = 0;
 let failed = 0;
 let token = null;
 let socket = null;
+let fixtureContext = null;
+
+if (!SEED && (!testEmail || !testPassword)) {
+  throw new Error('E2E_TEST_EMAIL/E2E_TEST_PASSWORD or PRIAGE_DEV_ADMIN_EMAIL/PRIAGE_DEV_ADMIN_PASSWORD must be set when not using --seed');
+}
 
 function patientHeaders(sessionToken) {
   return { 'x-patient-token': sessionToken };
@@ -56,7 +67,8 @@ function deriveCriticalComplaint(encounter) {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 async function api(method, path, body, auth = true, extraHeaders = {}) {
-  const headers = { 'Content-Type': 'application/json', ...extraHeaders };
+  const demoCookie = demoCookieHeader();
+  const headers = { 'Content-Type': 'application/json', ...(demoCookie ? { Cookie: demoCookie } : {}), ...extraHeaders };
   if (auth && token && !extraHeaders['x-patient-token']) headers['Authorization'] = `Bearer ${token}`;
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
@@ -95,6 +107,7 @@ async function connectSocket() {
 
   socket = io(BASE, {
     auth: { token },
+    extraHeaders: demoSocketHeaders(),
     transports: ['websocket'],
     autoConnect: false,
   });
@@ -110,48 +123,67 @@ async function connectSocket() {
 
 // ─── Seed (optional) ────────────────────────────────────────────────────────
 
-async function seedTestUser() {
-  section('Seeding test user');
-  const { PrismaClient } = require('@prisma/client');
-  const { PrismaPg } = require('@prisma/adapter-pg');
-  const { Pool } = require('pg');
-  const bcrypt = require('bcrypt');
+async function getFixtureContext() {
+  if (fixtureContext) {
+    return fixtureContext;
+  }
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required to create disposable e2e fixtures');
+  }
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const adapter = new PrismaPg(pool);
   const prisma = new PrismaClient({ adapter });
+  fixtureContext = {
+    pool,
+    prisma,
+    fixtures: new TestFixtureTracker(prisma, 'e2e'),
+  };
+  return fixtureContext;
+}
 
-  try {
-    let hospital = await prisma.hospital.findFirst();
-    if (!hospital) {
-      hospital = await prisma.hospital.create({
-        data: { name: 'E2E Test Hospital', slug: 'e2e-test' },
-      });
-      console.log(`  Created hospital: ${hospital.name} (id=${hospital.id})`);
-    }
-
-    const email = 'e2e@priage.test';
-    const hash = await bcrypt.hash('TestPassword123!', 10);
-    await prisma.user.upsert({
-      where: { email },
-      update: { password: hash, hospitalId: hospital.id, role: 'ADMIN' },
-      create: { email, password: hash, role: 'ADMIN', hospitalId: hospital.id },
-    });
-    console.log(`  Seeded user: ${email}`);
-  } finally {
-    await prisma.$disconnect();
-    await pool.end();
+async function cleanupFixtureContext() {
+  if (!fixtureContext) {
+    return;
   }
+  try {
+    await fixtureContext.fixtures.cleanup();
+  } finally {
+    await fixtureContext.prisma.$disconnect().catch(() => {});
+    await fixtureContext.pool.end().catch(() => {});
+    fixtureContext = null;
+  }
+}
+
+async function seedTestUser() {
+  section('Seeding test user');
+  const context = await getFixtureContext();
+  const hospital = await context.fixtures.createHospital({
+    namePrefix: 'E2E Test Hospital',
+    slugPrefix: 'e2e-test',
+  });
+  const user = await context.fixtures.createUser({
+    hospitalId: hospital.id,
+    password: FIXTURE_PASSWORD,
+    role: 'ADMIN',
+    emailPrefix: 'e2e',
+  });
+  console.log(`  Created hospital: ${hospital.name} (id=${hospital.id})`);
+  console.log(`  Seeded user: ${user.email}`);
+  return {
+    email: user.email,
+    password: FIXTURE_PASSWORD,
+  };
 }
 
 // ─── Flows ──────────────────────────────────────────────────────────────────
 
 async function flowLogin() {
   section('1. Login (POST /auth/login)');
-  console.log(`  ${C.dim}Using: ${TEST_EMAIL}${C.reset}`);
+  console.log(`  ${C.dim}Using: ${testEmail}${C.reset}`);
   const { status, json } = await api('POST', '/auth/login', {
-    email: TEST_EMAIL,
-    password: TEST_PASSWORD,
+    email: testEmail,
+    password: testPassword,
   }, false);
 
   assert('Returns 201/200', status === 201 || status === 200);
@@ -197,6 +229,9 @@ async function flowCreatePatientAndEncounter(hospitalSlug) {
   assert('Intent returns 201', s1 === 201);
   assert('Has patientId', typeof intent?.patientId === 'number');
   assert('Has sessionToken', typeof intent?.sessionToken === 'string');
+  if (fixtureContext && typeof intent?.patientId === 'number') {
+    fixtureContext.fixtures.trackPatient(intent.patientId);
+  }
 
   // Confirm the encounter using the patient session token (x-patient-token header)
   section('5. Confirm encounter (POST /intake/confirm)');
@@ -242,24 +277,33 @@ async function flowDerivedAlertRule(encounterId) {
   assert('Critical complaint rule would fire for this encounter', deriveCriticalComplaint(json) === 'CRITICAL_COMPLAINT');
 }
 
-async function flowPatientCancel(hospitalSlug) {
+async function flowPatientCancel(hospitalId) {
   section('5C. Patient cancel flow');
+  const context = await getFixtureContext();
   const suffix = randomUUID().slice(0, 8);
-  const { status: intentStatus, json: intent } = await api('POST', '/intake/intent', {
-    phone: `+1555${Date.now().toString().slice(-7)}`,
+  const patient = await context.fixtures.createPatient({
     firstName: 'Cancel',
     lastName: suffix,
+    emailPrefix: 'cancel-flow',
+    phone: `+1555${Date.now().toString().slice(-7)}`,
+  });
+  const encounter = await context.fixtures.createEncounter({
+    hospitalId,
+    patientId: patient.id,
     chiefComplaint: 'Abdominal pain',
-  }, false);
-  assert('Cancel-flow intent returns 201', intentStatus === 201);
+    details: 'Disposable patient cancel-flow fixture',
+  });
+  const session = await context.fixtures.createPatientSession({
+    patientId: patient.id,
+    encounterId: encounter.id,
+  });
 
-  const headers = patientHeaders(intent?.sessionToken);
-  const { status: confirmStatus, json: encounter } = await api('POST', '/intake/confirm', {
-    hospitalSlug,
-  }, false, headers);
-  assert('Cancel-flow confirm returns 201', confirmStatus === 201);
+  assert('Cancel-flow fixture patient created', typeof patient?.id === 'number');
+  assert('Cancel-flow fixture encounter created', typeof encounter?.id === 'number');
+  assert('Cancel-flow fixture session created', typeof session?.token === 'string');
 
-  const { status: cancelStatus, json: cancelled } = await api('POST', `/patient/encounters/${encounter?.id}/cancel`, null, false, headers);
+  const headers = patientHeaders(session.token);
+  const { status: cancelStatus, json: cancelled } = await api('POST', `/patient/encounters/${encounter.id}/cancel`, null, false, headers);
   assert('Patient cancel returns 200/201', cancelStatus === 200 || cancelStatus === 201);
   assert('Cancelled encounter is terminal', cancelled?.status === 'CANCELLED');
 }
@@ -434,12 +478,16 @@ async function main() {
   console.log(`${C.dim}Target: ${BASE}${C.reset}`);
 
   try {
-    if (SEED) await seedTestUser();
+    if (SEED) {
+      const seededUser = await seedTestUser();
+      testEmail = seededUser.email;
+      testPassword = seededUser.password;
+    }
 
     const user = await flowLogin();
     if (!token) {
       console.log(`\n${C.red}${C.bold}Login failed — cannot continue.${C.reset}`);
-      process.exit(1);
+      throw new Error('Login failed — cannot continue');
     }
 
     await flowGetMe();
@@ -448,12 +496,12 @@ async function main() {
     const { encounter, patientToken } = await flowCreatePatientAndEncounter(user.hospital.slug);
     if (!encounter?.id || !patientToken) {
       console.log(`\n${C.red}${C.bold}Could not create encounter — cannot continue.${C.reset}`);
-      process.exit(1);
+      throw new Error('Could not create encounter — cannot continue');
     }
 
     await flowPatientEncounterApis(encounter.id, patientToken);
     await flowDerivedAlertRule(encounter.id);
-    await flowPatientCancel(user.hospital.slug);
+    await flowPatientCancel(user.hospitalId);
     await flowConfirmArrival(encounter.id);
     await flowStartExam(encounter.id);
     await flowCreateAssessment(encounter.id);
@@ -472,14 +520,15 @@ async function main() {
     }
     console.log(`${C.bold}════════════════════════════════════════${C.reset}\n`);
 
-    process.exit(failed > 0 ? 1 : 0);
+    process.exitCode = failed > 0 ? 1 : 0;
   } catch (err) {
     console.error(`\n${C.red}${C.bold}Fatal error:${C.reset}`, err);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     if (socket) {
       socket.disconnect();
     }
+    await cleanupFixtureContext();
   }
 }
 

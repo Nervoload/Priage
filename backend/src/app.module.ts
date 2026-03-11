@@ -10,7 +10,10 @@ import { Module } from '@nestjs/common';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 
+import { GLOBAL_THROTTLE, shouldSkipThrottleForLoopback } from './common/http/throttle.util';
 import { AlertsModule } from './modules/alerts/alerts.module';
+import { DemoAccessModule } from './modules/demo-access/demo-access.module';
+import { DemoAccessGuard } from './modules/demo-access/demo-access.guard';
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { EncountersModule } from './modules/encounters/encounters.module';
@@ -33,12 +36,16 @@ import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000, // 60 seconds
-        limit: 1000, // 1000 requests per minute per IP (prevents abuse, allows legitimate use)
-      },
-    ]),
+    ThrottlerModule.forRoot({
+      skipIf: shouldSkipThrottleForLoopback,
+      throttlers: [
+        {
+          ttl: GLOBAL_THROTTLE.ttl,
+          limit: GLOBAL_THROTTLE.limit,
+        },
+      ],
+    }),
+    DemoAccessModule,
     PrismaModule,
     RedisModule,   // Global Redis client for caching (location, sessions)
     LoggingModule, // Global logging with correlation support
@@ -61,6 +68,10 @@ import { UsersModule } from './modules/users/users.module';
     HealthModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: DemoAccessGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

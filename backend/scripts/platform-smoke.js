@@ -6,6 +6,7 @@ const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { createHash, randomUUID } = require('crypto');
+const { demoCookieHeader } = require('./lib/demo-gate');
 
 const CONFIG = {
   baseUrl: process.env.BASE_URL || 'http://localhost:3000',
@@ -43,6 +44,7 @@ async function request(method, path, { headers = {}, body, expectJson = true } =
       headers: {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         'X-Correlation-ID': `platform-smoke-${randomUUID()}`,
+        ...(demoCookieHeader() ? { Cookie: demoCookieHeader() } : {}),
         ...headers,
       },
       body: body ? JSON.stringify(body) : undefined,

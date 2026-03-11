@@ -1,10 +1,13 @@
 // backend/src/modules/auth/guards/patient.guard.ts
 // Patient authentication guard.
-// Validates the x-patient-token header against PatientSession in the database.
+// Validates the cookie-backed patient session token (or legacy x-patient-token
+// header) against PatientSession in the database.
 // Attaches { patientId, sessionId, encounterId, hospitalId } to request.patientUser.
 
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { EncounterStatus } from '@prisma/client';
+
+import { PATIENT_SESSION_COOKIE, readCookie } from '../../../common/http/auth-cookie.util';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface PatientContext {
@@ -20,7 +23,9 @@ export class PatientGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const token = request.headers['x-patient-token'] as string;
+    const token = readCookie(request.headers?.cookie, PATIENT_SESSION_COOKIE)
+      ?? (request.headers['x-patient-token'] as string | undefined)
+      ?? null;
 
     if (!token) {
       throw new UnauthorizedException('Patient token is required');

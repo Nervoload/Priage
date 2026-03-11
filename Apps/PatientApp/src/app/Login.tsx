@@ -42,7 +42,6 @@ export function Login() {
       });
 
       setSession({
-        sessionToken: result.sessionToken,
         patientId: result.patientId,
         encounterId: result.encounterId,
         hospitalSlug: null,

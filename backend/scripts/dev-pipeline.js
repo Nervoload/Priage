@@ -11,6 +11,11 @@ const steps = [
     args: ['scripts/smoke-test-v2.js'],
   },
   {
+    label: 'logging smoke',
+    command: 'node',
+    args: ['scripts/test-logging.js'],
+  },
+  {
     label: 'realtime smoke',
     command: 'node',
     args: ['scripts/realtime-smoke.js'],

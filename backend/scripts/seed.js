@@ -4,16 +4,15 @@
 // Idempotent — safe to run multiple times (upserts where possible).
 //
 // Creates:
-//   • 1 Hospital  ("Priage General")
-//   • 4 Users     (one per role: ADMIN, DOCTOR, NURSE, STAFF)
+//   • Patient demo accounts and sessions
 //   • 5 Patients  (4 with encounters + 1 signed-in demo user with no encounter)
-//   • Patient sessions for demo/testing
 //   • Starter patient/staff messages on active encounters
 //
 // Usage:
 //   cd backend && node scripts/seed.js
 //
-// All passwords: password123
+// Requires an existing target hospital. Pass --hospital-slug / --hospital-id
+// or set TARGET_HOSPITAL_SLUG / TARGET_HOSPITAL_ID.
 // ──────────────────────────────────────────────────────────────────────
 
 require('dotenv').config();
@@ -22,6 +21,7 @@ const { randomUUID } = require('crypto');
 const { PrismaClient } = require('@prisma/client');
 const { Pool } = require('pg');
 const { PrismaPg } = require('@prisma/adapter-pg');
+const { resolveHospitalActors, resolveTargetHospital } = require('./lib/seed-support');
 
 const connectionString =
   process.env.DATABASE_URL || 'postgresql://priage:priage@localhost:5432/priage';
@@ -31,14 +31,12 @@ const prisma = new PrismaClient({ adapter });
 
 // ─── Seed data ──────────────────────────────────────────────────────────────
 
-const PASSWORD = 'password123';
+function resolvePatientPassword() {
+  const configured = process.env.DEMO_PATIENT_PASSWORD?.trim() || process.env.DEMO_STAFF_PASSWORD?.trim();
+  return configured || `Priage-${randomUUID()}`;
+}
 
-const USERS = [
-  { email: 'admin@priage.dev',  role: 'ADMIN'  },
-  { email: 'doctor@priage.dev', role: 'DOCTOR' },
-  { email: 'nurse@priage.dev',  role: 'NURSE'  },
-  { email: 'staff@priage.dev',  role: 'STAFF'  },
-];
+const PATIENT_PASSWORD = resolvePatientPassword();
 
 const PATIENTS = [
   {
@@ -53,7 +51,6 @@ const PATIENTS = [
       chiefComplaint: 'Persistent chest pain radiating to left arm',
       details: 'Patient called ahead, reports pain started 2 hours ago. No prior cardiac history.',
     },
-    sessionToken: 'seed-alice-session',
     starterMessages: [],
   },
   {
@@ -68,7 +65,6 @@ const PATIENTS = [
       chiefComplaint: 'Fall with suspected hip fracture',
       details: 'Fell at home, unable to bear weight on right leg. Alert and oriented.',
     },
-    sessionToken: 'seed-bob-session',
     starterMessages: [
       { sender: 'PATIENT', content: 'The pain is sharp when I try to move my right leg.' },
       { sender: 'USER', senderRole: 'NURSE', content: 'We have your arrival recorded. Please stay seated and avoid bearing weight.' },
@@ -87,7 +83,6 @@ const PATIENTS = [
       chiefComplaint: 'Severe migraine with visual aura',
       details: 'Recurring migraines, this episode more intense than usual. Nausea present.',
     },
-    sessionToken: 'seed-carol-session',
     starterMessages: [
       { sender: 'PATIENT', content: 'The lights are making this worse and I am feeling nauseous.' },
       { sender: 'USER', senderRole: 'NURSE', content: 'A nurse is assessing you now. Let us know if the pain spikes further.' },
@@ -106,7 +101,6 @@ const PATIENTS = [
       chiefComplaint: 'Deep laceration on left forearm',
       details: 'Cut while cooking, bleeding controlled at intake. Reports tingling in fingers.',
     },
-    sessionToken: 'seed-diana-session',
     starterMessages: [
       { sender: 'PATIENT', content: 'The bandage is soaking through again. Should I press harder?' },
       { sender: 'USER', senderRole: 'STAFF', content: 'Registration is complete. Keep pressure applied and stay near triage.' },
@@ -121,7 +115,6 @@ const PATIENTS = [
     age: 31,
     gender: 'Male',
     encounter: null,
-    sessionToken: 'seed-evan-session',
     starterMessages: [],
   },
 ];
@@ -130,48 +123,22 @@ const PATIENTS = [
 
 async function seed() {
   console.log('🌱 Seeding database...\n');
+  const patientSessionSummaries = [];
 
-  const hashedPassword = await bcrypt.hash(PASSWORD, 10);
+  const hashedPassword = await bcrypt.hash(PATIENT_PASSWORD, 10);
+  const hospital = await resolveTargetHospital(prisma);
+  const actors = await resolveHospitalActors(prisma, hospital.id);
+  const createdUsers = {
+    ADMIN: actors.adminUser,
+    NURSE: actors.nurseUser,
+    DOCTOR: actors.doctorUser,
+    STAFF: actors.staffUser,
+  };
 
-  // ── 1. Hospital ─────────────────────────────────────────────────────────
+  console.log(`🎯 Target hospital: ${hospital.name} (${hospital.slug})`);
+  console.log(`   Using staff authors from ${actors.allUsers.length} existing user(s).`);
 
-  let hospital = await prisma.hospital.findFirst({
-    where: { slug: 'priage-general' },
-  });
-
-  if (!hospital) {
-    hospital = await prisma.hospital.create({
-      data: { name: 'Priage General Hospital', slug: 'priage-general' },
-    });
-    console.log(`✅ Created hospital: ${hospital.name} (id=${hospital.id})`);
-  } else {
-    console.log(`⏭️  Hospital exists: ${hospital.name} (id=${hospital.id})`);
-  }
-
-  // ── 2. Users (one per role) ─────────────────────────────────────────────
-
-  const createdUsers = {};
-
-  for (const u of USERS) {
-    let user = await prisma.user.findUnique({ where: { email: u.email } });
-
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
-          email: u.email,
-          password: hashedPassword,
-          role: u.role,
-          hospitalId: hospital.id,
-        },
-      });
-      console.log(`✅ Created ${u.role.padEnd(6)} → ${u.email} (id=${user.id})`);
-    } else {
-      console.log(`⏭️  ${u.role.padEnd(6)} exists → ${u.email} (id=${user.id})`);
-    }
-    createdUsers[u.role] = user;
-  }
-
-  // ── 3. Patients + Encounters + Patient-side demo data ──────────────────
+  // ── 1. Patients + Encounters + Patient-side demo data ──────────────────
 
   for (const p of PATIENTS) {
     let patient = await prisma.patientProfile.findUnique({
@@ -296,20 +263,25 @@ async function seed() {
       console.log(`ℹ️  No seeded encounter for ${p.firstName} (account-only demo user).`);
     }
 
-    const demoSession = await prisma.patientSession.findUnique({
-      where: { token: p.sessionToken },
+    const demoSession = await prisma.patientSession.findFirst({
+      where: {
+        patientId: patient.id,
+        encounterId: encounter?.id ?? null,
+      },
+      orderBy: { createdAt: 'desc' },
     });
 
     if (!demoSession) {
       const session = await prisma.patientSession.create({
         data: {
-          token: p.sessionToken,
+          token: randomUUID(),
           patientId: patient.id,
           encounterId: encounter?.id ?? null,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         },
       });
       console.log(`✅ Created patient session for ${p.firstName} (session id=${session.id})`);
+      patientSessionSummaries.push({ ...p, sessionToken: session.token });
     } else {
       await prisma.patientSession.update({
         where: { id: demoSession.id },
@@ -320,6 +292,7 @@ async function seed() {
         },
       });
       console.log(`⏭️  Patient session exists for ${p.firstName} (session id=${demoSession.id})`);
+      patientSessionSummaries.push({ ...p, sessionToken: demoSession.token });
     }
 
     if (encounter && p.starterMessages.length > 0) {
@@ -357,13 +330,13 @@ async function seed() {
   console.log(`  Hospital:  ${hospital.name}`);
   console.log(`  Hospital ID: ${hospital.id}`);
   console.log(`  Hospital slug: ${hospital.slug}`);
-  console.log('  Password:  password123  (all accounts)\n');
-  console.log('  Staff logins:');
-  for (const u of USERS) {
-    console.log(`    ${u.role.padEnd(6)}  ${u.email}`);
+  console.log(`  Existing staff users at this hospital: ${actors.allUsers.length}`);
+  for (const user of actors.allUsers) {
+    console.log(`    ${user.role.padEnd(6)}  ${user.email}`);
   }
-  console.log('\n  Patient logins:');
-  for (const p of PATIENTS) {
+  console.log(`\n  Patient demo password: ${PATIENT_PASSWORD}`);
+  console.log('  Patient sessions:');
+  for (const p of patientSessionSummaries) {
     console.log(
       `    ${p.email.padEnd(24)} ${(p.firstName + ' ' + p.lastName).padEnd(16)} session=${p.sessionToken}`,
     );

@@ -10,7 +10,7 @@ export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://loca
 
 /**
  * Authenticated fetch wrapper.
- * Automatically attaches the JWT token from localStorage.
+ * Browser auth is carried by HttpOnly cookies; no token is stored in JS.
  * Returns parsed JSON on success; throws on non-2xx responses.
  */
 export async function client<T = unknown>(
@@ -24,16 +24,14 @@ export async function client<T = unknown>(
     ...(options.headers as Record<string, string> ?? {}),
   };
 
-  const token = localStorage.getItem('authToken');
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetch(url, {
+    ...options,
+    credentials: 'include',
+    headers,
+  });
 
   // 401 → token expired or invalid → clear it and notify AuthContext
   if (response.status === 401) {
-    localStorage.removeItem('authToken');
     window.dispatchEvent(new CustomEvent('auth-expired'));
   }
 

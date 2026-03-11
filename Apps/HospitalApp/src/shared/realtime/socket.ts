@@ -12,16 +12,14 @@ let _socket: Socket | null = null;
 
 /**
  * Get (or create) the singleton Socket.IO connection.
- * Reads the JWT from localStorage so it must be called after login. This is the
- * only realtime transport used by the hospital app; REST covers initial loads
- * and reconnect reconciliation.
+ * Authentication is provided by the backend auth cookie. This is the only
+ * realtime transport used by the hospital app; REST covers initial loads and
+ * reconnect reconciliation.
  */
 export function getSocket(): Socket {
   if (!_socket) {
     _socket = io(API_BASE_URL, {
-      auth: {
-        token: localStorage.getItem('authToken') ?? '',
-      },
+      withCredentials: true,
       transports: ['websocket', 'polling'],
       autoConnect: false,
     });
@@ -57,8 +55,6 @@ async function ensureConnected(socket: Socket): Promise<void> {
 /** Connect the socket (call after login) */
 export function connectSocket(): void {
   const socket = getSocket();
-  // Refresh auth token in case it changed
-  socket.auth = { token: localStorage.getItem('authToken') ?? '' };
   if (!socket.connected) {
     socket.connect();
   }
@@ -70,7 +66,6 @@ export async function sendMessageViaSocket(
   isInternal = false,
 ): Promise<Message> {
   const socket = getSocket();
-  socket.auth = { token: localStorage.getItem('authToken') ?? '' };
   await ensureConnected(socket);
 
   const ack = await new Promise<MessageSendAck>((resolve, reject) => {

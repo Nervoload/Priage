@@ -10,7 +10,9 @@ import 'reflect-metadata';
 import 'dotenv/config';
 import { ValidationPipe, LogLevel } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import helmet from 'helmet';
 
+import { getAllowedCorsOrigins } from './common/http/cors.util';
 import { AppModule } from './app.module';
 import { CorrelationMiddleware } from './common/middleware/correlation.middleware';
 
@@ -32,13 +34,24 @@ async function bootstrap(): Promise<void> {
     logger: logLevels,
   });
 
+  // Trust the first proxy (e.g. Railway, Render, or nginx) so Express
+  // sees the real client IP for rate-limiting, logging, and secure cookies.
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set('trust proxy', 1);
+
+  // Security headers — helmet sets sensible defaults (X-Content-Type-Options,
+  // Strict-Transport-Security, X-Frame-Options, etc.)
+  app.use(helmet());
+
+  const allowedOrigins = getAllowedCorsOrigins();
+
   // Apply correlation middleware for request tracing
   app.use(new CorrelationMiddleware().use.bind(new CorrelationMiddleware()));
 
   // CORS configuration - allow frontend origins
-  // In production, set CORS_ORIGINS env var to restrict to specific domains
+  // In production, CORS_ORIGINS must be explicitly configured.
   app.enableCors({
-    origin: process.env.CORS_ORIGINS?.split(',') || true,
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-patient-token', 'x-correlation-id', 'x-request-id'],

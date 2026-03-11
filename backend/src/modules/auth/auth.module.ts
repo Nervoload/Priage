@@ -9,6 +9,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
+import { STAFF_AUTH_TTL_MS } from '../../common/http/auth-cookie.util';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -25,7 +26,7 @@ if (!jwtSecret) {
     PassportModule,
     JwtModule.register({
       secret: jwtSecret,
-      signOptions: { expiresIn: '7d' },
+      signOptions: { expiresIn: Math.floor(STAFF_AUTH_TTL_MS / 1000) },
     }),
   ],
   controllers: [AuthController],

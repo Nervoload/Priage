@@ -8,15 +8,17 @@
 import { Controller, Get, HttpCode, HttpStatus, Res } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { SkipDemoGate } from '../../common/decorators/skip-demo-gate.decorator';
 import { HealthService } from './health.service';
 
 @Controller('health')
+@SkipDemoGate()
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 
   @Get()
   async getHealth(@Res() response: Response) {
-    const readiness = await this.healthService.getReadiness();
+    const readiness = await this.healthService.getReadiness(false);
     return response.status(readiness.statusCode).json(readiness.payload);
   }
 
@@ -28,7 +30,7 @@ export class HealthController {
 
   @Get('ready')
   async getReadiness(@Res() response: Response) {
-    const readiness = await this.healthService.getReadiness();
+    const readiness = await this.healthService.getReadiness(false);
     return response.status(readiness.statusCode).json(readiness.payload);
   }
 }

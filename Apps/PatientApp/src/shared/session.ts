@@ -41,7 +41,3 @@ export function clearAllPatientSessions() {
   localStorage.removeItem(AUTH_SESSION_KEY);
   localStorage.removeItem(GUEST_SESSION_KEY);
 }
-
-export function getStoredPatientToken(): string | null {
-  return loadAuthSession()?.sessionToken ?? loadGuestSession()?.sessionToken ?? null;
-}

@@ -17,6 +17,7 @@ import type {
 export async function registerPatient(payload: RegisterPayload): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE_URL}/patient-auth/register`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
@@ -35,6 +36,7 @@ export async function registerPatient(payload: RegisterPayload): Promise<AuthRes
 export async function loginPatient(payload: LoginPayload): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE_URL}/patient-auth/login`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
@@ -73,7 +75,7 @@ export async function logout(): Promise<void> {
 
 /**
  * Upgrade a guest intake session to a full account.
- * Uses the current guest session token (x-patient-token) for auth.
+ * Uses the current cookie-backed patient session for auth.
  */
 export async function upgradeGuestAccount(payload: UpgradeGuestPayload): Promise<AuthResponse> {
   return client<AuthResponse>('/patient-auth/upgrade', {

@@ -6,9 +6,20 @@
 // POST /patient-auth/upgrade  — convert guest intake profile to full account (PatientGuard)
 // POST /patient-auth/logout   — delete current session (PatientGuard)
 
-import { Body, Controller, Delete, Get, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { Request } from 'express';
+import { Body, Controller, Delete, Get, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Request, Response } from 'express';
+import { Throttle } from '@nestjs/throttler';
 
+import {
+  PATIENT_SESSION_COOKIE,
+  PATIENT_SESSION_TTL_MS,
+  buildAuthCookieOptions,
+  buildClearedAuthCookieOptions,
+} from '../../common/http/auth-cookie.util';
+import {
+  PATIENT_LOGIN_THROTTLE,
+  PATIENT_REGISTER_THROTTLE,
+} from '../../common/http/throttle.util';
 import { CurrentPatient } from '../auth/decorators/current-patient.decorator';
 import { PatientContext, PatientGuard } from '../auth/guards/patient.guard';
 import { PatientAuthService } from './patient-auth.service';
@@ -22,13 +33,27 @@ export class PatientAuthController {
   constructor(private readonly patientAuthService: PatientAuthService) {}
 
   @Post('register')
-  async register(@Body() dto: RegisterPatientDto, @Req() req: Request) {
-    return this.patientAuthService.register(dto, req.correlationId);
+  @Throttle(PATIENT_REGISTER_THROTTLE)
+  async register(
+    @Body() dto: RegisterPatientDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.patientAuthService.register(dto, req.correlationId);
+    res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
+    return result;
   }
 
   @Post('login')
-  async login(@Body() dto: LoginPatientDto, @Req() req: Request) {
-    return this.patientAuthService.login(dto, req.correlationId);
+  @Throttle(PATIENT_LOGIN_THROTTLE)
+  async login(
+    @Body() dto: LoginPatientDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.patientAuthService.login(dto, req.correlationId);
+    res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
+    return result;
   }
 
   @Get('me')
@@ -56,8 +81,16 @@ export class PatientAuthController {
     @Body() dto: UpgradeGuestDto,
     @CurrentPatient() patient: PatientContext,
     @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.patientAuthService.upgradeGuest(patient.patientId, patient.sessionId, dto, req.correlationId);
+    const result = await this.patientAuthService.upgradeGuest(
+      patient.patientId,
+      patient.sessionId,
+      dto,
+      req.correlationId,
+    );
+    res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
+    return result;
   }
 
   @Delete('logout')
@@ -65,7 +98,10 @@ export class PatientAuthController {
   async logout(
     @CurrentPatient() patient: PatientContext,
     @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.patientAuthService.logout(patient.sessionId, req.correlationId);
+    const result = await this.patientAuthService.logout(patient.sessionId, req.correlationId);
+    res.clearCookie(PATIENT_SESSION_COOKIE, buildClearedAuthCookieOptions());
+    return result;
   }
 }

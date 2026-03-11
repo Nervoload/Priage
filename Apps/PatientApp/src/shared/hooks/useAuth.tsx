@@ -79,12 +79,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (payload: LoginPayload) => {
     const result = await loginPatient(payload);
     const newSession: AuthenticatedPatientSession = {
-      sessionToken: result.sessionToken,
       patientId: result.patient.id,
       patient: result.patient,
     };
-    // Persist to localStorage BEFORE setting state so child components
-    // that mount during the re-render can read the token immediately.
+    // Persist non-sensitive session metadata before state updates so the app
+    // can restore the authenticated shell after a refresh. The credential
+    // itself lives in an HttpOnly cookie.
     saveAuthSession(newSession);
     setSession(newSession);
     setPatient(result.patient);
@@ -93,7 +93,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(async (payload: RegisterPayload) => {
     const result = await registerPatient(payload);
     const newSession: AuthenticatedPatientSession = {
-      sessionToken: result.sessionToken,
       patientId: result.patient.id,
       patient: result.patient,
     };
@@ -127,7 +126,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const upgradeFromGuest = useCallback(async (payload: UpgradeGuestPayload) => {
     const result = await upgradeGuestAccount(payload);
     const newSession: AuthenticatedPatientSession = {
-      sessionToken: result.sessionToken,
       patientId: result.patient.id,
       patient: result.patient,
     };
