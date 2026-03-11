@@ -6,15 +6,13 @@ import type { LoginResponse, AuthUser } from '../types/domain';
 
 /**
  * POST /auth/login
- * Returns JWT + user info. Stores token in localStorage.
+ * Returns JWT + user info and relies on an HttpOnly auth cookie for browser auth.
  */
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  const result = await client<LoginResponse>('/auth/login', {
+  return client<LoginResponse>('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
-  localStorage.setItem('authToken', result.access_token);
-  return result;
 }
 
 /**
@@ -26,15 +24,8 @@ export async function getMe(): Promise<AuthUser> {
 }
 
 /**
- * Clear local auth state.
+ * Clear backend auth cookie.
  */
-export function logout(): void {
-  localStorage.removeItem('authToken');
-}
-
-/**
- * Check if there's a stored auth token.
- */
-export function hasToken(): boolean {
-  return !!localStorage.getItem('authToken');
+export async function logout(): Promise<void> {
+  await client('/auth/logout', { method: 'POST' });
 }

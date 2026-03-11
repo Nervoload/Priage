@@ -15,6 +15,7 @@
     "test:smoke:verbose": "node scripts/smoke-test-v2.js --verbose",
     "test:dev-pipeline": "node scripts/dev-pipeline.js",
     "test:logging": "node scripts/test-logging.js",
+    "test:logging:verbose": "node scripts/test-logging.js --verbose",
     "test:logging:db": "node scripts/test-logging.js",
     "demo:seed": "node scripts/demo-seed.js",
     "test:platform": "node scripts/platform-smoke.js"
@@ -37,6 +38,7 @@
     "class-transformer": "0.5.1",
     "class-validator": "0.14.3",
     "dotenv": "^17.2.3",
+    "helmet": "^8.1.0",
     "ioredis": "5.6.1",
     "jsonwebtoken": "9.0.2",
     "passport": "^0.7.0",

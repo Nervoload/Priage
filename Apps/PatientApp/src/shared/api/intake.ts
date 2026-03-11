@@ -14,6 +14,7 @@ export async function createIntent(
 ): Promise<CreateIntentResponse> {
   const res = await fetch(`${API_BASE_URL}/intake/intent`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });

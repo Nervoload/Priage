@@ -5,16 +5,26 @@
 require('dotenv').config();
 const { io } = require('socket.io-client');
 const { randomUUID } = require('crypto');
+const { PrismaClient } = require('@prisma/client');
+const { PrismaPg } = require('@prisma/adapter-pg');
+const { Pool } = require('pg');
+const { TestFixtureTracker } = require('./lib/test-fixtures');
+const { demoCookieHeader, demoSocketHeaders } = require('./lib/demo-gate');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const BASE_URL_API = process.env.BASE_URL_API || BASE;
 const BASE_URL_SOCKET = process.env.BASE_URL_SOCKET || BASE_URL_API;
-const EMAIL = process.env.REALTIME_TEST_EMAIL || 'admin@priage.dev';
-const PASSWORD = process.env.REALTIME_TEST_PASSWORD || 'password123';
-const FALLBACK_EMAIL = 'realtime-smoke@priage.test';
-const FALLBACK_PASSWORD = 'TestPassword123!';
+const EMAIL = process.env.REALTIME_TEST_EMAIL || process.env.PRIAGE_DEV_ADMIN_EMAIL || '';
+const PASSWORD = process.env.REALTIME_TEST_PASSWORD || process.env.PRIAGE_DEV_ADMIN_PASSWORD || process.env.DEMO_STAFF_PASSWORD || '';
+const FIXTURE_PASSWORD = 'TestPassword123!';
+
+let fixtureContext = null;
 
 async function api(path, options = {}) {
+  const demoCookie = demoCookieHeader();
+  if (demoCookie) {
+    options.headers = { ...(options.headers || {}), Cookie: demoCookie };
+  }
   const res = await fetch(`${BASE_URL_API}${path}`, options);
   const text = await res.text();
   let json = null;
@@ -29,6 +39,10 @@ async function api(path, options = {}) {
 }
 
 async function login(email = EMAIL, password = PASSWORD) {
+  if (!password) {
+    throw new Error('REALTIME_TEST_PASSWORD or PRIAGE_DEV_ADMIN_PASSWORD must be set to log into an existing user');
+  }
+
   const { res, json, text } = await api('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -42,52 +56,68 @@ async function login(email = EMAIL, password = PASSWORD) {
   return json;
 }
 
-async function seedRealtimeUser() {
-  const { PrismaClient } = require('@prisma/client');
-  const { PrismaPg } = require('@prisma/adapter-pg');
-  const { Pool } = require('pg');
-  const bcrypt = require('bcrypt');
-
+async function getFixtureContext() {
+  if (fixtureContext) {
+    return fixtureContext;
+  }
   if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required to seed realtime smoke credentials');
+    throw new Error('DATABASE_URL is required to create disposable realtime smoke fixtures');
   }
 
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
   const adapter = new PrismaPg(pool);
   const prisma = new PrismaClient({ adapter });
+  fixtureContext = {
+    pool,
+    prisma,
+    fixtures: new TestFixtureTracker(prisma, 'realtime'),
+  };
+  return fixtureContext;
+}
 
+async function cleanupFixtureContext() {
+  if (!fixtureContext) {
+    return;
+  }
   try {
-    const hospital = await prisma.hospital.upsert({
-      where: { slug: 'realtime-smoke' },
-      update: {},
-      create: { name: 'Realtime Smoke Hospital', slug: 'realtime-smoke' },
-    });
-
-    const password = await bcrypt.hash(FALLBACK_PASSWORD, 10);
-    await prisma.user.upsert({
-      where: { email: FALLBACK_EMAIL },
-      update: { password, hospitalId: hospital.id, role: 'ADMIN' },
-      create: {
-        email: FALLBACK_EMAIL,
-        password,
-        role: 'ADMIN',
-        hospitalId: hospital.id,
-      },
-    });
+    await fixtureContext.fixtures.cleanup();
   } finally {
-    await prisma.$disconnect();
-    await pool.end();
+    await fixtureContext.prisma.$disconnect().catch(() => {});
+    await fixtureContext.pool.end().catch(() => {});
+    fixtureContext = null;
   }
 }
 
+async function createEphemeralRealtimeLogin() {
+  const context = await getFixtureContext();
+  const hospital = await context.fixtures.createHospital({
+    namePrefix: 'Realtime Smoke Hospital',
+    slugPrefix: 'realtime-smoke',
+  });
+  const user = await context.fixtures.createUser({
+    hospitalId: hospital.id,
+    password: FIXTURE_PASSWORD,
+    role: 'ADMIN',
+    emailPrefix: 'realtime-smoke',
+  });
+
+  return {
+    email: user.email,
+    password: FIXTURE_PASSWORD,
+  };
+}
+
 async function loginWithFallback() {
-  try {
-    return await login();
-  } catch (error) {
-    console.warn(`Primary realtime login failed, seeding fallback credentials: ${error.message}`);
-    await seedRealtimeUser();
-    return login(FALLBACK_EMAIL, FALLBACK_PASSWORD);
+  if (EMAIL && PASSWORD) {
+    try {
+      return await login();
+    } catch (error) {
+      console.warn(`Primary realtime login failed, creating disposable fallback credentials: ${error.message}`);
+    }
   }
+
+  const fixtureLogin = await createEphemeralRealtimeLogin();
+  return login(fixtureLogin.email, fixtureLogin.password);
 }
 
 async function createEncounter(hospitalSlug) {
@@ -106,6 +136,9 @@ async function createEncounter(hospitalSlug) {
   });
   if (!intentRes.ok || !intent?.sessionToken) {
     throw new Error(`Failed to create intake intent: ${intentRes.status} ${intentText}`);
+  }
+  if (fixtureContext) {
+    fixtureContext.fixtures.trackPatient(intent.patientId);
   }
 
   const { res: confirmRes, json: encounter, text: confirmText } = await api('/intake/confirm', {
@@ -172,6 +205,7 @@ async function resolveAlert(alertId, token) {
 function openSocket(token) {
   return io(BASE_URL_SOCKET, {
     auth: token ? { token } : {},
+    extraHeaders: demoSocketHeaders(),
     transports: ['websocket'],
     autoConnect: false,
     reconnection: false,
@@ -355,5 +389,7 @@ async function main() {
 
 main().catch((error) => {
   console.error(error);
-  process.exit(1);
+  process.exitCode = 1;
+}).finally(async () => {
+  await cleanupFixtureContext();
 });

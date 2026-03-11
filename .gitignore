@@ -33,6 +33,7 @@ prisma/*.db-journal
 # =========================
 logs/
 *.log
+.priage-dev/
 
 # =========================
 # Docker

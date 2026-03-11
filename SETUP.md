@@ -111,30 +111,31 @@ npx prisma migrate dev
 
 This creates all tables in the PostgreSQL database.
 
-### 3d. Seed test data
+### 3d. Create a private local admin + hospital
 
 ```bash
-node scripts/seed.js
+node scripts/bootstrap-dev-accounts.js
+```
+
+This creates or reuses a private local admin for your dev machine and writes it to `.priage-dev/accounts.json`.
+
+### 3e. Seed patient demo data into that hospital
+
+```bash
+TARGET_HOSPITAL_SLUG="<slug printed by bootstrap-dev-accounts.js>" node scripts/seed.js
 ```
 
 This creates:
 
 | What | Details |
 |------|---------|
-| **Hospital** | Priage General Hospital |
-| **4 Users** | One per role (ADMIN, DOCTOR, NURSE, STAFF) |
-| **3 Patients** | Alice (EXPECTED), Bob (ADMITTED), Carol (TRIAGE with assessment) |
+| **Hospital target** | Your existing private dev hospital |
+| **5 Patients** | Alice (EXPECTED), Bob (ADMITTED), Carol (TRIAGE), Diana (WAITING), Evan (account only) |
+| **Patient sessions** | One per seeded patient for local demo/testing |
 
-**All passwords:** `password123`
+The seed script no longer creates public canned staff users. It attaches demo patient data to the hospital you target and prints the demo patient password plus session tokens.
 
-| Role | Email |
-|------|-------|
-| Admin | `admin@priage.dev` |
-| Doctor | `doctor@priage.dev` |
-| Nurse | `nurse@priage.dev` |
-| Staff | `staff@priage.dev` |
-
-### 3e. Start the backend
+### 3f. Start the backend
 
 ```bash
 npm run start:dev
@@ -144,7 +145,7 @@ Verify it's running:
 
 ```bash
 curl http://localhost:3000/health
-# Expected: {"status":"ok",...}
+# Expected: {"ok":true,"status":"ready",...}
 ```
 
 **Leave this terminal running.**
@@ -222,7 +223,7 @@ The Patient App supports two demo entry paths:
 
 ## 6. Manual Testing Checklist
 
-Log in at http://localhost:5173 with `nurse@priage.dev` / `password123`.
+Log in with the private admin or extra hospital user recorded in `.priage-dev/accounts.json`.
 
 | # | Test | How | Expected Result |
 |---|------|-----|----------------|
@@ -238,7 +239,7 @@ Log in at http://localhost:5173 with `nurse@priage.dev` / `password123`.
 | 10 | **Waiting Room** | Click "Waiting Room" in nav | See patients in TRIAGE/WAITING/COMPLETE |
 | 11 | **Alerts** | Check top-right alert badge | Badge shows count of active alerts |
 | 12 | **Refresh** | Click ↻ button on any list | Data refreshes from backend |
-| 13 | **Role test** | Log out → log in as `staff@priage.dev` | Same dashboard, STAFF role shown in pill |
+| 13 | **Role test** | Re-run `./priage-dev`, choose to create another hospital user, then log in as that user | Dashboard loads and the selected role shows in the user pill |
 | 14 | **Bad credentials** | Log out → enter wrong password | "Invalid email or password" error |
 | 15 | **Network tab** | Open DevTools → Network | All calls go to `localhost:3000`, no 404s/500s |
 
@@ -254,6 +255,13 @@ npm run test:smoke
 
 # Verbose mode (prints response bodies)
 npm run test:smoke:verbose
+```
+
+Or run the logging test suite:
+
+```bash
+npm run test:logging
+npm run test:logging:verbose
 ```
 
 Or run the E2E frontend-flow test:
@@ -275,10 +283,12 @@ Variants:
 ```bash
 ./priage-dev reseed
 ./priage-dev test
+./priage-dev logs
+./priage-dev logs -v
 ./priage-dev reseed test
 ```
 
-The launcher verifies Docker + local tooling, installs dependencies in all three apps, runs `npx prisma generate` plus `npx prisma migrate deploy`, optionally clears patient-facing dev data before reseeding, opens the backend and both Vite apps in separate macOS Terminal tabs, and can finish by running `npm run test:smoke`.
+The launcher verifies Docker + local tooling, installs dependencies in all three apps, runs `npx prisma generate` plus `npx prisma migrate deploy`, creates or reuses a private local admin, optionally clears patient-facing dev data before reseeding, opens the backend and both Vite apps in separate macOS Terminal tabs, and can finish by running the logging test suite (`logs` / `-l`) or the full backend confidence pipeline (`smoke`, `logging`, `realtime`, and frontend-aligned flow checks).
 
 ---
 
@@ -296,8 +306,11 @@ npx prisma studio
 # Re-run migrations after schema changes
 npx prisma migrate dev --name describe-change
 
-# Re-seed the database
-node scripts/seed.js
+# Re-create private local admin / extra hospital users
+node scripts/bootstrap-dev-accounts.js
+
+# Re-seed the database for a specific hospital
+TARGET_HOSPITAL_SLUG=<slug> node scripts/seed.js
 
 # Reset DB completely (wipes all data)
 npx prisma migrate reset
@@ -368,7 +381,7 @@ docker exec priage-postgres psql -U priage -d priage -c 'SELECT id, "firstName",
 
 ### "Invalid credentials" with correct password
 
-- Was the seed script run? → `node scripts/seed.js`
+- Was the bootstrap + seed flow run? → `node scripts/bootstrap-dev-accounts.js` then `TARGET_HOSPITAL_SLUG=<slug> node scripts/seed.js`
 - Check the hospital exists: `docker exec priage-postgres psql -U priage -d priage -c 'SELECT * FROM "Hospital";'`
 
 ### "CORS error" in browser console

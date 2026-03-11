@@ -3,9 +3,16 @@
 // createIntent is public (no auth — this is the entry point for new patients).
 // All other endpoints require a valid patient session via PatientGuard.
 
-import { Body, Controller, Patch, Post, Req, UseGuards } from '@nestjs/common';
-import { Request } from 'express';
+import { Body, Controller, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Request, Response } from 'express';
+import { Throttle } from '@nestjs/throttler';
 
+import {
+  PATIENT_SESSION_COOKIE,
+  PATIENT_SESSION_TTL_MS,
+  buildAuthCookieOptions,
+} from '../../common/http/auth-cookie.util';
+import { INTAKE_INTENT_THROTTLE } from '../../common/http/throttle.util';
 import { CurrentPatient } from '../auth/decorators/current-patient.decorator';
 import { PatientContext, PatientGuard } from '../auth/guards/patient.guard';
 import { ConfirmIntentDto } from './dto/confirm-intent.dto';
@@ -24,8 +31,15 @@ export class IntakeController {
    * Creates a new patient profile + session token.
    */
   @Post('intent')
-  async createIntent(@Body() dto: CreateIntentDto, @Req() req: Request) {
-    return this.intakeService.createIntent(dto, req.correlationId);
+  @Throttle(INTAKE_INTENT_THROTTLE)
+  async createIntent(
+    @Body() dto: CreateIntentDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.intakeService.createIntent(dto, req.correlationId);
+    res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
+    return result;
   }
 
   /**

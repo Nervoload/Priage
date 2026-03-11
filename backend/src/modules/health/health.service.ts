@@ -15,6 +15,9 @@ type ReadinessPayload = {
   ok: boolean;
   status: 'ready' | 'degraded';
   checkedAt: string;
+};
+
+type DetailedReadinessPayload = ReadinessPayload & {
   dependencies: {
     database: DependencyStatus;
     redis: DependencyStatus;
@@ -36,7 +39,7 @@ export class HealthService {
     };
   }
 
-  async getReadiness(): Promise<{ payload: ReadinessPayload; statusCode: number }> {
+  async getReadiness(includeDetails = false): Promise<{ payload: ReadinessPayload | DetailedReadinessPayload; statusCode: number }> {
     const [database, redis] = await Promise.all([
       this.checkDatabase(),
       this.checkRedis(),
@@ -47,14 +50,18 @@ export class HealthService {
       ok,
       status: ok ? 'ready' : 'degraded',
       checkedAt: new Date().toISOString(),
-      dependencies: {
-        database,
-        redis,
-      },
     };
 
     return {
-      payload,
+      payload: includeDetails
+        ? {
+            ...payload,
+            dependencies: {
+              database,
+              redis,
+            },
+          }
+        : payload,
       statusCode: ok ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE,
     };
   }
@@ -72,7 +79,7 @@ export class HealthService {
       return {
         ok: false,
         latencyMs: Date.now() - startedAt,
-        detail: error instanceof Error ? error.message : String(error),
+        detail: 'database unavailable',
       };
     }
   }
@@ -92,7 +99,7 @@ export class HealthService {
       return {
         ok: false,
         latencyMs: Date.now() - startedAt,
-        detail: error instanceof Error ? error.message : String(error),
+        detail: 'redis unavailable',
       };
     }
   }

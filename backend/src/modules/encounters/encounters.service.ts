@@ -44,6 +44,13 @@ const PRIORITY_ORDER: Prisma.EncounterOrderByWithRelationInput[] = [
   { createdAt: 'asc' },
 ];
 
+const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
+  EncounterStatus.EXPECTED,
+  EncounterStatus.ADMITTED,
+  EncounterStatus.TRIAGE,
+  EncounterStatus.WAITING,
+];
+
 const encounterMessageSelect = {
   id: true,
   createdAt: true,
@@ -134,6 +141,8 @@ export class EncountersService {
 
     try {
       const { encounter, event } = await this.prisma.$transaction(async (tx) => {
+        await this.assertPatientAvailableForManualEncounterTx(tx, dto.patientId, hospitalId);
+
         const created = await tx.encounter.create({
           data: {
             publicId: `enc_${randomUUID()}`,
@@ -964,5 +973,53 @@ export class EncountersService {
     }
 
     return this.getQueuePosition(encounterId, hospitalId, correlationId);
+  }
+
+  private async assertPatientAvailableForManualEncounterTx(
+    tx: Prisma.TransactionClient,
+    patientId: number,
+    hospitalId: number,
+  ): Promise<void> {
+    const lockedPatient = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+      SELECT "id"
+      FROM "PatientProfile"
+      WHERE "id" = ${patientId}
+      FOR UPDATE
+    `);
+
+    if (lockedPatient.length === 0) {
+      throw new NotFoundException(`Patient ${patientId} not found for hospital`);
+    }
+
+    const patientEncounterAtHospital = await tx.encounter.findFirst({
+      where: {
+        patientId,
+        hospitalId,
+      },
+      select: { id: true },
+    });
+
+    if (!patientEncounterAtHospital) {
+      throw new NotFoundException(`Patient ${patientId} not found for hospital`);
+    }
+
+    const activeEncounter = await tx.encounter.findFirst({
+      where: {
+        patientId,
+        status: {
+          in: ACTIVE_ENCOUNTER_STATUSES,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (activeEncounter) {
+      throw new ConflictException(
+        `Patient ${patientId} already has an active encounter (${activeEncounter.status})`,
+      );
+    }
   }
 }

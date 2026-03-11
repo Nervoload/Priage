@@ -16,8 +16,9 @@ const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
-const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { TestFixtureTracker } = require('./lib/test-fixtures');
+const { demoCookieHeader } = require('./lib/demo-gate');
 
 // ============================================================================
 // CONFIGURATION
@@ -82,6 +83,7 @@ const prisma = new PrismaClient({
   adapter,
   log: options.verbose ? ['query', 'error', 'warn'] : ['error', 'warn'],
 });
+const fixtures = new TestFixtureTracker(prisma, 'smoke');
 
 // ============================================================================
 // TEST STATE
@@ -93,9 +95,11 @@ const testState = {
   staffUser: null,
   nurseUser: null,
   doctorUser: null,
-  patient: null,         // Patient created via DB setup (fallback for encounters)
+  patient: null,         // Patient already associated with the hospital, used for staff encounter tests
+  unassociatedPatient: null,
   intakePatient: null,   // Patient created through intake flow
   encounter: null,
+  manualEncounter: null,
   patientSession: null,
   triageAssessment: null,
   message: null,
@@ -184,9 +188,11 @@ async function makeRequest(method, path, opts = {}) {
   const correlationId = generateCorrelationId();
   testState.correlationId = correlationId;
   
+  const demoCookie = demoCookieHeader();
   const headers = {
     'Content-Type': 'application/json',
     'X-Correlation-ID': correlationId,
+    ...(demoCookie ? { Cookie: demoCookie } : {}),
     ...(opts.headers || {}),
   };
   
@@ -279,6 +285,7 @@ async function createTrackedGuestEncounter(intentOverrides = {}) {
   const intent = await makeRequest('POST', '/intake/intent', {
     body: buildIntentPayload(intentOverrides),
   });
+  fixtures.trackPatient(intent.patientId);
   const patient = await prisma.patientProfile.findUnique({
     where: { id: intent.patientId },
   });
@@ -294,25 +301,27 @@ async function createTrackedGuestEncounter(intentOverrides = {}) {
   return { intent, patient, encounter };
 }
 
-async function createExternalEncounter() {
-  const hospital = await prisma.hospital.create({
-    data: {
-      name: 'External Smoke Hospital',
-      slug: `test-hospital-external-${randomUUID().slice(0, 8)}`,
-    },
+async function createStaffReadyPatient(overrides = {}) {
+  return fixtures.createAssociatedPatient({
+    hospitalId: testState.hospital.id,
+    password: CONFIG.testPassword,
+    ...overrides,
   });
-  pushUnique(testState.extraHospitalIds, hospital.id);
+}
 
-  const patient = await prisma.patientProfile.create({
-    data: {
-      email: `external-${randomUUID().slice(0, 8)}@test.com`,
-      password: randomUUID(),
-      firstName: 'Smoke',
-      lastName: 'External',
-      preferredLanguage: 'fr',
-    },
+async function createExternalEncounter() {
+  const hospital = await fixtures.createHospital({
+    namePrefix: 'External Smoke Hospital',
+    slugPrefix: 'test-hospital-external',
   });
-  pushUnique(testState.extraPatientIds, patient.id);
+
+  const patient = await fixtures.createPatient({
+    password: CONFIG.testPassword,
+    firstName: 'Smoke',
+    lastName: 'External',
+    preferredLanguage: 'fr',
+    emailPrefix: 'external',
+  });
 
   const encounter = await prisma.encounter.create({
     data: {
@@ -423,39 +432,42 @@ async function setupTestData() {
   logSection('SETUP: Creating Test Data');
   
   try {
-    // Create test hospital
     logInfo('Creating test hospital...');
-    const hospitalSlug = `test-hospital-${randomUUID().slice(0, 8)}`;
-    testState.hospital = await prisma.hospital.create({
-      data: { name: 'Smoke Test Hospital', slug: hospitalSlug },
+    testState.hospital = await fixtures.createHospital({
+      namePrefix: 'Smoke Test Hospital',
+      slugPrefix: 'test-hospital',
     });
     logSuccess(`Hospital created: ${testState.hospital.name} (ID: ${testState.hospital.id})`);
     
-    // Create test users
     logInfo('Creating test users (staff, nurse, doctor)...');
-    const hashedPassword = await bcrypt.hash(CONFIG.testPassword, 10);
-    const emailSuffix = randomUUID().slice(0, 8);
-    
-    testState.staffUser = await prisma.user.create({
-      data: { email: `staff-${emailSuffix}@test.com`, password: hashedPassword, role: 'STAFF', hospitalId: testState.hospital.id },
+    const fixtureUsers = await fixtures.createUserBundle({
+      hospitalId: testState.hospital.id,
+      password: CONFIG.testPassword,
+      roles: ['STAFF', 'NURSE', 'DOCTOR'],
     });
-    testState.nurseUser = await prisma.user.create({
-      data: { email: `nurse-${emailSuffix}@test.com`, password: hashedPassword, role: 'NURSE', hospitalId: testState.hospital.id },
-    });
-    testState.doctorUser = await prisma.user.create({
-      data: { email: `doctor-${emailSuffix}@test.com`, password: hashedPassword, role: 'DOCTOR', hospitalId: testState.hospital.id },
-    });
+    testState.staffUser = fixtureUsers.STAFF;
+    testState.nurseUser = fixtureUsers.NURSE;
+    testState.doctorUser = fixtureUsers.DOCTOR;
     
     logSuccess(`Staff: ${testState.staffUser.email}`);
     logSuccess(`Nurse: ${testState.nurseUser.email}`);
     logSuccess(`Doctor: ${testState.doctorUser.email}`);
     
-    // Create test patient profile (fallback for staff-created encounters)
-    logInfo('Creating test patient profile...');
-    testState.patient = await prisma.patientProfile.create({
-      data: { email: `patient-${emailSuffix}@test.com`, password: hashedPassword, firstName: 'Test', lastName: 'Patient', age: 35, gender: 'Other', preferredLanguage: 'en' },
+    logInfo('Creating manual-encounter fixture patients...');
+    testState.unassociatedPatient = await fixtures.createPatient({
+      password: CONFIG.testPassword,
+      firstName: 'Raw',
+      lastName: 'Patient',
+      emailPrefix: 'raw-patient',
+      preferredLanguage: 'en',
     });
-    logSuccess(`Patient: ${testState.patient.firstName} ${testState.patient.lastName} (ID: ${testState.patient.id})`);
+    testState.patient = await createStaffReadyPatient({
+      firstName: 'Staff',
+      lastName: 'Ready',
+      emailPrefix: 'staff-ready-patient',
+    });
+    logSuccess(`Unassociated patient: ${testState.unassociatedPatient.firstName} ${testState.unassociatedPatient.lastName} (ID: ${testState.unassociatedPatient.id})`);
+    logSuccess(`Staff-ready patient: ${testState.patient.firstName} ${testState.patient.lastName} (ID: ${testState.patient.id})`);
     
   } catch (error) {
     logError('Failed to create test data', error);
@@ -475,60 +487,11 @@ async function cleanupTestData() {
   logSection('CLEANUP: Removing Test Data');
   
   try {
-    await safetyCheckBeforeCleanup();
-
-    const hospitalIds = [testState.hospital?.id, ...testState.extraHospitalIds].filter(Boolean);
-    if (hospitalIds.length > 0) {
-      logInfo(`Deleting encounters for ${hospitalIds.length} hospital(s)...`);
-      await prisma.encounter.deleteMany({
-        where: { hospitalId: { in: hospitalIds } },
-      });
-      logSuccess('Encounter records deleted');
+    if (testState.intakePatient?.id) {
+      fixtures.trackPatient(testState.intakePatient.id);
     }
-
-    const patientIds = [
-      testState.patient?.id,
-      testState.intakePatient?.id,
-      ...testState.extraPatientIds,
-    ].filter(Boolean);
-    if (patientIds.length > 0) {
-      await prisma.patientSession.deleteMany({
-        where: { patientId: { in: patientIds } },
-      });
-      logSuccess('Patient sessions deleted');
-
-      logInfo(`Deleting ${patientIds.length} patient profile(s)...`);
-      await prisma.patientProfile.deleteMany({
-        where: { id: { in: patientIds } },
-      });
-      logSuccess('Patient profiles deleted');
-    }
-
-    const userIds = [
-      testState.staffUser?.id,
-      testState.nurseUser?.id,
-      testState.doctorUser?.id,
-      ...testState.extraUserIds,
-    ].filter(Boolean);
-    if (userIds.length > 0) {
-      logInfo(`Deleting ${userIds.length} test user(s)...`);
-      await prisma.user.deleteMany({
-        where: { id: { in: userIds } },
-      });
-      logSuccess('Test users deleted');
-    }
-
-    for (const hospitalId of testState.extraHospitalIds) {
-      logInfo(`Deleting external test hospital ${hospitalId}...`);
-      await prisma.hospital.delete({ where: { id: hospitalId } });
-    }
-
-    if (testState.hospital) {
-      logInfo('Deleting test hospital...');
-      await prisma.hospital.delete({ where: { id: testState.hospital.id } });
-      logSuccess('Test hospital deleted');
-    }
-    
+    await fixtures.cleanup();
+    logSuccess('Disposable smoke-test fixtures deleted');
   } catch (error) {
     logError('Failed to cleanup test data', error);
   }
@@ -644,6 +607,7 @@ async function testPatientIntake() {
     if (!intent.patientId) throw new Error('No patientId returned');
     
     testState.patientToken = intent.sessionToken;
+    fixtures.trackPatient(intent.patientId);
     testState.intakePatient = await prisma.patientProfile.findUnique({
       where: { id: intent.patientId },
     });
@@ -689,6 +653,7 @@ async function testPatientIntake() {
         chiefComplaint: 'Dizziness',
       }),
     });
+    fixtures.trackPatient(expiredIntent.patientId);
     pushUnique(testState.extraPatientIds, expiredIntent.patientId);
     await prisma.patientSession.update({
       where: { token: expiredIntent.sessionToken },
@@ -822,16 +787,64 @@ async function testEncounterManagement() {
   logSection('TEST 3: Encounter Management');
   
   try {
+    logSubSection('3A: Reject Manual Encounter For Unassociated Patient');
+    await expectRequestFailure(
+      () => makeRequest('POST', '/encounters', {
+        headers: staffAuth(testState.staffToken),
+        body: {
+          patientId: testState.unassociatedPatient.id,
+          chiefComplaint: 'Should be rejected',
+        },
+      }),
+      ['404', 'not found'],
+      'Manual encounter unexpectedly succeeded for an unassociated patient',
+    );
+    logSuccess('Manual encounter creation rejects unassociated patients');
+
+    logSubSection('3B: Create Manual Encounter For Associated Patient');
+    const manualEncounterPatient = await createStaffReadyPatient({
+      firstName: 'Manual',
+      lastName: 'Encounter',
+      emailPrefix: 'manual-encounter',
+    });
+    testState.manualEncounter = await makeRequest('POST', '/encounters', {
+      headers: staffAuth(testState.staffToken),
+      body: {
+        patientId: manualEncounterPatient.id,
+        chiefComplaint: 'Smoke test encounter',
+      },
+    });
+    logSuccess(`Manual encounter created: ID ${testState.manualEncounter.id}`);
+
+    logSubSection('3C: Reject Duplicate Active Encounter For Same Patient');
+    await expectRequestFailure(
+      () => makeRequest('POST', '/encounters', {
+        headers: staffAuth(testState.staffToken),
+        body: {
+          patientId: manualEncounterPatient.id,
+          chiefComplaint: 'Duplicate active encounter',
+        },
+      }),
+      ['409', 'active encounter'],
+      'Duplicate active encounter unexpectedly succeeded',
+    );
+    logSuccess('Manual encounter creation rejects duplicate active encounters');
+
     if (!testState.encounter) {
-      logSubSection('3-SETUP: Create Encounter (staff)');
+      const lifecyclePatient = await createStaffReadyPatient({
+        firstName: 'Lifecycle',
+        lastName: 'Encounter',
+        emailPrefix: 'lifecycle-encounter',
+      });
+      logSubSection('3-SETUP: Create Lifecycle Encounter (staff)');
       testState.encounter = await makeRequest('POST', '/encounters', {
         headers: staffAuth(testState.staffToken),
-        body: { patientId: testState.patient.id, chiefComplaint: 'Smoke test encounter' },
+        body: { patientId: lifecyclePatient.id, chiefComplaint: 'Smoke test encounter' },
       });
       logSuccess(`Encounter created: ID ${testState.encounter.id}`);
     }
     
-    logSubSection('3A: List Encounters (GET /encounters)');
+    logSubSection('3D: List Encounters (GET /encounters)');
     const encounters = await makeRequest('GET', '/encounters', {
       headers: staffAuth(testState.staffToken),
     });
@@ -844,7 +857,7 @@ async function testEncounterManagement() {
     }
     logSuccess(`Listed ${encounters.data.length} encounter(s), total: ${encounters.total}`);
 
-    logSubSection('3A.1: List Patients (GET /patients)');
+    logSubSection('3D.1: List Patients (GET /patients)');
     const patients = await makeRequest('GET', '/patients', {
       headers: staffAuth(testState.staffToken),
     });
@@ -861,7 +874,7 @@ async function testEncounterManagement() {
     }
     logSuccess(`Listed ${patients.data.length} patient(s), total: ${patients.meta.total}`);
 
-    logSubSection('3A.2: Filter Patients by Encounter Status');
+    logSubSection('3D.2: Filter Patients by Encounter Status');
     const filteredPatients = await makeRequest('GET', '/patients?status=EXPECTED', {
       headers: staffAuth(testState.staffToken),
     });
@@ -870,7 +883,7 @@ async function testEncounterManagement() {
     }
     logSuccess(`Filtered patients by status, ${filteredPatients.data.length} result(s)`);
 
-    logSubSection('3A.3: Wrong-Hospital Scoping');
+    logSubSection('3D.3: Wrong-Hospital Scoping');
     const external = await createExternalEncounter();
     const scopedPatients = await makeRequest('GET', '/patients', {
       headers: staffAuth(testState.staffToken),
@@ -887,7 +900,7 @@ async function testEncounterManagement() {
     );
     logSuccess('Staff encounter reads are hospital scoped');
 
-    logSubSection('3A.4: Reject Invalid Patient Query');
+    logSubSection('3D.4: Reject Invalid Patient Query');
     await expectRequestFailure(
       () => makeRequest('GET', '/patients?limit=0', {
         headers: staffAuth(testState.staffToken),
@@ -897,7 +910,7 @@ async function testEncounterManagement() {
     );
     logSuccess('Invalid patient query rejected with 400');
     
-    logSubSection('3B: Get Encounter Details (GET /encounters/:id)');
+    logSubSection('3E: Get Encounter Details (GET /encounters/:id)');
     const encounter = await makeRequest('GET', `/encounters/${testState.encounter.id}`, {
       headers: staffAuth(testState.staffToken),
     });
@@ -906,7 +919,7 @@ async function testEncounterManagement() {
     logVerbose(`  Status: ${encounter.status}`);
     logVerbose(`  Patient: ${encounter.patient?.firstName} ${encounter.patient?.lastName}`);
     
-    logSubSection('3C: Role Guard on Waiting Transition (Expected 403)');
+    logSubSection('3F: Role Guard On Waiting Transition (Expected 403)');
     await expectRequestFailure(
       () => makeRequest('POST', `/encounters/${testState.encounter.id}/waiting`, {
         headers: staffAuth(testState.staffToken),
@@ -916,7 +929,7 @@ async function testEncounterManagement() {
     );
     logSuccess('Role guard blocks staff-only WAITING transition');
 
-    logSubSection('3C: Mark Patient Arrived (POST /encounters/:id/arrived)');
+    logSubSection('3G: Mark Patient Arrived (POST /encounters/:id/arrived)');
     const arrivedEncounter = await makeRequest('POST', `/encounters/${testState.encounter.id}/arrived`, {
       headers: staffAuth(testState.staffToken),
     });
@@ -928,7 +941,7 @@ async function testEncounterManagement() {
     logSuccess('Patient marked as arrived → ADMITTED');
     logVerbose(`  Arrived at: ${arrivedEncounter.arrivedAt}`);
     
-    logSubSection('3D: Verify Encounter Events');
+    logSubSection('3H: Verify Encounter Events');
     const events = await prisma.encounterEvent.findMany({
       where: { encounterId: testState.encounter.id },
       orderBy: { createdAt: 'desc' },
@@ -954,9 +967,14 @@ async function testTriageAssessment() {
   
   try {
     logSubSection('4A: Invalid Status Rejection');
+    const expectedOnlyPatient = await createStaffReadyPatient({
+      firstName: 'Expected',
+      lastName: 'Only',
+      emailPrefix: 'expected-only',
+    });
     const expectedOnlyEncounter = await makeRequest('POST', '/encounters', {
       headers: staffAuth(testState.staffToken),
-      body: { patientId: testState.patient.id, chiefComplaint: 'Expected status only' },
+      body: { patientId: expectedOnlyPatient.id, chiefComplaint: 'Expected status only' },
     });
     await expectRequestFailure(
       () => makeRequest('POST', '/triage/assessments', {

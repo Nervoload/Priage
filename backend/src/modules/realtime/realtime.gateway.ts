@@ -22,6 +22,9 @@ import { randomUUID } from 'crypto';
 import { Role } from '@prisma/client';
 import type { Server, Socket } from 'socket.io';
 
+import { readCookie, STAFF_AUTH_COOKIE } from '../../common/http/auth-cookie.util';
+import { getAllowedCorsOrigins } from '../../common/http/cors.util';
+import { DEMO_COOKIE_NAME } from '../demo-access/demo-access.guard';
 import { LoggingService } from '../logging/logging.service';
 import { CreateMessageDto } from '../messaging/dto/create-message.dto';
 import { MessagingService } from '../messaging/messaging.service';
@@ -45,7 +48,7 @@ type MessageSendAck =
   | { ok: false; error: { code: string; message: string } };
 
 @WebSocketGateway({
-  cors: { origin: true, credentials: true },
+  cors: { origin: getAllowedCorsOrigins(), credentials: true },
 })
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
@@ -79,13 +82,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       );
     }
     this.logger.log('WebSocket Gateway initialized');
-    this.logger.log('CORS enabled for all origins');
+    this.logger.log('WebSocket CORS configured for explicit origins');
 
     this.loggingService.info('WebSocket Gateway initialized', {
       service: 'RealtimeGateway',
       operation: 'afterInit',
     }, {
       corsEnabled: true,
+      corsOriginsConfigured: true,
     });
 
     server.on('error', (error) => {
@@ -104,6 +108,18 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   async handleConnection(client: Socket): Promise<void> {
     const clientId = client.id;
+
+    // Demo gate: reject WebSocket connections when DEMO_ACCESS_CODE is set
+    // and the client doesn't carry a valid demo cookie.
+    const demoCode = process.env.DEMO_ACCESS_CODE?.trim();
+    if (demoCode) {
+      const demoCookie = readCookie(client.handshake.headers?.cookie, DEMO_COOKIE_NAME);
+      if (demoCookie !== demoCode) {
+        this.logger.warn({ message: 'WebSocket rejected - missing demo access cookie', clientId });
+        client.disconnect();
+        return;
+      }
+    }
 
     this.logger.log({
       message: 'New WebSocket connection attempt',
@@ -563,6 +579,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     const header = client.handshake.headers?.authorization;
     if (typeof header === 'string' && header.startsWith('Bearer ')) {
       return header.slice('Bearer '.length).trim();
+    }
+
+    const cookieToken = readCookie(client.handshake.headers?.cookie, STAFF_AUTH_COOKIE);
+    if (cookieToken) {
+      return cookieToken;
     }
 
     return null;
