@@ -1,0 +1,4 @@
+#!/bin/zsh
+export HISTFILE='/Users/awsrawi/Documents/GitHub/Priage/.priage-dev/hospital.history'
+unsetopt SHARE_HISTORY INC_APPEND_HISTORY INC_APPEND_HISTORY_TIME
+exec '/Users/awsrawi/Documents/GitHub/Priage/.priage-dev/hospital.command'

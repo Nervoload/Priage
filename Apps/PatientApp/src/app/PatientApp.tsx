@@ -17,6 +17,7 @@ import { Login as GuestCheckInStart } from './Login';
 import { Enroute } from '../features/enroute/Enroute';
 import { EncounterWorkspace } from '../features/encounter-workspace/EncounterWorkspace';
 import { Routing } from '../features/pre-triage/Routing';
+import { GuestChatbotPage } from '../features/pre-triage/GuestChatbotPage';
 import type { EncounterSummary } from '../shared/types/domain';
 
 export function PatientApp() {
@@ -55,6 +56,16 @@ export function PatientApp() {
       <Route
         path="/guest/start"
         element={session ? <Navigate to="/" replace /> : <GuestCheckInStart />}
+      />
+      <Route
+        path="/guest/chatbot"
+        element={
+          session
+            ? <Navigate to="/" replace />
+            : guestSession
+              ? <GuestChatbotRoute />
+              : <Navigate to="/guest/start" replace />
+        }
       />
       <Route
         path="/guest/routing"
@@ -165,7 +176,12 @@ function SignupRoute() {
 
 function GuestRoutingRoute() {
   const navigate = useNavigate();
-  return <Routing onConfirmed={(encounterId) => navigate(`/guest/enroute/${encounterId}`)} onBack={() => navigate('/guest/start')} />;
+  return <Routing onConfirmed={(encounterId) => navigate(`/guest/enroute/${encounterId}`)} onBack={() => navigate('/guest/chatbot')} />;
+}
+
+function GuestChatbotRoute() {
+  const navigate = useNavigate();
+  return <GuestChatbotPage onChooseHospital={() => navigate('/guest/routing')} onBack={() => navigate('/guest/start')} />;
 }
 
 function HomeRoute() {

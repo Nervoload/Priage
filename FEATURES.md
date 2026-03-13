@@ -349,3 +349,51 @@ const encounter = await getEncounter(encounterId);      // patient info + timest
 const assessments = await listTriageAssessments(encounterId); // triage history
 const messages = await listMessages(encounterId);       // chat history
 ```
+
+
+New Ai Feature Page
+
+Add Chatbot Page Between Quick Check-In and Hospital Selection
+After the "Fast emergency intake" form in the patient app, insert a new ChatGPT chatbot page. The current "Choose hospital" button becomes "Next" and navigates to the chatbot. The chatbot page includes a "Choose hospital" button below the chat area that continues to the existing hospital routing page.
+
+Proposed Changes
+Patient App — Intake Form
+[MODIFY] 
+Login.tsx
+Change button text from 'Choose hospital' to 'Next'
+Change navigation target from /guest/routing to /guest/chatbot
+Update the footer hint text to mention the chatbot step
+Patient App — New Chatbot Page
+[NEW] 
+GuestChatbotPage.tsx
+A new page with:
+
+Header — "AI Health Assistant" badge + title + subtitle
+Chat area — scrollable message list with user/assistant bubbles
+Input bar — text input + send button, calls OpenAI Chat Completions API (gpt-4o-mini) directly from the browser using the provided API key
+"Choose hospital" primary button below the chat — navigates to /guest/routing
+← Back button — goes back to /guest/start
+Styled with the same patientTheme + heroBackdrop tokens as the rest of the guest flow
+
+CAUTION
+
+The OpenAI API key will be embedded client-side. This is fine for a demo/dev build but should be moved to a backend proxy before any production deployment.
+
+Patient App — Routing
+[MODIFY] 
+PatientApp.tsx
+Import GuestChatbotPage
+Add a new <Route path="/guest/chatbot" …> between the /guest/start and /guest/routing routes
+Create a GuestChatbotRoute wrapper (similar to 
+GuestRoutingRoute
+) that passes navigation callbacks
+Verification Plan
+Manual Verification (browser)
+Open the patient app in the browser (the dev server should be running)
+Navigate to /welcome → tap Quick Check-In
+Fill in the form fields (first name, phone, chief complaint)
+Confirm the button says "Next" (not "Choose hospital")
+Tap Next — should navigate to the chatbot page
+Send a message in the chatbot — should get an AI response
+Tap Choose hospital — should navigate to the hospital selection page
+Tap ← Back on the chatbot page — should return to the intake form

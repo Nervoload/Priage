@@ -88,6 +88,9 @@ export interface GuestIntakeSession {
   patientId: number;
   encounterId: number | null;
   hospitalSlug: string | null;
+  firstName?: string;
+  lastName?: string;
+  chiefComplaint?: string;
 }
 
 export interface EncounterMessage {

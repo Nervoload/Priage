@@ -45,8 +45,11 @@ export function Login() {
         patientId: result.patientId,
         encounterId: result.encounterId,
         hospitalSlug: null,
+        firstName: firstName.trim(),
+        lastName: lastName.trim() || undefined,
+        chiefComplaint: chiefComplaint.trim(),
       });
-      navigate('/guest/routing');
+      navigate('/guest/chatbot');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not start guest check-in.');
     } finally {
@@ -116,12 +119,12 @@ export function Login() {
           </label>
 
           <button style={styles.primaryButton} type="submit" disabled={submitting}>
-            {submitting ? 'Starting check-in…' : 'Choose hospital'}
+            {submitting ? 'Starting check-in…' : 'Next'}
           </button>
         </form>
 
         <footer style={styles.footer}>
-          <strong>What happens next:</strong> choose your hospital, notify the care team, then fill in any optional health details while you are on the way.
+          <strong>What happens next:</strong> chat with our AI health assistant, choose your hospital, notify the care team, then fill in any optional health details while you are on the way.
         </footer>
       </section>
     </main>
