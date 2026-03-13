@@ -16,6 +16,7 @@ interface WaitingRoomViewProps {
   encounters: Encounter[];
   chatMessages: Record<number, ChatMessage[]>;
   onSendMessage: (encounterId: number, text: string) => Promise<void>;
+  onRemovePatient: (encounterId: number) => Promise<void>;
   loading?: boolean;
   onRefresh?: () => void;
   user?: { email: string; role: string } | null;
@@ -29,6 +30,7 @@ export function WaitingRoomView({
   encounters,
   chatMessages,
   onSendMessage,
+  onRemovePatient,
   loading,
   onRefresh,
   user,
@@ -282,6 +284,7 @@ export function WaitingRoomView({
         encounter={selectedEncounter}
         messages={selectedEncounter ? (chatMessages[selectedEncounter.id] || []) : []}
         onSendMessage={onSendMessage}
+        onRemovePatient={onRemovePatient}
         onClose={() => setSelectedId(null)}
       />
 

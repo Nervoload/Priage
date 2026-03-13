@@ -9,12 +9,13 @@ import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
 import { ChatPanel } from './ChatPanel';
 
-type Tab = 'messages' | 'profile';
+type Tab = 'messages' | 'profile' | 'remove';
 
 interface PatientDetailModalProps {
   encounter: Encounter | null;
   messages: ChatMessage[];
   onSendMessage: (encounterId: number, text: string) => Promise<void>;
+  onRemovePatient: (encounterId: number) => Promise<void>;
   onClose: () => void;
 }
 
@@ -43,7 +44,7 @@ function getWarnings(encounter: Encounter): string[] {
   return notes;
 }
 
-export function PatientDetailModal({ encounter, messages, onSendMessage, onClose }: PatientDetailModalProps) {
+export function PatientDetailModal({ encounter, messages, onSendMessage, onRemovePatient, onClose }: PatientDetailModalProps) {
   const [tab, setTab] = useState<Tab>('messages');
 
   if (!encounter) return null;
@@ -89,23 +90,30 @@ export function PatientDetailModal({ encounter, messages, onSendMessage, onClose
       <div className="flex border-b border-gray-200 px-6">
         <button
           onClick={() => setTab('messages')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
-            tab === 'messages'
-              ? 'border-priage-600 text-priage-700'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${tab === 'messages'
+            ? 'border-priage-600 text-priage-700'
+            : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
         >
           Messages ({messages.length})
         </button>
         <button
           onClick={() => setTab('profile')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
-            tab === 'profile'
-              ? 'border-priage-600 text-priage-700'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${tab === 'profile'
+            ? 'border-priage-600 text-priage-700'
+            : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
         >
           Patient Profile
+        </button>
+        <button
+          onClick={() => setTab('remove')}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${tab === 'remove'
+            ? 'border-red-500 text-red-600'
+            : 'border-transparent text-gray-500 hover:text-red-500'
+            }`}
+        >
+          Remove
         </button>
       </div>
 
@@ -113,8 +121,10 @@ export function PatientDetailModal({ encounter, messages, onSendMessage, onClose
       <div className="h-[500px] flex flex-col">
         {tab === 'messages' ? (
           <ChatPanel encounter={encounter} messages={messages} onSendMessage={onSendMessage} />
-        ) : (
+        ) : tab === 'profile' ? (
           <PatientProfile encounter={encounter} latestTriage={latestTriage} />
+        ) : (
+          <RemovePatientPanel encounter={encounter} onRemovePatient={onRemovePatient} onClose={onClose} />
         )}
       </div>
     </Modal>
@@ -281,6 +291,75 @@ function TimelineItem({ label, time }: { label: string; time: string | null | un
       <div className={`w-2 h-2 rounded-full flex-shrink-0 ${time ? 'bg-priage-500' : 'bg-gray-300'}`} />
       <span className="text-xs font-medium text-gray-600 w-28">{label}</span>
       <span className="text-xs text-gray-400">{formatTimestamp(time)}</span>
+    </div>
+  );
+}
+
+function RemovePatientPanel({
+  encounter,
+  onRemovePatient,
+  onClose,
+}: {
+  encounter: Encounter;
+  onRemovePatient: (encounterId: number) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const name = patientName(encounter.patient);
+
+  const handleClick = async () => {
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setRemoving(true);
+    try {
+      await onRemovePatient(encounter.id);
+      onClose();
+    } catch {
+      setRemoving(false);
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+      <div className="w-16 h-16 rounded-full bg-red-100 text-red-500 flex items-center justify-center text-2xl mb-4">
+        ✕
+      </div>
+      <h3 className="text-lg font-semibold text-gray-900 mb-1">Remove Patient</h3>
+      <p className="text-sm text-gray-500 mb-6 max-w-sm">
+        You are about to remove <span className="font-semibold text-gray-700">{name}</span> (#{encounter.id}) from the waiting room. This action cannot be undone.
+      </p>
+
+      <button
+        onClick={handleClick}
+        disabled={removing}
+        className={`
+          px-6 py-3 rounded-lg text-sm font-semibold transition-all cursor-pointer
+          ${confirming
+            ? 'bg-red-600 hover:bg-red-700 text-white shadow-md'
+            : 'bg-red-100 hover:bg-red-200 text-red-700 border border-red-300'
+          }
+          disabled:opacity-50 disabled:cursor-not-allowed
+        `}
+      >
+        {removing
+          ? 'Removing…'
+          : confirming
+            ? 'Are you sure? Click to confirm'
+            : 'Remove Patient'}
+      </button>
+
+      {confirming && !removing && (
+        <button
+          onClick={() => setConfirming(false)}
+          className="mt-3 text-sm text-gray-500 hover:text-gray-700 cursor-pointer"
+        >
+          Cancel
+        </button>
+      )}
     </div>
   );
 }

@@ -397,3 +397,60 @@ Tap Next — should navigate to the chatbot page
 Send a message in the chatbot — should get an AI response
 Tap Choose hospital — should navigate to the hospital selection page
 Tap ← Back on the chatbot page — should return to the intake form
+
+
+
+
+Remove Feature
+
+Add "Remove" Feature to Waiting Room Patient Modal
+Add a Remove tab next to "Patient Profile" in the patient detail modal. Clicking it opens a dedicated confirmation page for that patient. The page has a "Remove Patient" button that, when clicked, shows an "Are you sure?" confirmation. On second click, the patient is removed from the waiting room using the existing 
+dischargeEncounter
+ API.
+
+Proposed Changes
+Waiting Room Feature
+[MODIFY] 
+PatientDetailModal.tsx
+Add 'remove' to the 
+Tab
+ type union: type Tab = 'messages' | 'profile' | 'remove'
+Add a new Remove tab button next to the "Patient Profile" tab
+Add an onRemovePatient prop callback
+Add a new RemovePatientPanel sub-component that renders when the "remove" tab is active:
+Shows patient name and info
+Has a "Remove Patient" button (red/destructive styling)
+First click changes the button to "Are you sure? Click to confirm"
+Second click calls onRemovePatient(encounter.id) and closes the modal
+[MODIFY] 
+WaitingRoomView.tsx
+Add onRemovePatient prop to 
+WaitingRoomViewProps
+Pass onRemovePatient through to 
+PatientDetailModal
+[MODIFY] 
+HospitalApp.tsx
+Import 
+dischargeEncounter
+ (already exported from 
+encounters.ts
+)
+Add a handleRemovePatient handler that calls 
+dischargeEncounter(id)
+, then refreshes encounters via fetchEncounters()
+Pass handleRemovePatient as onRemovePatient to 
+WaitingRoomView
+NOTE
+
+The existing 
+dischargeEncounter
+ API endpoint will be used for removal. This transitions the encounter status to DEPARTED/COMPLETE, which will naturally filter it out of the waiting room list.
+
+Verification Plan
+Manual Verification
+Run npm run dev in the HospitalApp directory
+Navigate to the Waiting Room and click on a patient card
+Verify the Remove tab appears next to "Patient Profile"
+Click the Remove tab and verify the remove confirmation page renders
+Click the "Remove Patient" button — it should change to "Are you sure? Click to confirm"
+Click the confirmation button — patient should be removed and the modal should close

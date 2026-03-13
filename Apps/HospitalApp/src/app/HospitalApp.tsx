@@ -11,7 +11,7 @@ import { TriageView } from '../features/triage/TriageView';
 import { WaitingRoomView } from '../features/waitingroom/WaitingRoomView';
 import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
-import { listEncounters, startExam, confirmEncounter } from '../shared/api/encounters';
+import { listEncounters, startExam, confirmEncounter, dischargeEncounter } from '../shared/api/encounters';
 import { ApiError } from '../shared/api/client';
 import { getSocket, sendMessageViaSocket } from '../shared/realtime/socket';
 import { listMessages } from '../shared/api/messaging';
@@ -226,6 +226,19 @@ export function HospitalApp() {
     }
   };
 
+  const handleRemovePatient = async (encounterId: number) => {
+    try {
+      await dischargeEncounter(encounterId);
+      showToast('Patient removed from waiting room', 'success');
+      await fetchEncounters();
+    } catch (err) {
+      console.error('[HospitalApp] Failed to remove patient:', err);
+      if (err instanceof ApiError && err.status === 401) return;
+      showToast('Failed to remove patient. Please try again.', 'error');
+      throw err;
+    }
+  };
+
   const userInfo = user ? { email: user.email, role: user.role } : null;
 
   return (
@@ -258,6 +271,7 @@ export function HospitalApp() {
           encounters={waitingEncounters}
           chatMessages={chatMessages}
           onSendMessage={handleSendMessage}
+          onRemovePatient={handleRemovePatient}
           loading={loadingEncounters}
           onRefresh={fetchEncounters}
           user={userInfo}
