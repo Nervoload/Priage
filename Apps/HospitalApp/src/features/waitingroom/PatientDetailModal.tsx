@@ -8,6 +8,7 @@ import { Modal } from '../../shared/ui/Modal';
 import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
 import { ChatPanel } from './ChatPanel';
+import { generatePatientPdf } from './generatePatientPdf';
 
 type Tab = 'messages' | 'profile' | 'remove';
 
@@ -189,6 +190,19 @@ function PatientProfile({ encounter, latestTriage }: { encounter: Encounter; lat
 
   return (
     <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6">
+      {/* Download PDF */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => generatePatientPdf(encounter)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-priage-700 transition-colors cursor-pointer"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Download PDF
+        </button>
+      </div>
+
       {/* Warnings */}
       {warnings.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-3">
