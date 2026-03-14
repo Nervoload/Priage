@@ -90,7 +90,10 @@ export interface GuestIntakeSession {
   hospitalSlug: string | null;
   firstName?: string;
   lastName?: string;
+  age?: number;
+  gender?: string;
   chiefComplaint?: string;
+  details?: string;
 }
 
 export interface EncounterMessage {
@@ -168,6 +171,7 @@ export interface CreateIntentPayload {
   lastName?: string;
   phone: string;
   age?: number;
+  gender?: string;
   chiefComplaint: string;
   details?: string;
   preferredLanguage?: string;
@@ -197,6 +201,50 @@ export interface UpdateIntakeDetailsResponse {
 export interface ConfirmIntentPayload {
   hospitalId?: number;
   hospitalSlug?: string;
+}
+
+export type InterviewPhase = 'urgent' | 'emergent' | 'history';
+export type InterviewInputType = 'text' | 'textarea' | 'number' | 'boolean' | 'single_select';
+export type InterviewStatus = 'in_progress' | 'emergency_ack_required' | 'complete';
+
+export interface InterviewQuestion {
+  publicId: string;
+  phase: InterviewPhase;
+  inputType: InterviewInputType;
+  prompt: string;
+  helpText?: string;
+  placeholder?: string;
+  required: boolean;
+  choices: string[];
+  clinicalReason?: string;
+  askIfAmbiguous: boolean;
+}
+
+export interface InterviewEmergencyAlert {
+  title: string;
+  body: string;
+  recommendation: string;
+}
+
+export interface InterviewState {
+  interviewPublicId: string;
+  status: InterviewStatus;
+  phase: InterviewPhase;
+  askedCount: number;
+  maxQuestions: number;
+  currentQuestion: InterviewQuestion | null;
+  cachedQuestions: InterviewQuestion[];
+  emergencyAlert: InterviewEmergencyAlert | null;
+  summaryPreview: string;
+}
+
+export interface AdvanceInterviewPayload {
+  questionPublicId?: string;
+  valueText?: string;
+  valueNumber?: number;
+  valueBoolean?: boolean;
+  valueChoice?: string;
+  action?: 'acknowledge_emergency';
 }
 
 export interface LocationPingPayload {

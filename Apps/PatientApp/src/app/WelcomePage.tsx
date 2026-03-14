@@ -1,9 +1,14 @@
 import { useNavigate } from 'react-router-dom';
 
+import { useGuestSession } from '../shared/hooks/useGuestSession';
+import { getGuestResumeLabel, resolveGuestPath } from '../shared/guestFlow';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 
 export function WelcomePage() {
   const navigate = useNavigate();
+  const { session: guestSession } = useGuestSession();
+  const guestPath = resolveGuestPath(guestSession);
+  const resumeLabel = getGuestResumeLabel(guestSession);
 
   return (
     <main style={styles.page}>
@@ -14,6 +19,13 @@ export function WelcomePage() {
         </div>
 
         <div style={styles.actions}>
+          {guestSession && (
+            <button style={styles.resumeAction} onClick={() => navigate(guestPath)}>
+              <strong style={styles.actionTitle}>{resumeLabel}</strong>
+              <span style={styles.actionBody}>Jump back into your saved guest flow without starting over.</span>
+            </button>
+          )}
+
           <button style={styles.primaryAction} onClick={() => navigate('/guest/start')}>
             <strong style={styles.actionTitle}>Quick Check-In</strong>
             <span style={styles.actionBody}>Start as a guest and notify the hospital immediately.</span>
@@ -90,6 +102,19 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '1rem',
     textAlign: 'left',
     boxShadow: '0 16px 36px rgba(33, 86, 209, 0.28)',
+    cursor: 'pointer',
+    display: 'grid',
+    gap: '0.24rem',
+    fontFamily: patientTheme.fonts.body,
+  },
+  resumeAction: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.lg,
+    background: 'linear-gradient(135deg, rgba(241, 247, 255, 0.98) 0%, rgba(255, 253, 248, 0.98) 100%)',
+    color: patientTheme.colors.ink,
+    padding: '1rem',
+    textAlign: 'left',
+    boxShadow: patientTheme.shadows.card,
     cursor: 'pointer',
     display: 'grid',
     gap: '0.24rem',

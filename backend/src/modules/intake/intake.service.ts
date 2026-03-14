@@ -19,6 +19,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { ConfirmIntentDto } from './dto/confirm-intent.dto';
 import { CreateIntentDto } from './dto/create-intent.dto';
+import { AdvanceInterviewDto } from './dto/interview.dto';
+import { TriageInterviewService } from './interview/triage-interview.service';
 import { LocationPingDto } from './dto/location-ping.dto';
 import { UpdateIntakeDetailsDto } from './dto/update-intake-details.dto';
 
@@ -47,6 +49,7 @@ export class IntakeService {
     private readonly prisma: PrismaService,
     private readonly intakeSessions: IntakeSessionsService,
     private readonly loggingService: LoggingService,
+    private readonly triageInterview: TriageInterviewService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -60,6 +63,7 @@ export class IntakeService {
       hasLastName: !!dto.lastName,
       hasPhone: !!dto.phone,
       hasAge: dto.age !== undefined && dto.age !== null,
+      hasGender: !!dto.gender,
       hasChiefComplaint: !!dto.chiefComplaint,
       hasDetails: !!dto.details,
     });
@@ -74,6 +78,7 @@ export class IntakeService {
         lastName: dto.lastName,
         phone: dto.phone,
         age: dto.age,
+        gender: dto.gender,
         preferredLanguage: dto.preferredLanguage ?? 'en',
       },
     });
@@ -94,7 +99,7 @@ export class IntakeService {
       correlationId,
     );
 
-    if (dto.chiefComplaint || dto.details || dto.firstName || dto.lastName || dto.phone || dto.age || dto.preferredLanguage) {
+    if (dto.chiefComplaint || dto.details || dto.firstName || dto.lastName || dto.phone || dto.age || dto.gender || dto.preferredLanguage) {
       await this.intakeSessions.appendContextItemByAuthSession(
         authSession.id,
         patient.id,
@@ -108,6 +113,7 @@ export class IntakeService {
             lastName: dto.lastName,
             phone: dto.phone,
             age: dto.age,
+            gender: dto.gender,
             preferredLanguage: dto.preferredLanguage,
           },
           sourceType: ContextSourceType.PATIENT,
@@ -150,11 +156,25 @@ export class IntakeService {
     return this.confirmWithSession(session, dto, correlationId);
   }
 
+  async startInterviewBySession(sessionId: number, patientId: number, correlationId?: string) {
+    return this.triageInterview.startBySession(sessionId, patientId, correlationId);
+  }
+
+  async advanceInterviewBySession(
+    sessionId: number,
+    patientId: number,
+    dto: AdvanceInterviewDto,
+    correlationId?: string,
+  ) {
+    return this.triageInterview.advanceBySession(sessionId, patientId, dto, correlationId);
+  }
+
   private async confirmWithSession(
     session: SessionRecord,
     dto: ConfirmIntentDto,
     correlationId?: string,
   ) {
+    await this.triageInterview.ensureInterviewCompleteBySession(session.id, session.patientId, correlationId);
     const hospitalId = await this.resolveHospitalId(dto);
     const encounter = await this.intakeSessions.confirmByAuthSession(
       session.id,

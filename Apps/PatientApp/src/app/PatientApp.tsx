@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../shared/hooks/useAuth';
+import { startInterview } from '../shared/api/intake';
 import { useGuestSession } from '../shared/hooks/useGuestSession';
+import { resolveGuestPath } from '../shared/guestFlow';
 import { BottomNav } from '../shared/ui/BottomNav';
 import { isActiveEncounter } from '../shared/encounters';
 import { listMyEncounters } from '../shared/api/encounters';
@@ -24,11 +26,7 @@ export function PatientApp() {
   const { session, loading } = useAuth();
   const { session: guestSession } = useGuestSession();
 
-  const guestPath = guestSession?.encounterId
-    ? `/guest/enroute/${guestSession.encounterId}`
-    : guestSession
-      ? '/guest/routing'
-      : '/welcome';
+  const guestPath = resolveGuestPath(guestSession);
 
   if (loading) {
     return (
@@ -43,15 +41,15 @@ export function PatientApp() {
     <Routes>
       <Route
         path="/welcome"
-        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to={guestPath} replace /> : <WelcomePage />}
+        element={session ? <Navigate to="/" replace /> : <WelcomePage />}
       />
       <Route
         path="/auth/login"
-        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to={guestPath} replace /> : <LoginRoute />}
+        element={session ? <Navigate to="/" replace /> : <LoginRoute backPath="/welcome" />}
       />
       <Route
         path="/auth/signup"
-        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to={guestPath} replace /> : <SignupRoute />}
+        element={session ? <Navigate to="/" replace /> : <SignupRoute backPath="/welcome" />}
       />
       <Route
         path="/guest/start"
@@ -72,7 +70,7 @@ export function PatientApp() {
         element={
           session
             ? <Navigate to="/" replace />
-            : guestSession?.encounterId
+            : guestSession?.hospitalSlug && guestSession.encounterId
               ? <Navigate to={`/guest/enroute/${guestSession.encounterId}`} replace />
               : guestSession
                 ? <GuestRoutingRoute />
@@ -81,11 +79,17 @@ export function PatientApp() {
       />
       <Route
         path="/guest/pre-triage"
-        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to="/guest/routing" replace /> : <Navigate to="/guest/start" replace />}
+        element={session ? <Navigate to="/" replace /> : guestSession ? <Navigate to={guestPath} replace /> : <Navigate to="/guest/start" replace />}
       />
       <Route
         path="/guest/enroute/:encounterId"
-        element={session ? <Navigate to="/" replace /> : guestSession?.encounterId ? <Enroute /> : <Navigate to="/guest/start" replace />}
+        element={
+          session
+            ? <Navigate to="/" replace />
+            : guestSession?.hospitalSlug && guestSession.encounterId
+              ? <Enroute />
+              : <Navigate to="/guest/start" replace />
+        }
       />
       <Route
         path="/encounters/:id/*"
@@ -93,25 +97,25 @@ export function PatientApp() {
       />
       <Route
         path="/"
-        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
       />
       <Route
         path="/priage"
-        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
       />
       <Route
         path="/messages"
-        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
       />
       <Route
         path="/messages/:id"
-        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
       />
       <Route
         path="/settings"
-        element={session ? <AuthenticatedShell /> : <Navigate to={guestPath} replace />}
+        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
       />
-      <Route path="*" element={<Navigate to={session ? '/' : guestPath} replace />} />
+      <Route path="*" element={<Navigate to={session ? '/' : '/welcome'} replace />} />
     </Routes>
   );
 }
@@ -164,18 +168,65 @@ function AuthenticatedShell() {
   );
 }
 
-function LoginRoute() {
+function LoginRoute({ backPath }: { backPath: string }) {
   const navigate = useNavigate();
-  return <LoginPage onSwitchToSignup={() => navigate('/auth/signup')} onBack={() => navigate('/welcome')} />;
+  return <LoginPage onSwitchToSignup={() => navigate('/auth/signup')} onBack={() => navigate(backPath)} />;
 }
 
-function SignupRoute() {
+function SignupRoute({ backPath }: { backPath: string }) {
   const navigate = useNavigate();
-  return <SignupPage onSwitchToLogin={() => navigate('/auth/login')} onBack={() => navigate('/welcome')} />;
+  return <SignupPage onSwitchToLogin={() => navigate('/auth/login')} onBack={() => navigate(backPath)} />;
 }
 
 function GuestRoutingRoute() {
+  const [checking, setChecking] = useState(true);
+  const [allowed, setAllowed] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function verifyInterview() {
+      try {
+        const interview = await startInterview();
+        if (cancelled) {
+          return;
+        }
+        if (interview.status === 'complete') {
+          setAllowed(true);
+        } else {
+          navigate('/guest/chatbot', { replace: true });
+        }
+      } catch {
+        if (!cancelled) {
+          navigate('/guest/chatbot', { replace: true });
+        }
+      } finally {
+        if (!cancelled) {
+          setChecking(false);
+        }
+      }
+    }
+
+    void verifyInterview();
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate]);
+
+  if (checking) {
+    return (
+      <div style={styles.loadingContainer}>
+        <div style={styles.spinner} />
+        <p style={styles.loadingText}>Loading hospital selection…</p>
+      </div>
+    );
+  }
+
+  if (!allowed) {
+    return null;
+  }
+
   return <Routing onConfirmed={(encounterId) => navigate(`/guest/enroute/${encounterId}`)} onBack={() => navigate('/guest/chatbot')} />;
 }
 
