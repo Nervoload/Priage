@@ -31,6 +31,7 @@ export function HospitalApp() {
   const { showToast } = useToast();
   const [currentView, setCurrentView] = useState<View>('admit');
   const [encounters, setEncounters] = useState<Encounter[]>([]);
+  const [allEncounters, setAllEncounters] = useState<Encounter[]>([]);
   const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
   const [loadingEncounters, setLoadingEncounters] = useState(false);
   const isMounted = useRef(true);
@@ -46,9 +47,13 @@ export function HospitalApp() {
     if (!user) return;
     try {
       setLoadingEncounters(true);
-      const res = await listEncounters({ status: ACTIVE_STATUSES });
+      const [activeRes, allRes] = await Promise.all([
+        listEncounters({ status: ACTIVE_STATUSES }),
+        listEncounters({}), // all statuses for analytics
+      ]);
       if (isMounted.current) {
-        setEncounters(res.data);
+        setEncounters(activeRes.data);
+        setAllEncounters(allRes.data);
       }
     } catch (err) {
       console.error('[HospitalApp] Failed to fetch encounters:', err);
@@ -159,9 +164,9 @@ export function HospitalApp() {
     [encounters],
   );
 
-  // Waiting room shows all patients that have been admitted (TRIAGE, WAITING, COMPLETE)
+  // Waiting room shows patients that completed triage and are waiting or seen
   const waitingEncounters = useMemo(
-    () => encounters.filter((e) => e.status === 'TRIAGE' || e.status === 'WAITING' || e.status === 'COMPLETE'),
+    () => encounters.filter((e) => e.status === 'WAITING' || e.status === 'COMPLETE'),
     [encounters],
   );
 
@@ -282,6 +287,8 @@ export function HospitalApp() {
           onNavigate={handleNavigate}
           onLogout={handleBack}
           user={userInfo}
+          encounters={allEncounters}
+          chatMessages={chatMessages}
         />
       )}
       {currentView === 'settings' && (

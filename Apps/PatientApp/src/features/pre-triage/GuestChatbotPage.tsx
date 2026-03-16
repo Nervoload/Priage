@@ -14,7 +14,7 @@ interface ChatMessage {
 }
 
 const OPENAI_API_KEY =
-    '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';
+    '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';
 
 const MAX_QUESTIONS = 5;
 
@@ -47,7 +47,8 @@ Your role is to:
 4. Keep each message short (2-4 sentences max) and reassuring — they may be anxious.
 5. Do NOT diagnose or prescribe. Remind them that a medical team will see them soon.
 6. If they mention a life-threatening emergency (chest pain, difficulty breathing, severe bleeding), advise calling 911 immediately.
-7. Keep a warm, professional tone throughout.`;
+7. Keep a warm, professional tone throughout.
+8. If the patient's message is unreadable, unintelligible, or you cannot understand what they are saying, respond with exactly: "Sorry, I don't understand. If you are in danger, please call 911."`;
 }
 
 function formatTranscript(messages: ChatMessage[]): string {
