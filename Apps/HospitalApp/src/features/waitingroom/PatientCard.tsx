@@ -5,12 +5,15 @@ import { useState, useEffect } from 'react';
 import type { Encounter, ChatMessage, AlertSeverity } from '../../shared/types/domain';
 import { patientName } from '../../shared/types/domain';
 import { CTASBadge, CountBadge, AlertIndicator } from '../../shared/ui/Badge';
+import type { QueueEntry } from '../../shared/queue/queuePriority';
+import { formatWaitStatus } from '../../shared/queue/queuePriority';
 
 interface PatientCardProps {
   encounter: Encounter;
   messages: ChatMessage[];
   unreadCount: number;
   alertSeverity?: AlertSeverity | null;
+  queueEntry?: QueueEntry | null;
   onClick: () => void;
 }
 
@@ -49,7 +52,7 @@ function waitTimeColor(minutes: number): string {
   return 'text-green-600';
 }
 
-export function PatientCard({ encounter, messages, unreadCount, alertSeverity, onClick }: PatientCardProps) {
+export function PatientCard({ encounter, messages, unreadCount, alertSeverity, queueEntry, onClick }: PatientCardProps) {
   const [, setTick] = useState(0);
   const name = patientName(encounter.patient);
   const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
@@ -82,20 +85,39 @@ export function PatientCard({ encounter, messages, unreadCount, alertSeverity, o
   return (
     <div
       onClick={onClick}
-      className="
-        relative bg-white rounded-xl border border-gray-200
+      className={`
+        relative bg-white rounded-xl border
         shadow-sm hover:shadow-md hover:border-priage-300
         transition-all duration-200 cursor-pointer
         p-4 flex flex-col gap-2.5
         group
-      "
+        ${queueEntry?.waitStatus === 'overdue'
+          ? 'border-red-300 border-l-4 border-l-red-500'
+          : queueEntry?.waitStatus === 'approaching'
+            ? 'border-amber-200 border-l-4 border-l-amber-400'
+            : 'border-gray-200'
+        }
+      `}
     >
-      {/* ── Top-left: Alert indicator ── */}
-      {alertSeverity && (
+      {/* ── Top-left: Alert indicator or Queue position ── */}
+      {alertSeverity ? (
         <div className="absolute -top-2 -left-2 z-10">
           <AlertIndicator severity={alertSeverity} />
         </div>
-      )}
+      ) : queueEntry ? (
+        <div className="absolute -top-2 -left-2 z-10">
+          <span
+            className="
+              inline-flex items-center justify-center rounded-full
+              w-6 h-6 text-[11px] font-bold
+              bg-priage-600 text-white shadow-sm
+            "
+            title={`Queue position #${queueEntry.position}`}
+          >
+            #{queueEntry.position}
+          </span>
+        </div>
+      ) : null}
 
       {/* ── Top-right: Unread message count ── */}
       {unreadCount > 0 && (
@@ -168,11 +190,25 @@ export function PatientCard({ encounter, messages, unreadCount, alertSeverity, o
         </div>
       )}
 
-      {/* ── Footer: Wait time + Messages ── */}
+      {/* ── Footer: Wait time + Queue status + Messages ── */}
       <div className="flex items-center justify-between mt-auto pt-1 border-t border-gray-100">
-        <span className={`text-xs font-semibold ${waitTimeColor(waitMins)}`}>
-          ⏱ {formatWaitTime(waitMins)}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`text-xs font-semibold ${waitTimeColor(waitMins)}`}>
+            ⏱ {formatWaitTime(waitMins)}
+          </span>
+          {queueEntry && (
+            <span
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+              style={{
+                backgroundColor: formatWaitStatus(queueEntry.waitStatus).color + '18',
+                color: formatWaitStatus(queueEntry.waitStatus).color,
+              }}
+              title={`Target: ${queueEntry.targetMinutes} min`}
+            >
+              {formatWaitStatus(queueEntry.waitStatus).icon} {formatWaitStatus(queueEntry.waitStatus).label}
+            </span>
+          )}
+        </div>
         <span className="text-[11px] text-gray-400">
           {messages.length > 0 ? `${messages.length} msg${messages.length !== 1 ? 's' : ''}` : 'No messages'}
         </span>

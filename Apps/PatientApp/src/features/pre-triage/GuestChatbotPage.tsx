@@ -14,7 +14,7 @@ interface ChatMessage {
 }
 
 const OPENAI_API_KEY =
-    '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';
+    '';
 
 const MAX_QUESTIONS = 5;
 

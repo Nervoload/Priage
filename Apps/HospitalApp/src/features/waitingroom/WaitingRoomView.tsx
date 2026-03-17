@@ -9,6 +9,7 @@ import { NavBar, type View } from '../../shared/ui/NavBar';
 import { PatientCard } from './PatientCard';
 import { PatientDetailModal } from './PatientDetailModal';
 import { AlertDashboard } from './AlertDashboard';
+import { sortByQueuePriority, getQueuePositions } from '../../shared/queue/queuePriority';
 
 interface WaitingRoomViewProps {
   onBack?: () => void;
@@ -84,7 +85,10 @@ export function WaitingRoomView({
     return Math.max(0, currentPatientMsgs - baseline);
   };
 
-  // Filter + sort encounters
+  // Build the queue priority map from ALL encounters (before filtering)
+  const queueMap = useMemo(() => getQueuePositions(encounters), [encounters]);
+
+  // Filter + sort encounters using queue priority algorithm
   const displayEncounters = useMemo(() => {
     let list = encounters;
 
@@ -115,23 +119,9 @@ export function WaitingRoomView({
         break;
     }
 
-    // Sort: alerts first (CRITICAL > HIGH), then CTAS (1 first), then by wait time (longest first)
-    const severityOrder: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-    list = [...list].sort((a, b) => {
-      const aAlert = alertMap[a.id] ? severityOrder[alertMap[a.id]] ?? 4 : 4;
-      const bAlert = alertMap[b.id] ? severityOrder[alertMap[b.id]] ?? 4 : 4;
-      if (aAlert !== bAlert) return aAlert - bAlert;
-
-      const aCtas = a.currentCtasLevel ?? 99;
-      const bCtas = b.currentCtasLevel ?? 99;
-      if (aCtas !== bCtas) return aCtas - bCtas;
-
-      const aWait = new Date(a.waitingAt ?? a.triagedAt ?? a.arrivedAt ?? a.createdAt).getTime();
-      const bWait = new Date(b.waitingAt ?? b.triagedAt ?? b.arrivedAt ?? b.createdAt).getTime();
-      return aWait - bWait; // oldest first
-    });
-
-    return list;
+    // Sort using queue priority algorithm (respects CTAS + wait-time escalation)
+    const sorted = sortByQueuePriority(list);
+    return sorted.map(entry => entry.encounter);
   }, [encounters, searchQuery, filter, alertMap]);
 
   const selectedEncounter = encounters.find((e) => e.id === selectedId) ?? null;
@@ -265,6 +255,7 @@ export function WaitingRoomView({
                 messages={chatMessages[encounter.id] || []}
                 unreadCount={getUnreadCount(encounter.id)}
                 alertSeverity={alertMap[encounter.id] ?? null}
+                queueEntry={queueMap.get(encounter.id) ?? null}
                 onClick={() => setSelectedId(encounter.id)}
               />
             ))}
