@@ -35,9 +35,9 @@ const THRESHOLDS = {
   /** TRIAGE patients with no assessment after this → warning */
   triageStaleWarning: 20,
   /** WAITING patients waiting longer than this → warning */
-  waitingLongWarning: 45,
+  waitingLongWarning: 8 * 60,
   /** WAITING patients waiting longer than this → critical */
-  waitingLongCritical: 90,
+  waitingLongCritical: 10 * 60,
   /** New profiles not yet reviewed after this → warning */
   profileUnseenWarning: 45,
 };

@@ -99,23 +99,10 @@ export function PatientCard({ encounter, messages, unreadCount, alertSeverity, q
         }
       `}
     >
-      {/* ── Top-left: Alert indicator or Queue position ── */}
+      {/* ── Top-left: Alert indicator ── */}
       {alertSeverity ? (
         <div className="absolute -top-2 -left-2 z-10">
           <AlertIndicator severity={alertSeverity} />
-        </div>
-      ) : queueEntry ? (
-        <div className="absolute -top-2 -left-2 z-10">
-          <span
-            className="
-              inline-flex items-center justify-center rounded-full
-              w-6 h-6 text-[11px] font-bold
-              bg-priage-600 text-white shadow-sm
-            "
-            title={`Queue position #${queueEntry.position}`}
-          >
-            #{queueEntry.position}
-          </span>
         </div>
       ) : null}
 
@@ -193,6 +180,14 @@ export function PatientCard({ encounter, messages, unreadCount, alertSeverity, q
       {/* ── Footer: Wait time + Queue status + Messages ── */}
       <div className="flex items-center justify-between mt-auto pt-1 border-t border-gray-100">
         <div className="flex items-center gap-2">
+          {queueEntry && (
+            <span
+              className="inline-flex items-center rounded-full bg-priage-50 px-2 py-0.5 text-[10px] font-semibold text-priage-700"
+              title={`Queue position #${queueEntry.position}`}
+            >
+              Queue #{queueEntry.position}
+            </span>
+          )}
           <span className={`text-xs font-semibold ${waitTimeColor(waitMins)}`}>
             ⏱ {formatWaitTime(waitMins)}
           </span>

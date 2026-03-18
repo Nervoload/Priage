@@ -89,7 +89,7 @@ export function Login() {
         </header>
 
         <form onSubmit={handleSubmit} style={styles.form}>
-          <div style={styles.twoCol}>
+          <div style={styles.nameRow}>
             <label style={styles.fieldLabel}>
               First name *
               <input
@@ -101,19 +101,30 @@ export function Login() {
               />
             </label>
             <label style={styles.fieldLabel}>
-              Phone number *
+              Last name
               <input
                 style={styles.input}
-                value={phone}
-                onChange={(event) => setPhone(event.target.value)}
-                autoComplete="tel"
-                inputMode="tel"
-                placeholder="(555) 123-4567"
+                value={lastName}
+                onChange={(event) => setLastName(event.target.value)}
+                autoComplete="family-name"
+                placeholder="Last name"
               />
             </label>
           </div>
 
-          <div style={styles.twoCol}>
+          <label style={styles.fieldLabel}>
+            Phone number *
+            <input
+              style={styles.input}
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              autoComplete="tel"
+              inputMode="tel"
+              placeholder="(555) 123-4567"
+            />
+          </label>
+
+          <div style={styles.demographicsRow}>
             <label style={styles.fieldLabel}>
               Age *
               <input
@@ -140,17 +151,6 @@ export function Login() {
               </select>
             </label>
           </div>
-
-          <label style={styles.fieldLabel}>
-            Last name
-            <input
-              style={styles.input}
-              value={lastName}
-              onChange={(event) => setLastName(event.target.value)}
-              autoComplete="family-name"
-              placeholder="Last name"
-            />
-          </label>
 
           <label style={styles.fieldLabel}>
             What brings you in today? *
@@ -277,6 +277,16 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '0.68rem',
   },
   twoCol: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '0.5rem',
+  },
+  nameRow: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '0.5rem',
+  },
+  demographicsRow: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
     gap: '0.5rem',

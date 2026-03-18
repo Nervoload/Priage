@@ -187,6 +187,69 @@ function buildRequestOptions(path, method = 'GET', includeAuth = false) {
   return options;
 }
 
+function buildInterviewAnswer(question) {
+  const payload = { questionPublicId: question.publicId };
+
+  switch (question.inputType) {
+    case 'boolean':
+      payload.valueBoolean = false;
+      return payload;
+    case 'number':
+      payload.valueNumber = 3;
+      return payload;
+    case 'single_select':
+      payload.valueChoice = question.choices?.[0] ?? 'No';
+      return payload;
+    case 'textarea':
+    case 'text':
+    default:
+      payload.valueText = `Logging test answer for ${question.publicId}`;
+      return payload;
+  }
+}
+
+async function completeInterviewForPatient(sessionToken) {
+  let options = buildRequestOptions('/intake/interview/start', 'POST', false);
+  options.headers['x-patient-token'] = sessionToken;
+  let response = await makeRequest(options);
+  let interview = response.data;
+
+  if (response.statusCode !== 200 && response.statusCode !== 201) {
+    throw new Error(`Interview start failed with status ${response.statusCode}`);
+  }
+
+  for (let index = 0; index < 12; index += 1) {
+    if (interview?.status === 'complete') {
+      if (!interview.summaryPreview) {
+        throw new Error('Interview completed without a summary preview');
+      }
+      return interview;
+    }
+
+    options = buildRequestOptions('/intake/interview/advance', 'POST', false);
+    options.headers['x-patient-token'] = sessionToken;
+
+    if (interview?.status === 'emergency_ack_required') {
+      response = await makeRequest(options, { action: 'acknowledge_emergency' });
+      interview = response.data;
+      continue;
+    }
+
+    if (!interview?.currentQuestion) {
+      throw new Error(`Interview is ${interview?.status ?? 'unknown'} but has no currentQuestion`);
+    }
+
+    response = await makeRequest(options, buildInterviewAnswer(interview.currentQuestion));
+    interview = response.data;
+
+    if (response.statusCode !== 200 && response.statusCode !== 201) {
+      throw new Error(`Interview advance failed with status ${response.statusCode}`);
+    }
+  }
+
+  throw new Error(`Interview did not complete after repeated answers; last status=${interview?.status ?? 'unknown'}`);
+}
+
 // ============================================================================
 // Test Helper Functions
 // ============================================================================
@@ -1016,6 +1079,8 @@ async function testNewServicesLogging() {
   if (sessionToken) {
     logInfo('Test 8B: Testing intake service logging - confirm intent...');
     try {
+      await completeInterviewForPatient(sessionToken);
+
       const options = buildRequestOptions('/intake/confirm', 'POST', false);
       options.headers['x-patient-token'] = sessionToken;
       

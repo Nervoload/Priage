@@ -120,6 +120,72 @@ async function loginWithFallback() {
   return login(fixtureLogin.email, fixtureLogin.password);
 }
 
+function buildInterviewAnswer(question) {
+  const payload = { questionPublicId: question.publicId };
+
+  switch (question.inputType) {
+    case 'boolean':
+      payload.valueBoolean = false;
+      return payload;
+    case 'number':
+      payload.valueNumber = 3;
+      return payload;
+    case 'single_select':
+      payload.valueChoice = question.choices?.[0] ?? 'No';
+      return payload;
+    case 'textarea':
+    case 'text':
+    default:
+      payload.valueText = `Realtime smoke answer for ${question.publicId}`;
+      return payload;
+  }
+}
+
+async function completeInterviewForPatient(sessionToken) {
+  const headers = { 'x-patient-token': sessionToken };
+  let { res, json, text } = await api('/intake/interview/start', {
+    method: 'POST',
+    headers,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to start intake interview: ${res.status} ${text}`);
+  }
+
+  for (let index = 0; index < 12; index += 1) {
+    if (json?.status === 'complete') {
+      if (!json.summaryPreview) {
+        throw new Error('Interview completed without a summary preview');
+      }
+      return json;
+    }
+
+    if (json?.status === 'emergency_ack_required') {
+      ({ res, json, text } = await api('/intake/interview/advance', {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'acknowledge_emergency' }),
+      }));
+    } else {
+      if (!json?.currentQuestion) {
+        throw new Error(`Interview is ${json?.status ?? 'unknown'} but has no currentQuestion`);
+      }
+
+      ({ res, json, text } = await api('/intake/interview/advance', {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildInterviewAnswer(json.currentQuestion)),
+      }));
+    }
+
+    if (!res.ok) {
+      throw new Error(`Failed to advance intake interview: ${res.status} ${text}`);
+    }
+  }
+
+  throw new Error(`Interview did not complete after repeated answers; last status=${json?.status ?? 'unknown'}`);
+}
+
 async function createEncounter(hospitalSlug) {
   const suffix = String(Date.now()).slice(-7);
   const { res: intentRes, json: intent, text: intentText } = await api('/intake/intent', {
@@ -140,6 +206,8 @@ async function createEncounter(hospitalSlug) {
   if (fixtureContext) {
     fixtureContext.fixtures.trackPatient(intent.patientId);
   }
+
+  await completeInterviewForPatient(intent.sessionToken);
 
   const { res: confirmRes, json: encounter, text: confirmText } = await api('/intake/confirm', {
     method: 'POST',
@@ -267,13 +335,25 @@ async function connectAuthorizedSocket(token) {
 }
 
 function waitForEvent(socket, eventName, predicate, timeoutMs = 5000) {
-  return new Promise((resolve, reject) => {
+  let cleanup = () => {};
+  const promise = new Promise((resolve, reject) => {
     let lastPayload = null;
+    let settled = false;
     const timer = setTimeout(() => {
-      socket.off(eventName, handleEvent);
+      cleanup();
       const suffix = lastPayload ? `; last payload=${JSON.stringify(lastPayload)}` : '';
+      settled = true;
       reject(new Error(`Timed out waiting for ${eventName}${suffix}`));
     }, timeoutMs);
+
+    const handleDisconnect = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(new Error(`Socket disconnected while waiting for ${eventName}`));
+    };
 
     const handleEvent = (payload) => {
       lastPayload = payload;
@@ -281,13 +361,26 @@ function waitForEvent(socket, eventName, predicate, timeoutMs = 5000) {
         return;
       }
 
-      clearTimeout(timer);
-      socket.off(eventName, handleEvent);
+      settled = true;
+      cleanup();
       resolve(payload);
     };
 
+    cleanup = () => {
+      clearTimeout(timer);
+      socket.off(eventName, handleEvent);
+      socket.off('disconnect', handleDisconnect);
+    };
+
     socket.on(eventName, handleEvent);
+    socket.on('disconnect', handleDisconnect);
   });
+
+  promise.cancel = () => {
+    cleanup();
+  };
+
+  return promise;
 }
 
 async function sendStaffMessage(socket, encounterId) {
@@ -332,8 +425,9 @@ async function main() {
   const socket = await connectAuthorizedSocket(token);
   console.log('Verified websocket connection with valid token');
 
+  let encounterEventPromise = null;
   try {
-    const encounterEventPromise = waitForEvent(
+    encounterEventPromise = waitForEvent(
       socket,
       'encounter.updated',
       (payload) => (
@@ -383,6 +477,7 @@ async function main() {
     await alertResolvedPromise;
     console.log(`Received alert.resolved for alert ${createdAlert.id}`);
   } finally {
+    encounterEventPromise?.cancel?.();
     socket.close();
   }
 }

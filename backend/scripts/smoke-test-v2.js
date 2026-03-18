@@ -293,12 +293,69 @@ async function createTrackedGuestEncounter(intentOverrides = {}) {
     pushUnique(testState.extraPatientIds, patient.id);
   }
 
+  await completeInterviewForPatient(intent.sessionToken);
+
   const encounter = await makeRequest('POST', '/intake/confirm', {
     headers: patientAuth(intent.sessionToken),
     body: { hospitalId: testState.hospital.id },
   });
 
   return { intent, patient, encounter };
+}
+
+function buildInterviewAnswer(question) {
+  const payload = { questionPublicId: question.publicId };
+
+  switch (question.inputType) {
+    case 'boolean':
+      payload.valueBoolean = false;
+      return payload;
+    case 'number':
+      payload.valueNumber = 3;
+      return payload;
+    case 'single_select':
+      payload.valueChoice = question.choices?.[0] ?? 'No';
+      return payload;
+    case 'textarea':
+    case 'text':
+    default:
+      payload.valueText = `Smoke answer for ${question.publicId}`;
+      return payload;
+  }
+}
+
+async function completeInterviewForPatient(sessionToken) {
+  let interview = await makeRequest('POST', '/intake/interview/start', {
+    headers: patientAuth(sessionToken),
+  });
+
+  for (let index = 0; index < 12; index += 1) {
+    if (interview.status === 'complete') {
+      if (!interview.summaryPreview) {
+        throw new Error('Interview completed without a summary preview');
+      }
+      return interview;
+    }
+
+    if (interview.status === 'emergency_ack_required') {
+      interview = await makeRequest('POST', '/intake/interview/advance', {
+        headers: patientAuth(sessionToken),
+        body: { action: 'acknowledge_emergency' },
+      });
+      continue;
+    }
+
+    if (!interview.currentQuestion) {
+      throw new Error(`Interview is ${interview.status} but has no currentQuestion`);
+    }
+
+    interview = await makeRequest('POST', '/intake/interview/advance', {
+      headers: patientAuth(sessionToken),
+      body: buildInterviewAnswer(interview.currentQuestion),
+    });
+  }
+
+  throw new Error(`Interview did not complete after repeated answers; last status=${interview.status}`);
 }
 
 async function createStaffReadyPatient(overrides = {}) {
@@ -634,7 +691,25 @@ async function testPatientIntake() {
     );
     logSuccess('Invalid patient token correctly rejected');
 
-    logSubSection('2E: Invalid Hospital Slug (Expected 404)');
+    logSubSection('2E: Confirm Before Interview Complete (Expected 400)');
+    await expectRequestFailure(
+      () => makeRequest('POST', '/intake/confirm', {
+        headers: patientAuth(testState.patientToken),
+        body: { hospitalSlug: 'does-not-exist' },
+      }),
+      ['400', 'Please complete the intake interview before selecting a hospital.'],
+      'Intent confirmation unexpectedly succeeded before interview completion',
+    );
+    logSuccess('Interview completion is required before hospital selection');
+
+    logSubSection('2F: Complete Intake Interview');
+    const completedInterview = await completeInterviewForPatient(testState.patientToken);
+    if (completedInterview.status !== 'complete') {
+      throw new Error(`Expected interview to complete, got ${completedInterview.status}`);
+    }
+    logSuccess('Patient intake interview completed');
+
+    logSubSection('2G: Invalid Hospital Slug After Interview (Expected 404)');
     await expectRequestFailure(
       () => makeRequest('POST', '/intake/confirm', {
         headers: patientAuth(testState.patientToken),
@@ -643,9 +718,9 @@ async function testPatientIntake() {
       ['404', 'Hospital not found'],
       'Intent confirmation unexpectedly succeeded with invalid hospital slug',
     );
-    logSuccess('Invalid hospital slug correctly rejected');
+    logSuccess('Invalid hospital slug correctly rejected after interview completion');
 
-    logSubSection('2F: Expired Patient Token (Expected 401)');
+    logSubSection('2H: Expired Patient Token (Expected 401)');
     const expiredIntent = await makeRequest('POST', '/intake/intent', {
       body: buildIntentPayload({
         firstName: 'Expired',
@@ -655,6 +730,7 @@ async function testPatientIntake() {
     });
     fixtures.trackPatient(expiredIntent.patientId);
     pushUnique(testState.extraPatientIds, expiredIntent.patientId);
+    await completeInterviewForPatient(expiredIntent.sessionToken);
     await prisma.patientSession.update({
       where: { token: expiredIntent.sessionToken },
       data: { expiresAt: new Date(Date.now() - 60_000) },
@@ -669,7 +745,7 @@ async function testPatientIntake() {
     );
     logSuccess('Expired patient token correctly rejected');
 
-    logSubSection('2G: Confirm Intent (POST /intake/confirm)');
+    logSubSection('2I: Confirm Intent (POST /intake/confirm)');
     const confirmedEncounter = await makeRequest('POST', '/intake/confirm', {
       headers: patientAuth(testState.patientToken),
       body: { hospitalId: testState.hospital.id },
@@ -683,7 +759,7 @@ async function testPatientIntake() {
     testState.encounter = confirmedEncounter;
     logSuccess(`Intent confirmed — Encounter ID: ${confirmedEncounter.id}, status: ${confirmedEncounter.status}`);
     
-    logSubSection('2H: Update Intake Details (PATCH /intake/details)');
+    logSubSection('2J: Update Intake Details (PATCH /intake/details)');
     await makeRequest('PATCH', '/intake/details', {
       headers: patientAuth(testState.patientToken),
       body: {
@@ -693,14 +769,14 @@ async function testPatientIntake() {
     });
     logSuccess('Intake details updated');
     
-    logSubSection('2I: Record Patient Location (POST /intake/location)');
+    logSubSection('2K: Record Patient Location (POST /intake/location)');
     await makeRequest('POST', '/intake/location', {
       headers: patientAuth(testState.patientToken),
       body: { latitude: 43.6532, longitude: -79.3832 },
     });
     logSuccess('Patient location recorded');
 
-    logSubSection('2J: Patient Lists Own Encounters');
+    logSubSection('2L: Patient Lists Own Encounters');
     const patientEncounters = await makeRequest('GET', '/patient/encounters', {
       headers: patientAuth(testState.patientToken),
     });
@@ -709,7 +785,7 @@ async function testPatientIntake() {
     }
     logSuccess('Patient encounter list includes the active encounter');
 
-    logSubSection('2K: Patient Reads Encounter Detail');
+    logSubSection('2M: Patient Reads Encounter Detail');
     const patientEncounterDetail = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}`, {
       headers: patientAuth(testState.patientToken),
     });
@@ -721,7 +797,7 @@ async function testPatientIntake() {
     }
     logSuccess('Patient encounter detail matches the confirmed visit');
 
-    logSubSection('2L: Patient Queue Before Waiting');
+    logSubSection('2N: Patient Queue Before Waiting');
     const initialQueue = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}/queue`, {
       headers: patientAuth(testState.patientToken),
     });
@@ -730,7 +806,7 @@ async function testPatientIntake() {
     }
     logSuccess('Patient queue is empty before WAITING');
 
-    logSubSection('2M: Patient Cancel Flow on Fresh Encounter');
+    logSubSection('2O: Patient Cancel Flow on Fresh Encounter');
     const cancelFlow = await createTrackedGuestEncounter({
       firstName: 'Cancel',
       lastName: 'Flow',
@@ -746,7 +822,7 @@ async function testPatientIntake() {
     testState.cancelledEncounter = cancelledEncounter;
     logSuccess('Patient cancel flow works on a fresh encounter');
 
-    logSubSection('2N: Patient Ownership Enforcement');
+    logSubSection('2P: Patient Ownership Enforcement');
     const intruderFlow = await createTrackedGuestEncounter({
       firstName: 'Other',
       lastName: 'Guest',

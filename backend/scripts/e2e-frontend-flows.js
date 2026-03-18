@@ -100,6 +100,59 @@ function section(name) {
   console.log(`\n${C.cyan}${C.bold}── ${name} ──${C.reset}`);
 }
 
+function buildInterviewAnswer(question) {
+  const payload = { questionPublicId: question.publicId };
+
+  switch (question.inputType) {
+    case 'boolean':
+      payload.valueBoolean = false;
+      return payload;
+    case 'number':
+      payload.valueNumber = 3;
+      return payload;
+    case 'single_select':
+      payload.valueChoice = question.choices?.[0] ?? 'No';
+      return payload;
+    case 'textarea':
+    case 'text':
+    default:
+      payload.valueText = `E2E answer for ${question.publicId}`;
+      return payload;
+  }
+}
+
+async function completeInterviewForPatient(patientToken) {
+  let interviewResponse = await api('POST', '/intake/interview/start', null, false, patientHeaders(patientToken));
+  let interview = interviewResponse.json;
+
+  assert('Interview start returns 201/200', interviewResponse.status === 201 || interviewResponse.status === 200);
+
+  for (let index = 0; index < 12; index += 1) {
+    if (interview?.status === 'complete') {
+      assert('Interview reaches complete state', true);
+      assert('Interview includes summary preview', typeof interview?.summaryPreview === 'string' && interview.summaryPreview.length > 0);
+      return interview;
+    }
+
+    if (interview?.status === 'emergency_ack_required') {
+      interviewResponse = await api('POST', '/intake/interview/advance', {
+        action: 'acknowledge_emergency',
+      }, false, patientHeaders(patientToken));
+      interview = interviewResponse.json;
+      continue;
+    }
+
+    if (!interview?.currentQuestion) {
+      throw new Error(`Interview is ${interview?.status ?? 'unknown'} but has no currentQuestion`);
+    }
+
+    interviewResponse = await api('POST', '/intake/interview/advance', buildInterviewAnswer(interview.currentQuestion), false, patientHeaders(patientToken));
+    interview = interviewResponse.json;
+  }
+
+  throw new Error(`Interview did not complete after repeated answers; last status=${interview?.status ?? 'unknown'}`);
+}
+
 async function connectSocket() {
   if (socket?.connected) {
     return socket;
@@ -232,6 +285,9 @@ async function flowCreatePatientAndEncounter(hospitalSlug) {
   if (fixtureContext && typeof intent?.patientId === 'number') {
     fixtureContext.fixtures.trackPatient(intent.patientId);
   }
+
+  section('4B. Complete intake interview');
+  await completeInterviewForPatient(intent?.sessionToken);
 
   // Confirm the encounter using the patient session token (x-patient-token header)
   section('5. Confirm encounter (POST /intake/confirm)');
