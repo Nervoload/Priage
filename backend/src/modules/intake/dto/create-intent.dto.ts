@@ -28,6 +28,12 @@ export class CreateIntentDto {
   @Min(0)
   age?: number;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  @Sanitize()
+  gender?: string;
+
   @IsString()
   @MinLength(1)
   @MaxLength(240)

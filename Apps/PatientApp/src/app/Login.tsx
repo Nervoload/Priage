@@ -14,7 +14,10 @@ export function Login() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState('');
   const [chiefComplaint, setChiefComplaint] = useState('');
+  const [details, setDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
@@ -25,6 +28,14 @@ export function Login() {
     }
     if (!phone.trim()) {
       showToast('Please enter your phone number.');
+      return;
+    }
+    if (!age.trim()) {
+      showToast('Please enter your age.');
+      return;
+    }
+    if (!gender.trim()) {
+      showToast('Please select your sex.');
       return;
     }
     if (!chiefComplaint.trim()) {
@@ -38,7 +49,10 @@ export function Login() {
         firstName: firstName.trim(),
         lastName: lastName.trim() || undefined,
         phone: phone.trim(),
+        age: Number.parseInt(age, 10),
+        gender: gender.trim(),
         chiefComplaint: chiefComplaint.trim(),
+        details: details.trim() || undefined,
       });
 
       setSession({
@@ -47,7 +61,10 @@ export function Login() {
         hospitalSlug: null,
         firstName: firstName.trim(),
         lastName: lastName.trim() || undefined,
+        age: Number.parseInt(age, 10),
+        gender: gender.trim(),
         chiefComplaint: chiefComplaint.trim(),
+        details: details.trim() || undefined,
       });
       navigate('/guest/chatbot');
     } catch (error) {
@@ -96,6 +113,34 @@ export function Login() {
             </label>
           </div>
 
+          <div style={styles.twoCol}>
+            <label style={styles.fieldLabel}>
+              Age *
+              <input
+                style={styles.input}
+                value={age}
+                onChange={(event) => setAge(event.target.value.replace(/[^\d]/g, ''))}
+                inputMode="numeric"
+                placeholder="e.g. 39"
+              />
+            </label>
+
+            <label style={styles.fieldLabel}>
+              Sex *
+              <select
+                style={styles.input}
+                value={gender}
+                onChange={(event) => setGender(event.target.value)}
+              >
+                <option value="">Select</option>
+                <option value="Female">Female</option>
+                <option value="Male">Male</option>
+                <option value="Intersex">Intersex</option>
+                <option value="Prefer not to say">Prefer not to say</option>
+              </select>
+            </label>
+          </div>
+
           <label style={styles.fieldLabel}>
             Last name
             <input
@@ -118,13 +163,23 @@ export function Login() {
             />
           </label>
 
+          <label style={styles.fieldLabel}>
+            Briefly explain the situation
+            <textarea
+              style={styles.textArea}
+              value={details}
+              onChange={(event) => setDetails(event.target.value)}
+              placeholder="Share timing, triggers, what changed, or anything else staff should know."
+            />
+          </label>
+
           <button style={styles.primaryButton} type="submit" disabled={submitting}>
             {submitting ? 'Starting check-in…' : 'Next'}
           </button>
         </form>
 
         <footer style={styles.footer}>
-          <strong>What happens next:</strong> chat with our AI health assistant, choose your hospital, notify the care team, then fill in any optional health details while you are on the way.
+          <strong>What happens next:</strong> complete a short safety check, answer a few dynamic intake questions, then choose your hospital and notify the care team.
         </footer>
       </section>
     </main>
