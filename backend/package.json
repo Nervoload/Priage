@@ -18,6 +18,7 @@
     "test:logging:verbose": "node scripts/test-logging.js --verbose",
     "test:logging:db": "node scripts/test-logging.js",
     "demo:seed": "node scripts/demo-seed.js",
+    "seed:full": "node scripts/demo-seed.js",
     "test:platform": "node scripts/platform-smoke.js"
   },
   "dependencies": {

@@ -230,10 +230,12 @@ Useful variants:
 
 ```bash
 ./priage-dev reseed
+./priage-dev fullseed
 ./priage-dev test
 ./priage-dev logs
 ./priage-dev logs -v
 ./priage-dev reseed test
+./priage-dev fullseed test
 ./priage-dev -k
 ```
 
@@ -246,7 +248,7 @@ What the launcher does:
 - runs `npx prisma migrate deploy`
 - creates or reuses a private local admin in `.priage-dev/accounts.json`
 - can optionally create an additional local hospital user in an existing hospital
-- optionally clears patient-facing dev data and re-runs `backend/scripts/seed.js` against the bootstrap admin hospital
+- optionally clears patient-facing dev data and re-runs either `backend/scripts/seed.js` (`reseed`) or the richer `backend/scripts/demo-seed.js` (`fullseed`) against the bootstrap admin hospital
 - opens the backend, Hospital App, and Patient App in separate macOS Terminal windows
 - `./priage-dev -k` or `./priage-dev kill` stops those three managed dev services and closes their Terminal windows
 - optionally runs the logging test suite when `logs` or `-l` is passed
@@ -363,6 +365,12 @@ When you want a fresh local patient/encounter dataset:
 
 ```bash
 ./priage-dev reseed
+```
+
+When you want a heavier, more realistic waiting room/admit/triage dataset:
+
+```bash
+./priage-dev fullseed
 ```
 
 ### Dependencies And Notes

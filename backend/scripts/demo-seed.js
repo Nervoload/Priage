@@ -1,6 +1,6 @@
 // backend/scripts/demo-seed.js
 // ──────────────────────────────────────────────────────────────────────
-// Creates a rich demo dataset (~25 patients) for hospital validation.
+// Creates a rich demo dataset (~35 patients) for hospital validation.
 // Designed to populate the waiting-room grid, triage list, and admit
 // views with realistic variety: different CTAS levels, vitals, chief
 // complaints, message threads, and warning notes.
@@ -294,12 +294,116 @@ const PATIENTS = [
       { sender: 'USER', senderRole: 'STAFF', content: 'We\'ve dimmed the lights in your area. A doctor will assess you shortly.' },
     ],
   },
+
+  // ──── More EXPECTED and ADMITTED patients for admit load ────
+  {
+    firstName: 'Olivia', lastName: 'Reed', age: 47, gender: 'Female', phone: '555-1026',
+    encounter: { status: 'EXPECTED', chiefComplaint: 'Transient facial droop and slurred speech at home', details: 'Symptoms started 25 minutes ago and partially improved before arrival. Family called ahead while en route. Still reports numbness in left cheek.', minutesAgo: 4 },
+    healthInfo: { warningNotes: ['Possible TIA/stroke — stroke workflow likely on arrival'], allergies: ['Clopidogrel'], conditions: ['Hypertension', 'Migraine'] },
+    messages: [],
+  },
+  {
+    firstName: 'Noah', lastName: 'Patel', age: 11, gender: 'Male', phone: '555-1027',
+    encounter: { status: 'EXPECTED', chiefComplaint: 'Persistent vomiting and dehydration', details: 'Vomiting since overnight with poor oral intake. Parent reports dry lips, reduced urine output, and worsening fatigue on the drive in.', minutesAgo: 7 },
+    healthInfo: { warningNotes: ['Pediatric patient — age 11'], allergies: [], conditions: [] },
+    messages: [
+      { sender: 'PATIENT', content: 'My stomach keeps hurting and I can\'t keep water down' },
+    ],
+  },
+  {
+    firstName: 'Helen', lastName: 'Brooks', age: 72, gender: 'Female', phone: '555-1028',
+    encounter: { status: 'EXPECTED', chiefComplaint: 'Dialysis patient with fever and shaking chills', details: 'Called from home after dialysis line tenderness worsened. Reports fever, rigors, and generalized weakness. Concern for line infection.', minutesAgo: 6 },
+    healthInfo: { warningNotes: ['Dialysis access infection risk', 'Immunocompromised'], allergies: ['Vancomycin (red man syndrome)'], conditions: ['End-stage renal disease', 'Diabetes'] },
+    messages: [],
+  },
+  {
+    firstName: 'Mason', lastName: 'Lee', age: 26, gender: 'Male', phone: '555-1029',
+    encounter: { status: 'ADMITTED', chiefComplaint: 'Deep forearm laceration from power tool', details: 'Sustained a deep left forearm laceration at work. Bleeding slowed with pressure, but he reports numbness in two fingers and weakness with grip.', minutesAgo: 16 },
+    healthInfo: { warningNotes: ['Possible tendon or nerve injury'], allergies: [], conditions: [] },
+    messages: [
+      { sender: 'PATIENT', content: 'Two fingers feel numb and I can\'t squeeze properly' },
+      { sender: 'USER', senderRole: 'STAFF', content: 'Keep steady pressure on the dressing. We\'re moving you through registration now.' },
+    ],
+  },
+  {
+    firstName: 'Nina', lastName: 'Gonzalez', age: 54, gender: 'Female', phone: '555-1030',
+    encounter: { status: 'ADMITTED', chiefComplaint: 'Severe vertigo with repeated vomiting', details: 'Sudden spinning sensation started this morning. Unable to stand without assistance. Concern for posterior circulation event versus peripheral vertigo.', minutesAgo: 19 },
+    healthInfo: { warningNotes: ['Fall risk — assist with transfers'], allergies: ['Prochlorperazine'], conditions: ['Hypertension', 'Meniere disease'] },
+    messages: [],
+  },
+
+  // ──── More TRIAGE patients for board density ────
+  {
+    firstName: 'Ethan', lastName: 'Murphy', age: 63, gender: 'Male', phone: '555-1031',
+    encounter: { status: 'TRIAGE', chiefComplaint: 'New jaundice and severe abdominal pain', details: 'Progressive jaundice over 1 week with sudden worsening RUQ pain and dark urine today. Appears uncomfortable and mildly diaphoretic.', minutesAgo: 28 },
+    triage: { ctasLevel: 2, priorityScore: 84, painLevel: 8, vitals: { bloodPressure: '110/72', heartRate: 104, temperature: 38.3, respiratoryRate: 20, oxygenSaturation: 97 }, note: 'Concern for ascending cholangitis. Blood cultures, lactate, LFTs, and RUQ ultrasound ordered. Broad-spectrum antibiotics started.' },
+    healthInfo: { warningNotes: ['Possible biliary sepsis'], allergies: ['Cephalexin'], conditions: ['Gallstones'] },
+    messages: [
+      { sender: 'PATIENT', content: 'The pain under my ribs keeps getting sharper and I feel feverish' },
+    ],
+  },
+  {
+    firstName: 'Chloe', lastName: 'Evans', age: 28, gender: 'Female', phone: '555-1032',
+    encounter: { status: 'TRIAGE', chiefComplaint: 'Heavy vaginal bleeding in early pregnancy', details: 'Approximately 9 weeks pregnant by dates. Reports heavy bleeding with clots and cramping for 2 hours. Feels lightheaded when standing.', minutesAgo: 24 },
+    triage: { ctasLevel: 2, priorityScore: 82, painLevel: 7, vitals: { bloodPressure: '98/60', heartRate: 110, temperature: 36.9, respiratoryRate: 18, oxygenSaturation: 99 }, note: 'Possible threatened or incomplete miscarriage. Type and screen, beta-hCG, CBC, and pelvic ultrasound ordered. Monitor orthostatics.' },
+    healthInfo: { warningNotes: ['Pregnancy-related bleeding'], allergies: [], conditions: [] },
+    messages: [
+      { sender: 'PATIENT', content: 'The bleeding got much heavier on the drive here and I feel dizzy' },
+      { sender: 'USER', senderRole: 'NURSE', content: 'We\'re moving quickly on labs and ultrasound. Please tell us if the dizziness gets worse.' },
+    ],
+  },
+  {
+    firstName: 'Leo', lastName: 'Martinez', age: 7, gender: 'Male', phone: '555-1033',
+    encounter: { status: 'TRIAGE', chiefComplaint: 'Barking cough with noisy breathing at rest', details: 'Parent reports sudden worsening croup symptoms overnight. Child has stridor at rest and is anxious but consolable.', minutesAgo: 11 },
+    triage: { ctasLevel: 3, priorityScore: 71, painLevel: 2, vitals: { bloodPressure: '100/62', heartRate: 126, temperature: 37.4, respiratoryRate: 30, oxygenSaturation: 95 }, note: 'Moderate to severe croup. Dexamethasone given. Nebulized epinephrine started. Reassess stridor and work of breathing after treatment.' },
+    healthInfo: { warningNotes: ['Pediatric airway symptoms'], allergies: [], conditions: ['Reactive airway disease'] },
+    messages: [],
+  },
+
+  // ──── Extra waiting-room variety ────
+  {
+    firstName: 'Ava', lastName: 'Hughes', age: 41, gender: 'Female', phone: '555-1034',
+    encounter: { status: 'WAITING', chiefComplaint: 'Painful swollen leg after long-haul flight', details: 'Returned from overseas flight yesterday. Now has unilateral calf swelling, tenderness, and mild shortness of breath when walking.', minutesAgo: 58 },
+    triage: { ctasLevel: 3, priorityScore: 69, painLevel: 6, vitals: { bloodPressure: '124/78', heartRate: 94, temperature: 36.8, respiratoryRate: 18, oxygenSaturation: 96 }, note: 'Concern for DVT with possible PE symptoms. D-dimer and Doppler ultrasound ordered. Low threshold for CTA chest if dyspnea worsens.' },
+    healthInfo: { warningNotes: ['Possible venous thromboembolism'], allergies: [], conditions: ['Recent long-haul travel'] },
+    messages: [
+      { sender: 'PATIENT', content: 'My calf feels tight and the swelling is getting worse' },
+    ],
+  },
+  {
+    firstName: 'Jack', lastName: 'Stewart', age: 59, gender: 'Male', phone: '555-1035',
+    encounter: { status: 'WAITING', chiefComplaint: 'Painful red eye with blurred vision', details: 'Developed severe right eye pain and halos around lights this afternoon. Nausea started on arrival. No trauma.', minutesAgo: 31 },
+    triage: { ctasLevel: 3, priorityScore: 67, painLevel: 8, vitals: { bloodPressure: '150/88', heartRate: 86, temperature: 36.7, respiratoryRate: 16, oxygenSaturation: 99 }, note: 'Acute angle-closure glaucoma needs urgent pressure-lowering therapy. Ophthalmology paged. Tonometry and antiemetic ordered.' },
+    healthInfo: { warningNotes: ['Time-sensitive eye emergency'], allergies: [], conditions: ['Hyperopia'] },
+    messages: [],
+  },
 ];
+
+function summarizePatients(patients) {
+  return patients.reduce((summary, patient) => {
+    const status = patient.encounter.status;
+    summary.total += 1;
+    summary.byStatus[status] = (summary.byStatus[status] || 0) + 1;
+    if (['EXPECTED', 'ADMITTED'].includes(status) && !patient.triage) {
+      summary.untriagedAdmitLoad += 1;
+    }
+    if (Array.isArray(patient.messages) && patient.messages.length > 0) {
+      summary.withMessages += 1;
+    }
+    return summary;
+  }, {
+    total: 0,
+    byStatus: {},
+    untriagedAdmitLoad: 0,
+    withMessages: 0,
+  });
+}
 
 // ─── Main seed function ─────────────────────────────────────────────────────
 
 async function seed() {
-  console.log('🌱 Demo seed — creating ~25 patients for hospital demo…\n');
+  const seedSummary = summarizePatients(PATIENTS);
+  console.log(`🌱 Demo seed — creating ~${seedSummary.total} patients for hospital demo…\n`);
 
   const hashedPassword = await bcrypt.hash(PATIENT_PASSWORD, 10);
   const hospital = await resolveTargetHospital(prisma);
@@ -518,6 +622,9 @@ async function seed() {
   console.log(`  Hospital:  ${hospital.name} (id=${hospital.id})`);
   console.log(`  Hospital slug: ${hospital.slug}`);
   console.log(`  Existing staff users at this hospital: ${actors.allUsers.length}`);
+  console.log(`  Status mix: ${Object.entries(seedSummary.byStatus).map(([status, count]) => `${status}=${count}`).join(', ')}`);
+  console.log(`  Admit load without triage yet: ${seedSummary.untriagedAdmitLoad}`);
+  console.log(`  Patient/message threads seeded: ${seedSummary.withMessages}`);
   for (const user of actors.allUsers) console.log(`    ${user.role.padEnd(6)}  ${user.email}`);
   console.log(`  Patient demo password: ${PATIENT_PASSWORD}\n`);
   console.log(`\n  Patients: ${PATIENTS.length} total`);

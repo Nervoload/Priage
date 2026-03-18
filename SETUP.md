@@ -282,13 +282,15 @@ Variants:
 
 ```bash
 ./priage-dev reseed
+./priage-dev fullseed
 ./priage-dev test
 ./priage-dev logs
 ./priage-dev logs -v
 ./priage-dev reseed test
+./priage-dev fullseed test
 ```
 
-The launcher verifies Docker + local tooling, installs dependencies in all three apps, runs `npx prisma generate` plus `npx prisma migrate deploy`, creates or reuses a private local admin, optionally clears patient-facing dev data before reseeding, opens the backend and both Vite apps in separate macOS Terminal tabs, and can finish by running the logging test suite (`logs` / `-l`) or the full backend confidence pipeline (`smoke`, `logging`, `realtime`, and frontend-aligned flow checks).
+The launcher verifies Docker + local tooling, installs dependencies in all three apps, runs `npx prisma generate` plus `npx prisma migrate deploy`, creates or reuses a private local admin, optionally clears patient-facing dev data before reseeding, opens the backend and both Vite apps in separate macOS Terminal tabs, and can finish by running the logging test suite (`logs` / `-l`) or the full backend confidence pipeline (`smoke`, `logging`, `realtime`, and frontend-aligned flow checks). Use `reseed` for the lightweight seed and `fullseed` for a denser, more realistic hospital load.
 
 ---
 

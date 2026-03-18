@@ -16,6 +16,7 @@ const runtimeDir = join(projectRoot, '.priage-dev');
 const args = new Set(process.argv.slice(2));
 const wantsHelp = args.has('--help') || args.has('-h');
 const wantsReseed = args.has('reseed');
+const wantsFullseed = args.has('fullseed');
 const wantsSmoke = args.has('test') || args.has('-t');
 const wantsLogs = args.has('logs') || args.has('-l');
 const wantsVerbose = args.has('--verbose') || args.has('-v');
@@ -88,12 +89,16 @@ async function main() {
     env: { PRIAGE_DEV_RUNTIME_DIR: runtimeDir },
   });
   const devAccountEnv = loadDevAccountEnv();
-  if (wantsReseed) {
+  if (wantsReseed || wantsFullseed) {
     runStep('Reseeding patient-facing dev data', 'node', ['scripts/reseed-dev.js'], {
       cwd: backendDir,
       env: devAccountEnv,
     });
-    runStep('Running standard seed script', 'node', ['scripts/seed.js'], {
+    const seedLabel = wantsFullseed
+      ? 'Running full demo seed script'
+      : 'Running standard seed script';
+    const seedScript = wantsFullseed ? 'scripts/demo-seed.js' : 'scripts/seed.js';
+    runStep(seedLabel, 'node', [seedScript], {
       cwd: backendDir,
       env: buildSeedEnv(devAccountEnv),
     });
@@ -121,12 +126,14 @@ async function main() {
 }
 
 function printUsage() {
-  console.log(`Usage: ./priage-dev [reseed] [test|-t] [logs|-l] [--verbose|-v]
+  console.log(`Usage: ./priage-dev [reseed|fullseed] [test|-t] [logs|-l] [--verbose|-v]
 
 Options:
   kill, -k, --kill
             Stop Priage dev services and close their Terminal windows
   reseed    Wipe patient-facing dev data and run backend/scripts/seed.js
+  fullseed  Wipe patient-facing dev data and run backend/scripts/demo-seed.js
+            for a fuller waiting room, admit queue, and triage board
   test, -t  Wait for the API and run the backend confidence pipeline
   logs, -l  Wait for the API and run the logging test suite
   --verbose, -v
