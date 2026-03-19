@@ -6,12 +6,11 @@ import { IntakeSessionsService } from '../../intake-sessions/intake-sessions.ser
 import { LoggingService } from '../../logging/logging.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AdvanceInterviewDto } from '../dto/interview.dto';
-import { OpenAiCompatibleTriageInterviewProvider } from './triage-interview.provider';
+import { TriageAiProvider } from './triage-interview.provider';
 import type {
   InterviewAnswerRecord,
   InterviewClientState,
   InterviewEmergencyAlert,
-  InterviewGenerationMode,
   InterviewInputType,
   InterviewPatientContext,
   InterviewPhase,
@@ -39,8 +38,8 @@ export class TriageInterviewService {
     private readonly prisma: PrismaService,
     private readonly intakeSessions: IntakeSessionsService,
     private readonly loggingService: LoggingService,
-    private readonly provider: OpenAiCompatibleTriageInterviewProvider,
-  ) {}
+    private readonly aiProvider: TriageAiProvider,
+  ) { }
 
   async startBySession(
     authSessionId: number,
@@ -159,22 +158,22 @@ export class TriageInterviewService {
 
     const nextState = shouldReplan
       ? await this.replenishOrComplete(
-          draft.id,
-          patientId,
-          {
-            ...answeredState,
-            cachedQuestions: [],
-            pendingCandidates,
-          },
-          correlationId,
-        )
-      : {
+        draft.id,
+        patientId,
+        {
           ...answeredState,
-          phase: currentState.cachedQuestions[0].phase,
-          currentQuestion: currentState.cachedQuestions[0],
-          cachedQuestions: currentState.cachedQuestions.slice(1),
-          pendingCandidates: [],
-        };
+          cachedQuestions: [],
+          pendingCandidates,
+        },
+        correlationId,
+      )
+      : {
+        ...answeredState,
+        phase: currentState.cachedQuestions[0].phase,
+        currentQuestion: currentState.cachedQuestions[0],
+        cachedQuestions: currentState.cachedQuestions.slice(1),
+        pendingCandidates: [],
+      };
 
     const persisted = await this.persistState(draft.id, patientId, nextState, previousPublicId, correlationId);
     return this.toClientState(persisted);
@@ -237,13 +236,7 @@ export class TriageInterviewService {
       providerState: state.providerState,
     };
 
-    let generation = await this.provider.generate(providerInput);
-    let generationMode: InterviewGenerationMode = 'ai';
-
-    if (!generation) {
-      generation = this.buildRescueFallback(providerInput);
-      generationMode = 'fallback';
-    }
+    const generation = await this.aiProvider.generate(providerInput) ?? this.buildRescueFallback(providerInput);
 
     const targetQuestionCount = this.clampTargetQuestionCount(generation.result.targetQuestionCount, state.askedCount);
     const summaryRecord = this.buildSummaryRecord(patient, state.answers, generation.result);
@@ -254,95 +247,12 @@ export class TriageInterviewService {
       summaryPreview: summaryRecord.summaryPreview,
       summaryRecord,
       providerState: generation.providerState ?? state.providerState,
-      generationMode,
+      generationMode: 'fallback' as const,
     };
 
     const generatedQuestions = this.materializeQuestions(generation.result.questions, state.answers).slice(0, batchSize);
 
-    if (generation.result.interrupt.type === 'emergency_ack_required') {
-      return {
-        ...state,
-        ...generationState,
-        status: 'emergency_ack_required',
-        phase: generation.result.phase,
-        currentQuestion: null,
-        cachedQuestions: [],
-        pendingCandidates: generatedQuestions,
-        emergencyAlert: {
-          title: generation.result.interrupt.title || 'Get emergency help now',
-          body: generation.result.interrupt.body || 'Your latest answers may reflect a life-threatening emergency.',
-          recommendation: generation.result.interrupt.recommendation || 'Acknowledge this warning if you still want to continue.',
-        },
-      };
-    }
-
-    const shouldCompleteNow =
-      generation.result.shouldComplete
-      && state.askedCount >= MIN_DYNAMIC_QUESTIONS;
-
     if (generatedQuestions.length === 0) {
-      if (shouldCompleteNow || state.askedCount >= MAX_DYNAMIC_QUESTIONS) {
-        return this.completeInterview(
-          intakeSessionId,
-          patientId,
-          {
-            ...state,
-            ...generationState,
-            phase: generation.result.phase,
-            pendingCandidates: [],
-          },
-          patient,
-          generation.result,
-          correlationId,
-        );
-      }
-
-      if (generationMode === 'ai') {
-        const fallback = this.buildRescueFallback(providerInput);
-        const fallbackTarget = this.clampTargetQuestionCount(fallback.result.targetQuestionCount, state.askedCount);
-        const fallbackSummary = this.buildSummaryRecord(patient, state.answers, fallback.result);
-        const fallbackQuestions = this.materializeQuestions(fallback.result.questions, state.answers).slice(0, batchSize);
-
-        if (fallbackQuestions.length === 0 && state.askedCount >= MIN_DYNAMIC_QUESTIONS) {
-          return this.completeInterview(
-            intakeSessionId,
-            patientId,
-            {
-              ...state,
-              phase: fallback.result.phase,
-              sessionGoal: fallback.result.sessionGoal.trim() || state.sessionGoal,
-              targetQuestionCount: fallbackTarget,
-              completionReason: fallback.result.completionReason.trim(),
-              summaryPreview: fallbackSummary.summaryPreview,
-              summaryRecord: fallbackSummary,
-              providerState: state.providerState,
-              generationMode: 'fallback',
-              pendingCandidates: [],
-            },
-            patient,
-            fallback.result,
-            correlationId,
-          );
-        }
-
-        return {
-          ...state,
-          status: 'in_progress',
-          phase: fallbackQuestions[0]?.phase ?? fallback.result.phase,
-          currentQuestion: fallbackQuestions[0] ?? null,
-          cachedQuestions: fallbackQuestions.slice(1),
-          pendingCandidates: [],
-          emergencyAlert: null,
-          summaryPreview: fallbackSummary.summaryPreview,
-          summaryRecord: fallbackSummary,
-          sessionGoal: fallback.result.sessionGoal.trim() || state.sessionGoal,
-          targetQuestionCount: fallbackTarget,
-          completionReason: fallback.result.completionReason.trim(),
-          providerState: state.providerState,
-          generationMode: 'fallback',
-        };
-      }
-
       return this.completeInterview(
         intakeSessionId,
         patientId,
@@ -994,8 +904,8 @@ export class TriageInterviewService {
 
     const answers = Array.isArray(value.answers)
       ? value.answers
-          .map((answer) => this.parseAnswerRecord(answer))
-          .filter((answer): answer is InterviewAnswerRecord => answer !== null)
+        .map((answer) => this.parseAnswerRecord(answer))
+        .filter((answer): answer is InterviewAnswerRecord => answer !== null)
       : [];
 
     return {
