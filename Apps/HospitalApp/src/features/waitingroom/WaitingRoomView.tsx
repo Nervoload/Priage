@@ -1,11 +1,16 @@
 // HospitalApp/src/features/waitingroom/WaitingRoomView.tsx
-// Waiting Room — grid dashboard of patient cells.
-// AlertDashboard renders as a fixed right-side panel (VS Code chat style).
+// Waiting Room dashboard aligned with the admittance visual system while
+// preserving queue, alert, and messaging workflows.
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Encounter, ChatMessage, AlertSeverity } from '../../shared/types/domain';
 import { patientName } from '../../shared/types/domain';
 import { NavBar, type View } from '../../shared/ui/NavBar';
+import {
+  DASHBOARD_EMPTY_STATE_CLASS,
+  DASHBOARD_GLASS_PANEL_CLASS,
+  DASHBOARD_PAGE_CLASS,
+} from '../../shared/ui/dashboardTheme';
 import { PatientCard } from './PatientCard';
 import { PatientDetailModal } from './PatientDetailModal';
 import { AlertDashboard } from './AlertDashboard';
@@ -25,6 +30,32 @@ interface WaitingRoomViewProps {
 
 type FilterKey = 'all' | 'ctas12' | 'ctas3' | 'ctas45' | 'alerts';
 
+const FILTER_THEME: Record<FilterKey, { summary: string; pill: string }> = {
+  all: {
+    summary: 'border-slate-900 bg-slate-900 text-white shadow-[0_20px_45px_-28px_rgba(15,23,42,0.9)]',
+    pill: 'border-slate-900 bg-slate-900 text-white shadow-[0_16px_36px_-26px_rgba(15,23,42,0.9)]',
+  },
+  ctas12: {
+    summary: 'border-rose-700 bg-rose-700 text-white shadow-[0_20px_45px_-28px_rgba(190,24,93,0.92)]',
+    pill: 'border-rose-700 bg-rose-700 text-white shadow-[0_16px_36px_-26px_rgba(190,24,93,0.92)]',
+  },
+  ctas3: {
+    summary: 'border-amber-600 bg-amber-600 text-white shadow-[0_20px_45px_-28px_rgba(217,119,6,0.92)]',
+    pill: 'border-amber-600 bg-amber-600 text-white shadow-[0_16px_36px_-26px_rgba(217,119,6,0.92)]',
+  },
+  ctas45: {
+    summary: 'border-emerald-700 bg-emerald-700 text-white shadow-[0_20px_45px_-28px_rgba(4,120,87,0.92)]',
+    pill: 'border-emerald-700 bg-emerald-700 text-white shadow-[0_16px_36px_-26px_rgba(4,120,87,0.92)]',
+  },
+  alerts: {
+    summary: 'border-red-700 bg-red-700 text-white shadow-[0_20px_45px_-28px_rgba(185,28,28,0.92)]',
+    pill: 'border-red-700 bg-red-700 text-white shadow-[0_16px_36px_-26px_rgba(185,28,28,0.92)]',
+  },
+};
+
+const WAITING_ROOM_CARD_GRID_CLASS =
+  'grid justify-start [grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr))] gap-5';
+
 export function WaitingRoomView({
   onBack,
   onNavigate,
@@ -39,238 +70,315 @@ export function WaitingRoomView({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [filtersVisible, setFiltersVisible] = useState(true);
 
-  // Track "seen" patient message counts at mount for unread detection
-  const seenMsgCounts = useRef<Record<number, number>>({});
   const [, forceUpdate] = useState(0);
 
   useEffect(() => {
-    const baseline: Record<number, number> = {};
-    for (const enc of encounters) {
-      const msgs = chatMessages[enc.id] || [];
-      baseline[enc.id] = msgs.filter(m => m.sender === 'patient').length;
-    }
-    seenMsgCounts.current = baseline;
-  }, []); // mount-only baseline
-
-  // Auto-refresh counters
-  useEffect(() => {
-    const timer = setInterval(() => forceUpdate(n => n + 1), 30_000);
+    const timer = setInterval(() => forceUpdate((value) => value + 1), 30_000);
     return () => clearInterval(timer);
   }, []);
 
-  // Derive alert severities per encounter (simple wait-time based)
   const alertMap = useMemo(() => {
     const map: Record<number, AlertSeverity> = {};
-    for (const enc of encounters) {
-      const waitStart = enc.waitingAt ?? enc.triagedAt ?? enc.arrivedAt ?? enc.createdAt;
+    for (const encounter of encounters) {
+      const waitStart = encounter.waitingAt ?? encounter.triagedAt ?? encounter.arrivedAt ?? encounter.createdAt;
       if (!waitStart) continue;
-      const mins = (Date.now() - new Date(waitStart).getTime()) / 60_000;
-      if (enc.currentCtasLevel === 1 && mins >= 10) {
-        map[enc.id] = 'CRITICAL';
-      } else if (mins >= 60) {
-        map[enc.id] = 'CRITICAL';
-      } else if (mins >= 30) {
-        map[enc.id] = 'HIGH';
-      } else if (enc.currentCtasLevel != null && enc.currentCtasLevel <= 2 && mins >= 15) {
-        map[enc.id] = 'HIGH';
+      const minutes = (Date.now() - new Date(waitStart).getTime()) / 60_000;
+
+      if (encounter.currentCtasLevel === 1 && minutes >= 10) {
+        map[encounter.id] = 'CRITICAL';
+      } else if (minutes >= 60) {
+        map[encounter.id] = 'CRITICAL';
+      } else if (minutes >= 30) {
+        map[encounter.id] = 'HIGH';
+      } else if (encounter.currentCtasLevel != null && encounter.currentCtasLevel <= 2 && minutes >= 15) {
+        map[encounter.id] = 'HIGH';
       }
     }
     return map;
   }, [encounters]);
 
-  const getUnreadCount = (encId: number) => {
-    const currentPatientMsgs = (chatMessages[encId] || []).filter(m => m.sender === 'patient').length;
-    const baseline = seenMsgCounts.current[encId] ?? 0;
-    return Math.max(0, currentPatientMsgs - baseline);
-  };
-
-  // Build the queue priority map from ALL encounters (before filtering)
   const queueMap = useMemo(() => getQueuePositions(encounters), [encounters]);
 
-  // Filter + sort encounters using queue priority algorithm
   const displayEncounters = useMemo(() => {
     let list = encounters;
 
-    // Search
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter((enc) => {
-        const name = patientName(enc.patient).toLowerCase();
-        const id = String(enc.id);
-        const complaint = (enc.chiefComplaint ?? '').toLowerCase();
-        return name.includes(q) || id.includes(q) || complaint.includes(q);
+      const query = searchQuery.toLowerCase();
+      list = list.filter((encounter) => {
+        const name = patientName(encounter.patient).toLowerCase();
+        const complaint = (encounter.chiefComplaint ?? '').toLowerCase();
+        return name.includes(query) || complaint.includes(query) || String(encounter.id).includes(searchQuery);
       });
     }
 
-    // Filter pills
     switch (filter) {
       case 'ctas12':
-        list = list.filter((e) => e.currentCtasLevel != null && e.currentCtasLevel <= 2);
+        list = list.filter((encounter) => encounter.currentCtasLevel != null && encounter.currentCtasLevel <= 2);
         break;
       case 'ctas3':
-        list = list.filter((e) => e.currentCtasLevel === 3);
+        list = list.filter((encounter) => encounter.currentCtasLevel === 3);
         break;
       case 'ctas45':
-        list = list.filter((e) => e.currentCtasLevel != null && e.currentCtasLevel >= 4);
+        list = list.filter((encounter) => encounter.currentCtasLevel != null && encounter.currentCtasLevel >= 4);
         break;
       case 'alerts':
-        list = list.filter((e) => alertMap[e.id] != null);
+        list = list.filter((encounter) => alertMap[encounter.id] != null);
+        break;
+      case 'all':
         break;
     }
 
-    // Sort using queue priority algorithm (respects CTAS + wait-time escalation)
-    const sorted = sortByQueuePriority(list);
-    return sorted.map(entry => entry.encounter);
-  }, [encounters, searchQuery, filter, alertMap]);
+    return sortByQueuePriority(list).map((entry) => entry.encounter);
+  }, [alertMap, encounters, filter, searchQuery]);
 
-  const selectedEncounter = encounters.find((e) => e.id === selectedId) ?? null;
+  const selectedEncounter = encounters.find((encounter) => encounter.id === selectedId) ?? null;
   const alertCount = Object.keys(alertMap).length;
+  const hasCustomFilters = filter !== 'all' || searchQuery.trim().length > 0;
 
-  const filters: { key: FilterKey; label: string; count?: number }[] = [
+  const filters: { key: FilterKey; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: encounters.length },
-    { key: 'ctas12', label: 'CTAS 1–2', count: encounters.filter((e) => e.currentCtasLevel != null && e.currentCtasLevel <= 2).length },
-    { key: 'ctas3', label: 'CTAS 3', count: encounters.filter((e) => e.currentCtasLevel === 3).length },
-    { key: 'ctas45', label: 'CTAS 4–5', count: encounters.filter((e) => e.currentCtasLevel != null && e.currentCtasLevel >= 4).length },
-    { key: 'alerts', label: 'Has Alerts', count: alertCount },
+    { key: 'ctas12', label: 'CTAS 1–2', count: encounters.filter((encounter) => encounter.currentCtasLevel != null && encounter.currentCtasLevel <= 2).length },
+    { key: 'ctas3', label: 'CTAS 3', count: encounters.filter((encounter) => encounter.currentCtasLevel === 3).length },
+    { key: 'ctas45', label: 'CTAS 4–5', count: encounters.filter((encounter) => encounter.currentCtasLevel != null && encounter.currentCtasLevel >= 4).length },
+    { key: 'alerts', label: 'Alerts', count: alertCount },
   ];
 
+  const toggleFilter = (key: FilterKey) => {
+    setFilter((current) => (current === key ? 'all' : key));
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* NavBar */}
+    <div className={DASHBOARD_PAGE_CLASS}>
       <NavBar
         currentView="waiting"
-        onNavigate={(v) => onNavigate?.(v as any)}
+        onNavigate={(view) => onNavigate?.(view)}
         onLogout={() => onBack?.()}
         user={user ?? null}
       />
 
-      <div className="p-6 max-w-[1600px] mx-auto space-y-4">
-        {/* Toolbar: Search + Filters + Refresh */}
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            {/* Search */}
-            <div className="relative">
+      <div className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6">
+        <div className={`${DASHBOARD_GLASS_PANEL_CLASS} transition-all duration-300 ${filtersVisible ? 'mb-7 p-4 sm:p-5' : 'mb-5 p-4'}`}>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className={`relative flex-1 transition-all duration-300 ${filtersVisible ? 'translate-y-0' : '-translate-y-0.5'}`}>
               <svg
-                width="14" height="14" viewBox="0 0 16 16" fill="none"
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                width="18"
+                height="18"
+                fill="none"
+                viewBox="0 0 16 16"
               >
-                <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" fill="none" />
-                <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
+                <path d="m11 11 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
               <input
                 type="text"
+                placeholder="Search patients, complaints, or chart numbers"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search patients..."
-                className="pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 w-64 transition-shadow"
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="
+                  w-full rounded-[18px] border border-slate-200/80 bg-white px-4 py-3 pl-11
+                  text-sm font-medium text-slate-700 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.5)]
+                  placeholder:text-slate-400
+                  focus:border-priage-300 focus:outline-none focus:ring-2 focus:ring-priage-200
+                "
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm cursor-pointer"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 transition-colors hover:text-slate-600 cursor-pointer"
+                  aria-label="Clear search"
                 >
-                  ✕
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
                 </button>
               )}
             </div>
 
-            {/* Filter pills */}
-            <div className="flex items-center gap-1.5">
-              {filters.map((f) => (
-                <button
-                  key={f.key}
-                  onClick={() => setFilter(f.key)}
-                  className={`
-                    px-3 py-1.5 rounded-full text-xs font-medium transition-all cursor-pointer
-                    ${filter === f.key
-                      ? 'bg-priage-600 text-white shadow-sm'
-                      : 'bg-white text-gray-600 border border-gray-200 hover:border-priage-300 hover:text-priage-600'
-                    }
-                  `}
-                >
-                  {f.label}
-                  {f.count != null && f.count > 0 && (
-                    <span className={`ml-1.5 ${filter === f.key ? 'text-priage-200' : 'text-gray-400'}`}>
-                      {f.count}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
+            {onRefresh && (
+              <button
+                onClick={onRefresh}
+                disabled={loading}
+                title="Refresh waiting room"
+                className="
+                  rounded-[16px] border border-priage-200 bg-priage-50/80 px-4 py-3 text-sm font-semibold text-priage-700
+                  transition-all hover:border-priage-300 hover:bg-priage-100 hover:text-priage-800
+                  disabled:cursor-not-allowed disabled:opacity-50
+                "
+              >
+                Refresh
+              </button>
+            )}
+
+            {hasCustomFilters && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setFilter('all');
+                }}
+                className="
+                  rounded-[16px] border border-orange-200 bg-orange-50/85 px-4 py-3 text-sm font-semibold text-orange-700
+                  transition-all hover:border-orange-300 hover:bg-orange-100 hover:text-orange-800
+                "
+              >
+                Reset
+              </button>
+            )}
+
+            <button
+              onClick={() => setFiltersVisible((value) => !value)}
+              className="
+                rounded-[16px] border border-slate-200 bg-slate-900 px-4 py-3 text-sm font-semibold text-white
+                transition-all hover:bg-slate-800
+              "
+            >
+              {filtersVisible ? 'Hide filters' : 'Show filters'}
+            </button>
           </div>
 
-          {/* Refresh */}
-          {onRefresh && (
-            <button
-              onClick={onRefresh}
-              disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors cursor-pointer"
+          <div
+            className={`
+              transition-[max-height,margin,padding] duration-300 ease-out
+              ${filtersVisible ? 'mt-4 max-h-[560px] overflow-visible px-1 pt-2 pb-1' : 'mt-0 max-h-0 overflow-hidden px-0 pt-0 pb-0'}
+            `}
+          >
+            <div
+              className={`
+                transition-[opacity,transform] duration-200 ease-out
+                ${filtersVisible ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0'}
+              `}
             >
-              <span className={loading ? 'animate-spin' : ''}>↻</span>
-              Refresh
-            </button>
-          )}
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                {filters.map((filterOption) => {
+                  const isActive = filter === filterOption.key;
+                  const activeClasses = FILTER_THEME[filterOption.key].summary;
+                  return (
+                    <div
+                      key={filterOption.key}
+                      onClick={() => toggleFilter(filterOption.key)}
+                      className={`
+                        cursor-pointer rounded-[22px] border px-4 py-4 transition-all duration-200 hover:-translate-y-0.5
+                        ${isActive
+                          ? activeClasses
+                          : 'border-slate-200/80 bg-white/92 text-slate-900 shadow-[0_18px_40px_-32px_rgba(15,23,42,0.45)] hover:border-slate-300'
+                        }
+                      `}
+                    >
+                      <div className={`text-[12px] font-bold uppercase tracking-[0.16em] ${isActive ? 'text-white/78' : 'text-slate-600'}`}>
+                        {filterOption.label}
+                      </div>
+                      <div className={`mt-2 font-hospital-display text-[2.15rem] font-semibold tracking-[-0.03em] ${isActive ? 'text-white' : 'text-slate-900'}`}>
+                        {filterOption.count}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-5 rounded-[22px] border border-slate-200/80 bg-slate-50/90 px-3 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Focus</span>
+                  {filters.map((filterOption) => {
+                    const isActive = filter === filterOption.key;
+                    const buttonClasses = isActive
+                      ? FILTER_THEME[filterOption.key].pill
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900';
+
+                    return (
+                      <button
+                        key={filterOption.key}
+                        onClick={() => toggleFilter(filterOption.key)}
+                        className={`
+                          inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[13px] font-semibold transition-all
+                          ${buttonClasses}
+                        `}
+                      >
+                        <span>{filterOption.label}</span>
+                        <span className={isActive ? 'text-white/78' : 'text-slate-500'}>{filterOption.count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Grid or empty state */}
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="bg-white rounded-xl border border-gray-200 p-4 h-44 animate-shimmer" />
+          <div className={WAITING_ROOM_CARD_GRID_CLASS}>
+            {Array.from({ length: 8 }).map((_, index) => (
+              <div
+                key={index}
+                className="h-[280px] rounded-[28px] border border-slate-200/80 bg-white/90 p-5 shadow-[0_18px_50px_-38px_rgba(15,23,42,0.55)] animate-shimmer"
+              />
             ))}
           </div>
         ) : displayEncounters.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+          <div className={DASHBOARD_EMPTY_STATE_CLASS}>
             {searchQuery || filter !== 'all' ? (
               <>
-                <div className="text-4xl mb-3">🔍</div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-1">No patients match</h3>
-                <p className="text-sm text-gray-500">
-                  Try adjusting your search or filters.
-                </p>
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-[16px] bg-slate-100 text-slate-500">
+                  <svg width="22" height="22" viewBox="0 0 16 16" fill="none">
+                    <circle cx="7" cy="7" r="4.75" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <h3 className="mb-1 text-lg font-semibold text-slate-700">No patients match</h3>
+                <p className="text-sm text-slate-500">Try adjusting your search or focus filters.</p>
                 <button
-                  onClick={() => { setSearchQuery(''); setFilter('all'); }}
-                  className="mt-3 text-sm text-priage-600 hover:text-priage-700 font-medium cursor-pointer"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setFilter('all');
+                  }}
+                  className="mt-3 text-sm font-medium text-priage-600 transition-colors hover:text-priage-700 cursor-pointer"
                 >
                   Clear filters
                 </button>
               </>
             ) : (
               <>
-                <div className="text-4xl mb-3">🏥</div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-1">No patients in waiting room</h3>
-                <p className="text-sm text-gray-500">
-                  Patients will appear here once admitted and triaged.
-                </p>
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-[16px] bg-slate-100 text-slate-500">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M5 20V7.5A1.5 1.5 0 0 1 6.5 6H10V3.5A1.5 1.5 0 0 1 11.5 2h1A1.5 1.5 0 0 1 14 3.5V6h3.5A1.5 1.5 0 0 1 19 7.5V20"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path d="M9 11h6M12 8v6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <path d="M3 20h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <h3 className="mb-1 text-lg font-semibold text-slate-700">No patients in waiting room</h3>
+                <p className="text-sm text-slate-500">Patients will appear here once admitted and triaged.</p>
               </>
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {displayEncounters.map((encounter) => (
-              <PatientCard
-                key={encounter.id}
-                encounter={encounter}
-                messages={chatMessages[encounter.id] || []}
-                unreadCount={getUnreadCount(encounter.id)}
-                alertSeverity={alertMap[encounter.id] ?? null}
-                queueEntry={queueMap.get(encounter.id) ?? null}
-                onClick={() => setSelectedId(encounter.id)}
-              />
-            ))}
-          </div>
-        )}
+          <div className="space-y-4">
+            <div className={WAITING_ROOM_CARD_GRID_CLASS}>
+              {displayEncounters.map((encounter) => (
+                <PatientCard
+                  key={encounter.id}
+                  encounter={encounter}
+                  messages={chatMessages[encounter.id] || []}
+                  alertSeverity={alertMap[encounter.id] ?? null}
+                  queueEntry={queueMap.get(encounter.id) ?? null}
+                  onClick={() => setSelectedId(encounter.id)}
+                />
+              ))}
+            </div>
 
-        {/* Patient count footer */}
-        {displayEncounters.length > 0 && (
-          <div className="text-center text-xs text-gray-400 pt-2">
-            Showing {displayEncounters.length} of {encounters.length} patients
+            <div className="pt-1 text-center text-xs font-medium text-slate-400">
+              Showing {displayEncounters.length} of {encounters.length} patients
+            </div>
           </div>
         )}
       </div>
 
-      {/* Patient Detail Modal */}
       <PatientDetailModal
         encounter={selectedEncounter}
         messages={selectedEncounter ? (chatMessages[selectedEncounter.id] || []) : []}
@@ -279,7 +387,6 @@ export function WaitingRoomView({
         onClose={() => setSelectedId(null)}
       />
 
-      {/* Right-side alerts & analytics panel (fixed position) */}
       <AlertDashboard
         encounters={encounters}
         chatMessages={chatMessages}

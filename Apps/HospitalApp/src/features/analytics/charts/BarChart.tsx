@@ -51,7 +51,7 @@ export function BarChart({
                                 textAnchor="end"
                                 dominantBaseline="central"
                                 className="fill-gray-600"
-                                style={{ fontSize: '0.7rem' }}
+                                style={{ fontSize: '0.84rem' }}
                             >
                                 {d.label}
                             </text>
@@ -72,7 +72,7 @@ export function BarChart({
                                     y={y + rowH / 2}
                                     dominantBaseline="central"
                                     className="fill-gray-500 font-medium"
-                                    style={{ fontSize: '0.65rem' }}
+                                    style={{ fontSize: '0.78rem' }}
                                 >
                                     {d.value}
                                 </text>
@@ -131,7 +131,7 @@ export function BarChart({
                             y={chartH + 14}
                             textAnchor="middle"
                             className="fill-gray-400"
-                            style={{ fontSize: '0.55rem' }}
+                            style={{ fontSize: '0.66rem' }}
                         >
                             {d.label}
                         </text>
@@ -142,7 +142,7 @@ export function BarChart({
                                 y={y - 4}
                                 textAnchor="middle"
                                 className="fill-gray-500"
-                                style={{ fontSize: '0.55rem' }}
+                                style={{ fontSize: '0.66rem' }}
                             >
                                 {d.value}
                             </text>

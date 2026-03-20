@@ -10,7 +10,7 @@
 // Auth enforced at controller layer via JwtAuthGuard/PatientGuard.
 
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AssetContext, AssetStatus, EncounterStatus, EventType, Prisma } from '@prisma/client';
+import { AssetContext, AssetStatus, EncounterStatus, EventType, Prisma, SummaryProjectionKind } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
@@ -18,7 +18,13 @@ import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
-import { EncounterListResponseDto, PatientEncounterDto } from './dto/encounter-response.dto';
+import {
+  EncounterListResponseDto,
+  PatientEncounterDto,
+  PriagePreviewDto,
+  PriageSummaryDto,
+  PriageSummaryQuestionAnswerDto,
+} from './dto/encounter-response.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
 
 export type EncounterActor = {
@@ -65,6 +71,11 @@ const encounterMessageSelect = {
     orderBy: { createdAt: 'asc' as const },
   },
 } satisfies Prisma.MessageSelect;
+
+const priageProjectionSelect = {
+  createdAt: true,
+  content: true,
+} satisfies Prisma.SummaryProjectionSelect;
 
 // TRANSTIONS --> changing Encounter.status throughout the lifecycle
 
@@ -276,6 +287,15 @@ export class EncountersService {
                 optionalHealthInfo: true,
               },
             },
+            summaryProjections: {
+              where: {
+                active: true,
+                kind: SummaryProjectionKind.AI_DERIVED,
+              },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+              select: priageProjectionSelect,
+            },
           },
         }),
         this.prisma.encounter.count({ where }),
@@ -296,7 +316,10 @@ export class EncountersService {
       );
 
       return {
-        data: encounters,
+        data: encounters.map(({ summaryProjections, ...encounter }) => ({
+          ...encounter,
+          priagePreview: this.toPriagePreview(summaryProjections[0] ?? null),
+        })),
         total,
       };
     } catch (error) {
@@ -354,6 +377,15 @@ export class EncountersService {
               optionalHealthInfo: true,
             },
           },
+          summaryProjections: {
+            where: {
+              active: true,
+              kind: SummaryProjectionKind.AI_DERIVED,
+            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+            select: priageProjectionSelect,
+          },
           triageAssessments: { orderBy: { createdAt: 'asc' } },
           messages: {
             orderBy: { createdAt: 'asc' },
@@ -399,10 +431,12 @@ export class EncountersService {
         },
       );
 
-      const { assets, ...encounterWithoutAssets } = encounter;
+      const { assets, summaryProjections, ...encounterWithoutAssets } = encounter;
 
       return {
         ...encounterWithoutAssets,
+        priagePreview: this.toPriagePreview(summaryProjections[0] ?? null),
+        priageSummary: this.toPriageSummary(summaryProjections[0] ?? null),
         messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
           ...message,
           attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
@@ -770,6 +804,7 @@ export class EncountersService {
       hospitalId: encounter.hospitalId,
       expectedAt: encounter.expectedAt,
       arrivedAt: encounter.arrivedAt,
+      priageSummary: null,
       messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
         ...message,
         attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'patient')),
@@ -1021,5 +1056,213 @@ export class EncountersService {
         `Patient ${patientId} already has an active encounter (${activeEncounter.status})`,
       );
     }
+  }
+
+  private toPriagePreview(
+    projection: { createdAt: Date; content: Prisma.JsonValue } | null,
+  ): PriagePreviewDto | null {
+    const summary = this.toPriageSummary(projection);
+    if (!summary) {
+      return null;
+    }
+
+    return {
+      briefing: summary.briefing,
+      recommendedCtasLevel: summary.recommendedCtasLevel,
+      progressionRiskCount: summary.progressionRisks.length,
+    };
+  }
+
+  private toPriageSummary(
+    projection: { createdAt: Date; content: Prisma.JsonValue } | null,
+  ): PriageSummaryDto | null {
+    if (!projection || !projection.content || typeof projection.content !== 'object' || Array.isArray(projection.content)) {
+      return null;
+    }
+
+    const content = projection.content as Record<string, unknown>;
+    const generatedAt = typeof content.generatedAt === 'string'
+      ? content.generatedAt
+      : projection.createdAt.toISOString();
+    const extractedSections = this.extractStructuredPriageSections(
+      [
+        typeof content.briefing === 'string' ? content.briefing : '',
+        typeof content.caseSummary === 'string' ? content.caseSummary : '',
+        typeof content.recommendedAction === 'string' ? content.recommendedAction : '',
+        typeof content.summaryPreview === 'string' ? content.summaryPreview : '',
+      ],
+      generatedAt,
+    );
+    const briefing = extractedSections.briefing
+      || (typeof content.briefing === 'string' ? content.briefing.trim() : '');
+    const caseSummary = extractedSections.caseSummary
+      || (typeof content.caseSummary === 'string' ? content.caseSummary.trim() : '');
+    const recommendedAction = extractedSections.recommendedAction
+      || (typeof content.recommendedAction === 'string' ? content.recommendedAction.trim() : '');
+    const questionAnswers = Array.isArray(content.questionAnswers)
+      ? content.questionAnswers
+          .map((answer) => this.parsePriageQuestionAnswer(answer))
+          .filter((answer): answer is PriageSummaryQuestionAnswerDto => answer !== null)
+      : [];
+    const progressionRisks = this.parseStringArray(content.progressionRisks);
+
+    if (!briefing && !caseSummary && !recommendedAction) {
+      return null;
+    }
+
+    return {
+      briefing,
+      recommendedCtasLevel: this.parseRecommendedCtasLevel(content.recommendedCtasLevel),
+      caseSummary,
+      questionAnswers: questionAnswers.length > 0 ? questionAnswers : extractedSections.questionAnswers,
+      progressionRisks: progressionRisks.length > 0 ? progressionRisks : extractedSections.progressionRisks,
+      redFlags: this.parseStringArray(content.redFlags),
+      recommendedAction,
+      generatedAt,
+      generationMode: content.generationMode === 'fallback' ? 'fallback' : 'ai',
+    };
+  }
+
+  private parseRecommendedCtasLevel(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 5) {
+      return null;
+    }
+    return value;
+  }
+
+  private parsePriageQuestionAnswer(value: unknown): PriageSummaryQuestionAnswerDto | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    const answer = value as Record<string, unknown>;
+    if (
+      typeof answer.question !== 'string'
+      || typeof answer.answer !== 'string'
+      || typeof answer.phase !== 'string'
+      || typeof answer.answeredAt !== 'string'
+    ) {
+      return null;
+    }
+
+    return {
+      question: answer.question,
+      answer: answer.answer,
+      phase: answer.phase,
+      answeredAt: answer.answeredAt,
+    };
+  }
+
+  private parseStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      : [];
+  }
+
+  private extractStructuredPriageSections(
+    values: string[],
+    fallbackAnsweredAt: string,
+  ): {
+    briefing: string;
+    caseSummary: string;
+    recommendedAction: string;
+    progressionRisks: string[];
+    questionAnswers: PriageSummaryQuestionAnswerDto[];
+  } {
+    const combinedText = values
+      .map((value) => value.replace(/\r\n/g, '\n').trim())
+      .find((value) => this.looksLikeStructuredPriageText(value));
+
+    if (!combinedText) {
+      return {
+        briefing: '',
+        caseSummary: '',
+        recommendedAction: '',
+        progressionRisks: [],
+        questionAnswers: [],
+      };
+    }
+
+    const matches = [...combinedText.matchAll(/(AI briefing|Case summary|Recommended action|Progression risks|Structured Q&A):/gi)];
+    if (matches.length === 0) {
+      return {
+        briefing: '',
+        caseSummary: '',
+        recommendedAction: '',
+        progressionRisks: [],
+        questionAnswers: [],
+      };
+    }
+
+    const sections = new Map<string, string>();
+    for (const [index, match] of matches.entries()) {
+      const nextMatch = matches[index + 1];
+      const key = match[1].toLowerCase();
+      const valueStart = (match.index ?? 0) + match[0].length;
+      const valueEnd = nextMatch?.index ?? combinedText.length;
+      sections.set(key, combinedText.slice(valueStart, valueEnd).trim());
+    }
+
+    const progressionRisks = this.parseStructuredList(sections.get('progression risks') ?? '');
+    const questionAnswers = this.parseStructuredQuestionAnswers(
+      sections.get('structured q&a') ?? '',
+      fallbackAnsweredAt,
+    );
+
+    return {
+      briefing: sections.get('ai briefing')?.trim() ?? '',
+      caseSummary: sections.get('case summary')?.trim() ?? '',
+      recommendedAction: sections.get('recommended action')?.trim() ?? '',
+      progressionRisks,
+      questionAnswers,
+    };
+  }
+
+  private looksLikeStructuredPriageText(value: string): boolean {
+    return /(AI briefing|Case summary|Recommended action|Progression risks|Structured Q&A):/i.test(value);
+  }
+
+  private parseStructuredList(value: string): string[] {
+    if (!value.trim()) {
+      return [];
+    }
+
+    return value
+      .split('\n')
+      .map((entry) => entry.replace(/^[-*]\s*/, '').trim())
+      .filter(Boolean);
+  }
+
+  private parseStructuredQuestionAnswers(
+    value: string,
+    fallbackAnsweredAt: string,
+  ): PriageSummaryQuestionAnswerDto[] {
+    if (!value.trim()) {
+      return [];
+    }
+
+    return value
+      .split('\n')
+      .map((entry) => entry.replace(/^[-*]\s*/, '').trim())
+      .map((entry) => {
+        const separatorIndex = entry.indexOf(':');
+        if (separatorIndex <= 0) {
+          return null;
+        }
+
+        const question = entry.slice(0, separatorIndex).trim();
+        const answer = entry.slice(separatorIndex + 1).trim();
+        if (!question || !answer) {
+          return null;
+        }
+
+        return {
+          question,
+          answer,
+          phase: 'history',
+          answeredAt: fallbackAnsweredAt,
+        };
+      })
+      .filter((entry): entry is PriageSummaryQuestionAnswerDto => entry !== null);
   }
 }

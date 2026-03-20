@@ -10,12 +10,14 @@ import { useToast } from '../../shared/ui/ToastContext';
 interface RoutingProps {
   onConfirmed: (encounterId: number) => void;
   onBack?: () => void;
+  mode?: 'guest' | 'authenticated';
 }
 
-export function Routing({ onConfirmed, onBack }: RoutingProps) {
+export function Routing({ onConfirmed, onBack, mode = 'guest' }: RoutingProps) {
   const { showToast } = useToast();
   const { session, setSession } = useGuestSession();
-  const [hospitalSlug, setHospitalSlug] = useState(session?.hospitalSlug ?? '');
+  const isGuestFlow = mode === 'guest';
+  const [hospitalSlug, setHospitalSlug] = useState(isGuestFlow ? session?.hospitalSlug ?? '' : '');
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [loadingHospitals, setLoadingHospitals] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -53,7 +55,7 @@ export function Routing({ onConfirmed, onBack }: RoutingProps) {
     first.name.localeCompare(second.name)
   );
 
-  if (!session) return null;
+  if (isGuestFlow && !session) return null;
   const currentSession = session;
 
   async function handleConfirm() {
@@ -65,11 +67,13 @@ export function Routing({ onConfirmed, onBack }: RoutingProps) {
     setSubmitting(true);
     try {
       const encounter = await confirmIntent({ hospitalSlug: hospitalSlug.trim() });
-      setSession({
-        ...currentSession,
-        encounterId: encounter.id,
-        hospitalSlug: hospitalSlug.trim(),
-      });
+      if (isGuestFlow && currentSession) {
+        setSession({
+          ...currentSession,
+          encounterId: encounter.id,
+          hospitalSlug: hospitalSlug.trim(),
+        });
+      }
       onConfirmed(encounter.id);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not confirm hospital.');

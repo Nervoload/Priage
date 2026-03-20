@@ -6,6 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 import type { AuthUser, LoginResponse } from '../shared/types/domain';
 import { login as apiLogin, getMe, logout as apiLogout } from '../shared/api/auth';
+import { AUTH_EXPIRED_EVENT } from '../shared/api/client';
 import { connectSocket, disconnectSocket } from '../shared/realtime/socket';
 
 // ─── Context shape ──────────────────────────────────────────────────────────
@@ -83,8 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleAuthExpired = () => {
       if (user) logout();
     };
-    window.addEventListener('auth-expired', handleAuthExpired);
-    return () => window.removeEventListener('auth-expired', handleAuthExpired);
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   }, [user, logout]);
 
   const value = useMemo<AuthContextValue>(

@@ -9,6 +9,10 @@ Return a strict JSON object with these fields:
 - redFlags: string[]
 - recommendedAction: short string for staff-facing handoff summary
 - summaryPreview: short staff-facing summary of the current intake picture
+- recommendedCtasLevel: 1 | 2 | 3 | 4 | 5 | null
+- briefing: one-sentence chief complaint / intake briefing for staff
+- caseSummary: short multiline-ready case summary for staff handoff
+- progressionRisks: string[] of worsening signs or risks staff should watch for
 - interrupt: object with:
   - type: "none" | "emergency_ack_required"
   - title: string

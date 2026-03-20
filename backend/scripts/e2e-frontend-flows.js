@@ -318,6 +318,7 @@ async function flowPatientEncounterApis(encounterId, patientToken) {
   assert('Patient encounter detail returns 200', detailStatus === 200);
   assert('Patient encounter detail matches encounter id', encounter?.id === encounterId);
   assert('Patient encounter detail includes non-internal messages array', Array.isArray(encounter?.messages));
+  assert('Patient encounter detail does not expose clinical AI summary', encounter?.priageSummary == null);
 
   const { status: queueStatus, json: queue } = await api('GET', `/patient/encounters/${encounterId}/queue`, null, false, headers);
   assert('Patient queue returns 200', queueStatus === 200);

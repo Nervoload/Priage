@@ -16,6 +16,8 @@ const runtimeDir = process.env.PRIAGE_DEV_RUNTIME_DIR || join(projectRoot, '.pri
 const manifestPath = join(runtimeDir, 'accounts.json');
 const connectionString =
   process.env.DATABASE_URL || 'postgresql://priage:priage@localhost:5432/priage';
+const argv = new Set(process.argv.slice(2));
+const wantsExtraUser = argv.has('--create-extra-user') || argv.has('-u');
 
 const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
@@ -87,20 +89,17 @@ async function main() {
       );
     }
 
-    if (isInteractive) {
-      const shouldCreateExtraUser = await prompt.askYesNo(
-        'Create another hospital user for this dev environment?',
-        false,
-      );
-
-      if (shouldCreateExtraUser) {
-        const account = await createHospitalUserFlow(prompt);
-        nextManifest = mergeManifest(nextManifest, adminEntry, account);
-        writeManifest(nextManifest);
-        console.log(
-          `[dev-bootstrap] Added ${account.role} user ${account.email} for ${account.hospitalSlug}.`,
-        );
+    if (wantsExtraUser) {
+      if (!isInteractive) {
+        throw new Error('Cannot create another hospital user in a non-interactive shell.');
       }
+
+      const account = await createHospitalUserFlow(prompt);
+      nextManifest = mergeManifest(nextManifest, adminEntry, account);
+      writeManifest(nextManifest);
+      console.log(
+        `[dev-bootstrap] Added ${account.role} user ${account.email} for ${account.hospitalSlug}.`,
+      );
     }
 
     const finalManifest = readManifest();

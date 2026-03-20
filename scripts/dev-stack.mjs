@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +15,7 @@ const runtimeDir = join(projectRoot, '.priage-dev');
 
 const args = new Set(process.argv.slice(2));
 const wantsHelp = args.has('--help') || args.has('-h');
+const wantsNewUser = args.has('newuser') || args.has('-u');
 const wantsReseed = args.has('reseed');
 const wantsFullseed = args.has('fullseed');
 const wantsSmoke = args.has('test') || args.has('-t');
@@ -80,11 +81,16 @@ async function main() {
   console.log(`Priage v${version}`);
   warnOnVersionDrift(version);
   ensurePlatform();
+  ensureEnvFiles();
   ensurePrerequisites();
   ensureDockerServices();
   installDependencies();
   runPrismaSetup();
-  runStep('Ensuring local dev accounts', 'node', ['scripts/bootstrap-dev-accounts.js'], {
+  const bootstrapArgs = ['scripts/bootstrap-dev-accounts.js'];
+  if (wantsNewUser) {
+    bootstrapArgs.push('--create-extra-user');
+  }
+  runStep('Ensuring local dev accounts', 'node', bootstrapArgs, {
     cwd: backendDir,
     env: { PRIAGE_DEV_RUNTIME_DIR: runtimeDir },
   });
@@ -126,11 +132,13 @@ async function main() {
 }
 
 function printUsage() {
-  console.log(`Usage: ./priage-dev [reseed|fullseed] [test|-t] [logs|-l] [--verbose|-v]
+  console.log(`Usage: ./priage-dev [newuser|-u] [reseed|fullseed] [test|-t] [logs|-l] [--verbose|-v]
 
 Options:
   kill, -k, --kill
             Stop Priage dev services and close their Terminal windows
+  newuser, -u
+            Create another hospital user for this dev environment
   reseed    Wipe patient-facing dev data and run backend/scripts/seed.js
   fullseed  Wipe patient-facing dev data and run backend/scripts/demo-seed.js
             for a fuller waiting room, admit queue, and triage board
@@ -146,6 +154,26 @@ Options:
 function ensurePlatform() {
   if (process.platform !== 'darwin') {
     throw new Error('This launcher currently supports macOS only because it opens Terminal.app tabs.');
+  }
+}
+
+function ensureEnvFiles() {
+  const envPairs = [
+    { cwd: backendDir, label: 'backend' },
+    { cwd: hospitalAppDir, label: 'Hospital App' },
+    { cwd: patientAppDir, label: 'Patient App' },
+  ];
+
+  for (const pair of envPairs) {
+    const examplePath = join(pair.cwd, '.env.example');
+    const envPath = join(pair.cwd, '.env');
+
+    if (!existsSync(examplePath) || existsSync(envPath)) {
+      continue;
+    }
+
+    copyFileSync(examplePath, envPath);
+    console.log(`[priage-dev] Created ${relativeFromRoot(envPath)} from ${relativeFromRoot(examplePath)}.`);
   }
 }
 

@@ -13,6 +13,10 @@ export const TRIAGE_INTERVIEW_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
     'redFlags',
     'recommendedAction',
     'summaryPreview',
+    'recommendedCtasLevel',
+    'briefing',
+    'caseSummary',
+    'progressionRisks',
     'interrupt',
     'questions',
   ],
@@ -35,6 +39,18 @@ export const TRIAGE_INTERVIEW_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
     },
     recommendedAction: { type: 'string' },
     summaryPreview: { type: 'string' },
+    recommendedCtasLevel: {
+      anyOf: [
+        { type: 'integer', minimum: 1, maximum: 5 },
+        { type: 'null' },
+      ],
+    },
+    briefing: { type: 'string' },
+    caseSummary: { type: 'string' },
+    progressionRisks: {
+      type: 'array',
+      items: { type: 'string' },
+    },
     interrupt: {
       type: 'object',
       additionalProperties: false,

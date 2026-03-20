@@ -39,12 +39,24 @@ export interface InterviewAnswerRecord extends InterviewAnswerValue {
   answerText: string;
 }
 
+export interface InterviewQuestionAnswerRecord {
+  question: string;
+  answer: string;
+  phase: InterviewPhase;
+  answeredAt: string;
+}
+
 export interface InterviewSummaryRecord {
   urgency: InterviewUrgency;
   redFlags: string[];
   recommendedAction: string;
   summaryPreview: string;
   combinedDetails: string;
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  caseSummary: string;
+  questionAnswers: InterviewQuestionAnswerRecord[];
+  progressionRisks: string[];
 }
 
 export interface InterviewProviderState {
@@ -117,6 +129,10 @@ export interface ProviderInterviewResult {
   redFlags: string[];
   recommendedAction: string;
   summaryPreview: string;
+  recommendedCtasLevel: number | null;
+  briefing: string;
+  caseSummary: string;
+  progressionRisks: string[];
   interrupt: InterviewInterrupt;
   questions: ProviderQuestionDraft[];
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../shared/hooks/useAuth';
 import { startInterview } from '../shared/api/intake';
 import { useGuestSession } from '../shared/hooks/useGuestSession';
@@ -45,11 +45,11 @@ export function PatientApp() {
       />
       <Route
         path="/auth/login"
-        element={session ? <Navigate to="/" replace /> : <LoginRoute backPath="/welcome" />}
+        element={<LoginRoute backPath="/welcome" />}
       />
       <Route
         path="/auth/signup"
-        element={session ? <Navigate to="/" replace /> : <SignupRoute backPath="/welcome" />}
+        element={<SignupRoute backPath="/welcome" />}
       />
       <Route
         path="/guest/start"
@@ -120,6 +120,12 @@ export function PatientApp() {
   );
 }
 
+function resolveSafeReturnTo(raw: string | null): string {
+  if (!raw) return '/';
+  if (!raw.startsWith('/') || raw.startsWith('//')) return '/';
+  return raw;
+}
+
 function AuthenticatedShell() {
   const { patient, logout: doLogout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
@@ -169,13 +175,45 @@ function AuthenticatedShell() {
 }
 
 function LoginRoute({ backPath }: { backPath: string }) {
+  const { session } = useAuth();
   const navigate = useNavigate();
-  return <LoginPage onSwitchToSignup={() => navigate('/auth/signup')} onBack={() => navigate(backPath)} />;
+  const [searchParams] = useSearchParams();
+  const returnTo = resolveSafeReturnTo(searchParams.get('returnTo'));
+
+  if (session) {
+    return <Navigate to={returnTo} replace />;
+  }
+
+  return (
+    <LoginPage
+      onSwitchToSignup={() => {
+        const nextSearch = searchParams.toString();
+        navigate(`/auth/signup${nextSearch ? `?${nextSearch}` : ''}`);
+      }}
+      onBack={() => navigate(backPath)}
+    />
+  );
 }
 
 function SignupRoute({ backPath }: { backPath: string }) {
+  const { session } = useAuth();
   const navigate = useNavigate();
-  return <SignupPage onSwitchToLogin={() => navigate('/auth/login')} onBack={() => navigate(backPath)} />;
+  const [searchParams] = useSearchParams();
+  const returnTo = resolveSafeReturnTo(searchParams.get('returnTo'));
+
+  if (session) {
+    return <Navigate to={returnTo} replace />;
+  }
+
+  return (
+    <SignupPage
+      onSwitchToLogin={() => {
+        const nextSearch = searchParams.toString();
+        navigate(`/auth/login${nextSearch ? `?${nextSearch}` : ''}`);
+      }}
+      onBack={() => navigate(backPath)}
+    />
+  );
 }
 
 function GuestRoutingRoute() {

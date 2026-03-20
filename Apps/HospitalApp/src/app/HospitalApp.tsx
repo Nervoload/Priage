@@ -21,7 +21,7 @@ import type { View } from '../shared/ui/NavBar';
 export type { PatientSummary as Patient, ChatMessage, Encounter } from '../shared/types/domain';
 export { patientName } from '../shared/types/domain';
 
-import type { Encounter, ChatMessage, EncounterStatus, Message } from '../shared/types/domain';
+import type { ChatMessage, EncounterListItem, EncounterStatus, Message } from '../shared/types/domain';
 import { RealtimeEvents, messageToChatMessage } from '../shared/types/domain';
 
 // View type imported from NavBar
@@ -30,8 +30,8 @@ export function HospitalApp() {
   const { user, initializing, logout } = useAuth();
   const { showToast } = useToast();
   const [currentView, setCurrentView] = useState<View>('admit');
-  const [encounters, setEncounters] = useState<Encounter[]>([]);
-  const [allEncounters, setAllEncounters] = useState<Encounter[]>([]);
+  const [encounters, setEncounters] = useState<EncounterListItem[]>([]);
+  const [allEncounters, setAllEncounters] = useState<EncounterListItem[]>([]);
   const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
   const [loadingEncounters, setLoadingEncounters] = useState(false);
   const isMounted = useRef(true);
@@ -213,7 +213,7 @@ export function HospitalApp() {
   //   EXPECTED  → confirm  → ADMITTED
   //   ADMITTED  → startExam → TRIAGE
   //   WAITING   → startExam → TRIAGE
-  const handleAdmit = async (encounter: Encounter) => {
+  const handleAdmit = async (encounter: EncounterListItem) => {
     try {
       if (encounter.status === 'EXPECTED') {
         await confirmEncounter(encounter.id);

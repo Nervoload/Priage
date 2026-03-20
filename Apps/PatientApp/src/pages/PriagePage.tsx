@@ -1,305 +1,135 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { listHospitals, priageAdmit, priageChat } from '../shared/api/priage';
-import type {
-  Hospital,
-  PriageAssessment,
-  PriageChatMessage,
-} from '../shared/types/domain';
+import { GuestChatbotPage } from '../features/pre-triage/GuestChatbotPage';
+import { Routing } from '../features/pre-triage/Routing';
+import { updateIntakeDetails } from '../shared/api/intake';
+import { useAuth } from '../shared/hooks/useAuth';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
-interface DisplayMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  assessment?: PriageAssessment;
-  canAdmit?: boolean;
-}
-
-const defaultQuickPrompts = [
-  'I have had worsening chest pain for about one hour.',
-  'My migraine includes nausea and flashing lights.',
-  'I cut my arm and the bleeding restarted.',
-];
+type IntakeStep = 'capture' | 'interview' | 'routing';
 
 export function PriagePage() {
   const navigate = useNavigate();
+  const { patient } = useAuth();
   const { showToast } = useToast();
 
-  const [messages, setMessages] = useState<DisplayMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const [showAdmit, setShowAdmit] = useState(false);
-  const [hospitals, setHospitals] = useState<Hospital[]>([]);
-  const [selectedHospital, setSelectedHospital] = useState('');
-  const [admitting, setAdmitting] = useState(false);
-  const [latestAssessment, setLatestAssessment] = useState<PriageAssessment | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [step, setStep] = useState<IntakeStep>('capture');
+  const [chiefComplaint, setChiefComplaint] = useState('');
+  const [details, setDetails] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  async function handleStartInterview(event: React.FormEvent) {
+    event.preventDefault();
 
-    async function initChat() {
-      try {
-        const response = await priageChat([]);
-        if (cancelled) return;
-        setMessages([{
-          id: 'init',
-          role: 'assistant',
-          content: response.reply,
-          assessment: response.assessment,
-          canAdmit: response.canAdmit,
-        }]);
-        if (response.assessment) {
-          setLatestAssessment(response.assessment);
-        }
-        if (response.canAdmit) {
-          setShowAdmit(true);
-        }
-      } catch {
-        if (cancelled) return;
-        setMessages([{
-          id: 'init',
-          role: 'assistant',
-          content: "Hi, I'm Priage. Tell me what symptoms you're dealing with right now.",
-          canAdmit: false,
-        }]);
-      }
+    const trimmedChiefComplaint = chiefComplaint.trim();
+    const trimmedDetails = details.trim();
+    if (!trimmedChiefComplaint) {
+      showToast('Please describe what brings you in before continuing.');
+      return;
     }
 
-    void initChat();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, showAdmit]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadHospitals() {
-      try {
-        const result = await listHospitals();
-        if (cancelled) return;
-        setHospitals(result);
-      } catch {
-        if (!cancelled) {
-          setHospitals([]);
-        }
-      }
-    }
-    void loadHospitals();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!hospitals.length) return;
-    if (selectedHospital) return;
-    setSelectedHospital(hospitals[0].slug);
-  }, [hospitals, selectedHospital]);
-
-  const quickPrompts = defaultQuickPrompts;
-
-  async function handleSendMessage(messageText: string) {
-    const content = messageText.trim();
-    if (!content || sending) return;
-
-    setSending(true);
-    if (messageText === input) {
-      setInput('');
-    }
-
-    const userMessage: DisplayMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content,
-    };
-    setMessages((previous) => [...previous, userMessage]);
-
-    const apiMessages: PriageChatMessage[] = [
-      ...messages.map((message) => ({ role: message.role, content: message.content })),
-      { role: 'user', content },
-    ];
-
+    setSubmitting(true);
     try {
-      const response = await priageChat(apiMessages);
-      const assistantMessage: DisplayMessage = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: response.reply,
-        assessment: response.assessment,
-        canAdmit: response.canAdmit,
-      };
-      setMessages((previous) => [...previous, assistantMessage]);
-      if (response.assessment) {
-        setLatestAssessment(response.assessment);
-      }
-      if (response.canAdmit) {
-        setShowAdmit(true);
-      }
-    } catch {
-      showToast('Failed to get AI response. Please try again.');
-      setInput(content);
-    } finally {
-      setSending(false);
-    }
-  }
-
-  async function handleAdmit() {
-    if (!latestAssessment || admitting) return;
-
-    const firstUserMessage = messages.find((message) => message.role === 'user');
-    const chiefComplaint = firstUserMessage?.content ?? 'Symptoms reported via Priage AI';
-    const detailTranscript = messages
-      .filter((message) => message.role === 'user')
-      .map((message) => message.content)
-      .join('\n');
-
-    setAdmitting(true);
-    try {
-      const response = await priageAdmit({
-        chiefComplaint,
-        details: `AI Summary: ${latestAssessment.summary}\n\nPatient statements:\n${detailTranscript}`,
-        hospitalSlug: selectedHospital || undefined,
-        severity: latestAssessment.urgency === 'emergency'
-          ? 10
-          : latestAssessment.urgency === 'high'
-            ? 7
-            : latestAssessment.urgency === 'medium'
-              ? 5
-              : 3,
+      await updateIntakeDetails({
+        chiefComplaint: trimmedChiefComplaint,
+        details: trimmedDetails || undefined,
+        firstName: patient?.firstName ?? undefined,
+        lastName: patient?.lastName ?? undefined,
+        age: patient?.age ?? undefined,
+        allergies: patient?.allergies ?? undefined,
+        conditions: patient?.conditions ?? undefined,
       });
-      showToast(response.message, 'success');
-      navigate(`/encounters/${response.encounter.id}/current`);
+      setStep('interview');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not start hospital visit.');
+      showToast(error instanceof Error ? error.message : 'Could not start this visit.');
     } finally {
-      setAdmitting(false);
+      setSubmitting(false);
     }
   }
+
+  if (step === 'interview') {
+    return (
+      <GuestChatbotPage
+        mode="authenticated"
+        onChooseHospital={() => setStep('routing')}
+        onBack={() => setStep('capture')}
+      />
+    );
+  }
+
+  if (step === 'routing') {
+    return (
+      <Routing
+        mode="authenticated"
+        onConfirmed={(encounterId) => navigate(`/encounters/${encounterId}/current`)}
+        onBack={() => setStep('interview')}
+      />
+    );
+  }
+
+  const displayName =
+    [patient?.firstName, patient?.lastName].filter(Boolean).join(' ')
+    || patient?.email
+    || 'your account';
 
   return (
     <main style={styles.page}>
-      <section style={styles.layout}>
+      <section style={styles.card}>
         <header style={styles.header}>
-          <span style={styles.badge}>Priage AI</span>
-          <h1 style={styles.title}>Start a new visit with guided triage</h1>
+          <span style={styles.badge}>New Visit</span>
+          <h1 style={styles.title}>Start check-in from your patient account</h1>
+          <p style={styles.subtitle}>
+            This uses the same guided intake flow as guest check-in, but keeps the visit attached to {displayName}.
+          </p>
         </header>
 
-        <section style={styles.chatPanel}>
-          <div style={styles.quickPrompts}>
-            {quickPrompts.map((prompt) => (
-              <button
-                key={prompt}
-                style={styles.quickPromptChip}
-                onClick={() => {
-                  void handleSendMessage(prompt);
-                }}
-                disabled={sending}
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-
-          <div style={styles.chatScroll}>
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                style={{
-                  ...styles.bubble,
-                  ...(message.role === 'user' ? styles.userBubble : styles.aiBubble),
-                }}
-              >
-                <p style={styles.bubbleText}>{message.content}</p>
-                {message.assessment && (
-                  <div style={styles.assessmentCard}>
-                    <UrgencyBadge urgency={message.assessment.urgency} />
-                    <small style={styles.assessmentText}>{message.assessment.suggestedAction}</small>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {sending && (
-              <div style={{ ...styles.bubble, ...styles.aiBubble }}>
-                <p style={styles.typingText}>Priage is reviewing your symptoms…</p>
-              </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
-
-          {showAdmit && latestAssessment && (
-            <aside style={styles.admitPanel}>
-              <h3 style={styles.admitTitle}>Ready to notify the hospital?</h3>
-              <p style={styles.admitBody}>This creates a real encounter and sends your assessment summary.</p>
-              {hospitals.length > 0 && (
-                <select
-                  style={styles.select}
-                  value={selectedHospital}
-                  onChange={(event) => setSelectedHospital(event.target.value)}
-                >
-                  {hospitals.map((hospital) => (
-                    <option key={hospital.id} value={hospital.slug}>
-                      {hospital.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <button style={styles.primaryButton} onClick={handleAdmit} disabled={admitting}>
-                {admitting ? 'Creating encounter…' : 'Create hospital encounter'}
-              </button>
-            </aside>
+        <div style={styles.profileCard}>
+          <strong style={styles.profileTitle}>Using account details</strong>
+          <p style={styles.profileText}>
+            {displayName}
+            {patient?.age != null ? `, age ${patient.age}` : ''}
+            {patient?.phone ? `, ${patient.phone}` : ''}
+          </p>
+          {(patient?.allergies || patient?.conditions) && (
+            <p style={styles.profileMeta}>
+              {patient?.allergies ? `Allergies: ${patient.allergies}` : 'No allergies saved'}
+              {patient?.conditions ? ` | Conditions: ${patient.conditions}` : ''}
+            </p>
           )}
+        </div>
 
-          <div style={styles.inputRow}>
+        <form style={styles.form} onSubmit={handleStartInterview}>
+          <label style={styles.fieldLabel}>
+            What brings you in today? *
             <input
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  void handleSendMessage(input);
-                }
-              }}
+              value={chiefComplaint}
+              onChange={(event) => setChiefComplaint(event.target.value)}
               style={styles.input}
-              placeholder="Describe symptoms, severity, and timing…"
-              disabled={sending}
+              placeholder="e.g. Chest pain, ankle injury, shortness of breath"
+              maxLength={240}
+              autoFocus
             />
-            <button
-              style={styles.primaryButton}
-              onClick={() => {
-                void handleSendMessage(input);
-              }}
-              disabled={!input.trim() || sending}
-            >
-              Send
-            </button>
-          </div>
-        </section>
+          </label>
+
+          <label style={styles.fieldLabel}>
+            Add a short description
+            <textarea
+              value={details}
+              onChange={(event) => setDetails(event.target.value)}
+              style={styles.textArea}
+              placeholder="When did it start? What feels worse? Anything important the care team should know before the interview?"
+              maxLength={4000}
+            />
+          </label>
+
+          <button style={styles.primaryButton} type="submit" disabled={submitting}>
+            {submitting ? 'Preparing intake…' : 'Continue to guided intake'}
+          </button>
+        </form>
       </section>
     </main>
-  );
-}
-
-function UrgencyBadge({ urgency }: { urgency: string }) {
-  const map: Record<string, { label: string; color: string; bg: string }> = {
-    emergency: { label: 'Emergency', color: '#9f1239', bg: '#ffe4e6' },
-    high: { label: 'High', color: '#b45309', bg: '#fff7ed' },
-    medium: { label: 'Moderate', color: '#854d0e', bg: '#fefce8' },
-    low: { label: 'Low', color: '#166534', bg: '#f0fdf4' },
-  };
-  const meta = map[urgency] ?? map.low;
-  return (
-    <span style={{ ...styles.urgencyBadge, color: meta.color, background: meta.bg }}>
-      {meta.label}
-    </span>
   );
 }
 
@@ -311,21 +141,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: patientTheme.fonts.body,
     color: patientTheme.colors.ink,
   },
-  layout: {
-    maxWidth: '980px',
+  card: {
+    width: '100%',
+    maxWidth: '760px',
     margin: '0 auto',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.xl,
+    background: 'rgba(255, 253, 248, 0.98)',
+    boxShadow: patientTheme.shadows.panel,
+    padding: '1rem',
     display: 'grid',
-    gap: '0.75rem',
-    gridTemplateColumns: '1fr',
-    alignItems: 'start',
+    gap: '0.9rem',
   },
   header: {
-    gridColumn: '1 / -1',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.lg,
-    background: 'rgba(255, 253, 248, 0.98)',
-    boxShadow: patientTheme.shadows.card,
-    padding: '0.82rem',
     display: 'grid',
     gap: '0.3rem',
   },
@@ -337,194 +165,83 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '999px',
     background: '#e9f1ff',
     color: patientTheme.colors.accentStrong,
-    padding: '0.26rem 0.72rem',
+    padding: '0.28rem 0.72rem',
     fontSize: '0.74rem',
     fontWeight: 700,
   },
   title: {
     margin: 0,
     fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.3rem',
+    fontSize: '1.38rem',
   },
   subtitle: {
     margin: 0,
     color: patientTheme.colors.inkMuted,
-    fontSize: '0.9rem',
-  },
-  sidePanel: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: 'rgba(255, 253, 248, 0.98)',
-    boxShadow: patientTheme.shadows.card,
-    padding: '0.75rem',
-    display: 'grid',
-    gap: '0.48rem',
-  },
-  sideTitle: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '0.95rem',
-  },
-  scenarioStack: {
-    display: 'grid',
-    gap: '0.42rem',
-  },
-  scenarioButton: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    padding: '0.55rem 0.62rem',
-    textAlign: 'left',
-    cursor: 'pointer',
-    display: 'grid',
-    gap: '0.12rem',
-    fontFamily: patientTheme.fonts.body,
-  },
-  secondaryButton: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.62rem 0.72rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  chatPanel: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: 'rgba(255, 253, 248, 0.98)',
-    boxShadow: patientTheme.shadows.card,
-    padding: '0.75rem',
-    display: 'grid',
-    gap: '0.55rem',
-    minHeight: '520px',
-  },
-  quickPrompts: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.42rem',
-  },
-  quickPromptChip: {
-    border: '1px solid #b8d0ff',
-    borderRadius: '999px',
-    background: '#eef5ff',
-    color: patientTheme.colors.accentStrong,
-    padding: '0.3rem 0.62rem',
-    fontSize: '0.75rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  chatScroll: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    minHeight: '280px',
-    maxHeight: '380px',
-    overflowY: 'auto',
-    padding: '0.65rem',
-    display: 'grid',
-    gap: '0.48rem',
-  },
-  bubble: {
-    maxWidth: '85%',
-    borderRadius: patientTheme.radius.sm,
-    padding: '0.55rem 0.62rem',
-    display: 'grid',
-    gap: '0.22rem',
-  },
-  userBubble: {
-    justifySelf: 'end',
-    background: '#1949b8',
-    color: '#fff',
-  },
-  aiBubble: {
-    justifySelf: 'start',
-    background: '#f3efe5',
-    color: patientTheme.colors.ink,
-  },
-  bubbleText: {
-    margin: 0,
     lineHeight: 1.45,
-    fontSize: '0.88rem',
+    fontSize: '0.92rem',
   },
-  typingText: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.86rem',
-  },
-  assessmentCard: {
+  profileCard: {
     border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: 'rgba(255,255,255,0.88)',
-    padding: '0.32rem 0.45rem',
+    borderRadius: patientTheme.radius.md,
+    background: '#fffdf8',
+    padding: '0.82rem 0.9rem',
     display: 'grid',
     gap: '0.2rem',
   },
-  urgencyBadge: {
-    borderRadius: '999px',
-    width: 'fit-content',
-    padding: '0.17rem 0.5rem',
-    fontSize: '0.69rem',
-    fontWeight: 700,
-  },
-  assessmentText: {
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.35,
-  },
-  admitPanel: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    padding: '0.62rem',
-    display: 'grid',
-    gap: '0.42rem',
-  },
-  admitTitle: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '0.95rem',
-  },
-  admitBody: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
+  profileTitle: {
     fontSize: '0.82rem',
+  },
+  profileText: {
+    margin: 0,
+    color: patientTheme.colors.ink,
+    fontSize: '0.9rem',
+  },
+  profileMeta: {
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
+    fontSize: '0.8rem',
     lineHeight: 1.4,
   },
-  select: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.6rem 0.66rem',
-    fontFamily: patientTheme.fonts.body,
-    fontSize: '0.88rem',
-  },
-  inputRow: {
+  form: {
     display: 'grid',
-    gridTemplateColumns: '1fr auto',
-    gap: '0.5rem',
-    alignItems: 'center',
+    gap: '0.72rem',
+  },
+  fieldLabel: {
+    display: 'grid',
+    gap: '0.3rem',
+    fontSize: '0.82rem',
+    fontWeight: 700,
+    color: patientTheme.colors.ink,
   },
   input: {
     border: panelBorder,
     borderRadius: patientTheme.radius.sm,
     background: '#fff',
     color: patientTheme.colors.ink,
-    padding: '0.66rem 0.74rem',
-    fontSize: '0.92rem',
+    padding: '0.72rem 0.78rem',
+    fontSize: '0.94rem',
     fontFamily: patientTheme.fonts.body,
+  },
+  textArea: {
+    minHeight: '144px',
+    resize: 'vertical' as const,
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.78rem',
+    fontSize: '0.94rem',
+    fontFamily: patientTheme.fonts.body,
+    lineHeight: 1.5,
   },
   primaryButton: {
     border: 'none',
     borderRadius: patientTheme.radius.sm,
     background: patientTheme.colors.accent,
     color: '#fff',
-    padding: '0.66rem 0.86rem',
+    padding: '0.78rem 1rem',
     fontWeight: 700,
     cursor: 'pointer',
     fontFamily: patientTheme.fonts.body,
-    whiteSpace: 'nowrap',
   },
 };

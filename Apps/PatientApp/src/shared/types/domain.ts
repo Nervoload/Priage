@@ -106,6 +106,25 @@ export interface EncounterMessage {
   attachments: AssetSummary[];
 }
 
+export interface PriageSummaryQuestionAnswer {
+  question: string;
+  answer: string;
+  phase: string;
+  answeredAt: string;
+}
+
+export interface PriageSummary {
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  caseSummary: string;
+  questionAnswers: PriageSummaryQuestionAnswer[];
+  progressionRisks: string[];
+  redFlags: string[];
+  recommendedAction: string;
+  generatedAt: string;
+  generationMode: 'ai' | 'fallback';
+}
+
 export interface Encounter {
   id: number;
   createdAt: string;
@@ -117,6 +136,7 @@ export interface Encounter {
   arrivedAt: string | null;
   messages: EncounterMessage[];
   intakeImages: AssetSummary[];
+  priageSummary?: PriageSummary | null;
 }
 
 export interface EncounterSummary {

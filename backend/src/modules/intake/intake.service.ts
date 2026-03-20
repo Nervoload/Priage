@@ -15,6 +15,7 @@ import Redis from 'ioredis';
 import { PATIENT_SESSION_TTL_MS } from '../../common/http/auth-cookie.util';
 import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
+import { buildGuestPlaceholderPasswordHash } from '../patient-auth/patient-password.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { ConfirmIntentDto } from './dto/confirm-intent.dto';
@@ -69,11 +70,12 @@ export class IntakeService {
     });
 
     const token = randomUUID();
+    const placeholderPasswordHash = await buildGuestPlaceholderPasswordHash();
 
     const patient = await this.prisma.patientProfile.create({
       data: {
         email: `${randomUUID()}@intake.local`,
-        password: randomUUID(),
+        password: placeholderPasswordHash,
         firstName: dto.firstName,
         lastName: dto.lastName,
         phone: dto.phone,

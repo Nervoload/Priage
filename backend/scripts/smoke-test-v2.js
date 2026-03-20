@@ -795,6 +795,9 @@ async function testPatientIntake() {
     if (patientEncounterDetail.details !== 'Pain started 2 hours ago, radiating to left arm. No previous heart issues.') {
       throw new Error('Patient encounter detail did not reflect updated details');
     }
+    if (patientEncounterDetail.priageSummary != null) {
+      throw new Error('Patient encounter detail exposed a clinical-only AI summary');
+    }
     logSuccess('Patient encounter detail matches the confirmed visit');
 
     logSubSection('2N: Patient Queue Before Waiting');

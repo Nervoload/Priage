@@ -472,7 +472,7 @@ export function EncounterWorkspace() {
                   <p style={styles.bodyText}>{latestInstruction}</p>
                 </Card>
 
-                {showGuestUpgradePrompt && <UpgradeAccountCard />}
+                {showGuestUpgradePrompt && <UpgradeAccountCard returnTo={`/encounters/${currentEncounter.id}/current`} />}
               </section>
             )}
           />

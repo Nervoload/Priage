@@ -2,6 +2,7 @@
 // Settings page — placeholder until real configuration features are built.
 
 import { NavBar, type View } from '../../shared/ui/NavBar';
+import { DASHBOARD_PAGE_CLASS } from '../../shared/ui/dashboardTheme';
 
 interface SettingsPageProps {
   onNavigate: (view: View) => void;
@@ -11,7 +12,7 @@ interface SettingsPageProps {
 
 export function SettingsPage({ onNavigate, onLogout, user }: SettingsPageProps) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className={DASHBOARD_PAGE_CLASS}>
       <NavBar currentView="settings" onNavigate={onNavigate} onLogout={onLogout} user={user} />
 
       <div className="p-6 max-w-[900px] mx-auto">

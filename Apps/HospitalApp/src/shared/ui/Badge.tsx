@@ -9,13 +9,13 @@ interface CTASBadgeProps {
 const CTAS_COLORS: Record<number, string> = {
   1: 'bg-ctas-1 text-white',
   2: 'bg-ctas-2 text-white',
-  3: 'bg-ctas-3 text-gray-900',
+  3: 'bg-ctas-3 text-white',
   4: 'bg-ctas-4 text-white',
   5: 'bg-ctas-5 text-white',
 };
 
 export function CTASBadge({ level, size = 'sm' }: CTASBadgeProps) {
-  const sizeClass = size === 'md' ? 'px-2.5 py-0.5 text-xs' : 'px-1.5 py-0.5 text-[10px]';
+  const sizeClass = size === 'md' ? 'px-3 py-1 text-xs' : 'px-2 py-0.5 text-[10px]';
   return (
     <span className={`inline-flex items-center rounded font-bold ${sizeClass} ${CTAS_COLORS[level] ?? 'bg-gray-300 text-gray-700'}`}>
       CTAS {level}

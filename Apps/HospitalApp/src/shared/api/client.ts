@@ -7,6 +7,20 @@
 // Points at the local NestJS backend by default.
 
 export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+export const AUTH_EXPIRED_EVENT = 'auth-expired';
+export const DEMO_ACCESS_REQUIRED_EVENT = 'demo-access-required';
+
+export function notifyAuthExpired(): void {
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+}
+
+export function isDemoAccessRequiredResponse(status: number, body: string): boolean {
+  return status === 403 && body.includes('Demo access required');
+}
+
+export function notifyDemoAccessRequired(): void {
+  window.dispatchEvent(new CustomEvent(DEMO_ACCESS_REQUIRED_EVENT));
+}
 
 /**
  * Authenticated fetch wrapper.
@@ -31,12 +45,14 @@ export async function client<T = unknown>(
   });
 
   // 401 → token expired or invalid → clear it and notify AuthContext
-  if (response.status === 401) {
-    window.dispatchEvent(new CustomEvent('auth-expired'));
-  }
-
   if (!response.ok) {
     const body = await response.text().catch(() => '');
+    if (response.status === 401) {
+      notifyAuthExpired();
+    }
+    if (isDemoAccessRequiredResponse(response.status, body)) {
+      notifyDemoAccessRequired();
+    }
     throw new ApiError(response.status, body, endpoint);
   }
 

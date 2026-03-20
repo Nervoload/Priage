@@ -1,12 +1,15 @@
-// HospitalApp/src/features/waitingroom/PatientDetailModal.tsx
-// Expanded patient detail popup with Messages and Patient Profile tabs.
-
-import { useState } from 'react';
-import type { Encounter, ChatMessage } from '../../shared/types/domain';
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import type { ChatMessage, Encounter, TriageAssessment } from '../../shared/types/domain';
 import { patientName } from '../../shared/types/domain';
-import { Modal } from '../../shared/ui/Modal';
 import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
+import {
+  DASHBOARD_STATUS_THEME,
+  formatDashboardElapsedMinutes,
+  formatDashboardPatientSex,
+  getDashboardAvatarTheme,
+  getDashboardInitials,
+} from '../../shared/ui/dashboardTheme';
 import { ChatPanel } from './ChatPanel';
 import { generatePatientPdf } from './generatePatientPdf';
 
@@ -20,8 +23,14 @@ interface PatientDetailModalProps {
   onClose: () => void;
 }
 
+const DEFAULT_MODAL_WIDTH = 1160;
+const DEFAULT_MODAL_HEIGHT = 780;
+const MIN_MODAL_WIDTH = 920;
+const MIN_MODAL_HEIGHT = 680;
+const TAB_ORDER: Tab[] = ['messages', 'profile', 'remove'];
+
 function formatTimestamp(iso: string | null | undefined): string {
-  if (!iso) return '—';
+  if (!iso) return 'Not recorded';
   return new Date(iso).toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -31,280 +40,528 @@ function formatTimestamp(iso: string | null | undefined): string {
   });
 }
 
+function minutesSince(iso: string | null | undefined): number {
+  if (!iso) return 0;
+  return Math.max(0, (Date.now() - new Date(iso).getTime()) / 60_000);
+}
+
 function getWarnings(encounter: Encounter): string[] {
   const notes: string[] = [];
-  const p = encounter.patient;
-  if (p?.allergies) notes.push(p.allergies);
-  if (p?.conditions) notes.push(p.conditions);
-  if (p?.optionalHealthInfo) {
-    const info = p.optionalHealthInfo as Record<string, unknown>;
-    if (info?.warningNotes) {
-      if (Array.isArray(info.warningNotes)) notes.push(...(info.warningNotes as string[]));
-    }
+  const patient = encounter.patient;
+
+  if (patient?.allergies) notes.push(patient.allergies);
+  if (patient?.conditions) notes.push(patient.conditions);
+
+  if (patient?.optionalHealthInfo) {
+    const info = patient.optionalHealthInfo as Record<string, unknown>;
+    if (Array.isArray(info.warningNotes)) notes.push(...(info.warningNotes as string[]));
+    else if (typeof info.warningNotes === 'string') notes.push(info.warningNotes);
   }
+
   return notes;
 }
 
-export function PatientDetailModal({ encounter, messages, onSendMessage, onRemovePatient, onClose }: PatientDetailModalProps) {
+function getLatestTriage(encounter: Encounter): TriageAssessment | null {
+  const triageAssessments = 'triageAssessments' in encounter ? encounter.triageAssessments : undefined;
+  if (!triageAssessments || triageAssessments.length === 0) return null;
+  return triageAssessments[triageAssessments.length - 1];
+}
+
+function getWaitStart(encounter: Encounter): string {
+  return encounter.waitingAt ?? encounter.triagedAt ?? encounter.arrivedAt ?? encounter.createdAt;
+}
+
+export function PatientDetailModal({
+  encounter,
+  messages,
+  onSendMessage,
+  onRemovePatient,
+  onClose,
+}: PatientDetailModalProps) {
+  const backdropRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<Tab>('messages');
+  const [expanded, setExpanded] = useState(false);
+  const [panelSize, setPanelSize] = useState({ width: DEFAULT_MODAL_WIDTH, height: DEFAULT_MODAL_HEIGHT });
+
+  useEffect(() => {
+    if (!encounter) return;
+    setTab('messages');
+    setExpanded(false);
+    setPanelSize({ width: DEFAULT_MODAL_WIDTH, height: DEFAULT_MODAL_HEIGHT });
+  }, [encounter?.id]);
+
+  useEffect(() => {
+    if (!encounter) return;
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = '';
+    };
+  }, [encounter, onClose]);
+
+  const handleResizeStart = useCallback(
+    (event: ReactMouseEvent) => {
+      if (expanded) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startWidth = panelSize.width;
+      const startHeight = panelSize.height;
+
+      const onMove = (moveEvent: MouseEvent) => {
+        const nextWidth = Math.min(
+          window.innerWidth - 24,
+          Math.max(MIN_MODAL_WIDTH, startWidth + (moveEvent.clientX - startX)),
+        );
+        const nextHeight = Math.min(
+          window.innerHeight - 24,
+          Math.max(MIN_MODAL_HEIGHT, startHeight + (moveEvent.clientY - startY)),
+        );
+
+        setPanelSize({ width: nextWidth, height: nextHeight });
+      };
+
+      const onUp = () => {
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+
+      document.body.style.cursor = 'nwse-resize';
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [expanded, panelSize.height, panelSize.width],
+  );
 
   if (!encounter) return null;
 
+  const latestTriage = getLatestTriage(encounter);
+  const avatarTheme = getDashboardAvatarTheme(encounter.patientId);
   const name = patientName(encounter.patient);
-  const latestTriage = encounter.triageAssessments?.[encounter.triageAssessments.length - 1];
+  const initials = getDashboardInitials(name);
+  const waitMinutes = minutesSince(getWaitStart(encounter));
+  const statusTheme = DASHBOARD_STATUS_THEME[encounter.status].cardPill;
+  const patientSex = formatDashboardPatientSex(encounter.patient.gender);
+  const patientAge = encounter.patient.age != null ? `AGE: ${encounter.patient.age}` : 'AGE: N/A';
+  const language = encounter.patient.preferredLanguage?.toUpperCase() ?? 'EN';
+  const vitals = latestTriage?.vitalSigns ?? null;
+  const activeTabIndex = TAB_ORDER.indexOf(tab);
+
+  const tabs: Array<{ key: Tab; label: string }> = [
+    { key: 'messages', label: `Messages (${messages.length})` },
+    { key: 'profile', label: 'Patient Profile' },
+    { key: 'remove', label: 'Remove' },
+  ];
 
   return (
-    <Modal open={!!encounter} onClose={onClose} width="max-w-4xl">
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-priage-600 text-white flex items-center justify-center text-lg font-bold">
-            {name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-gray-900 m-0">{name}</h2>
-              <StatusPill status={encounter.status} />
-              {encounter.currentCtasLevel && <CTASBadge level={encounter.currentCtasLevel} size="md" />}
-            </div>
-            <div className="text-sm text-gray-500 mt-0.5">
-              #{encounter.id} · {encounter.patient.age ? `${encounter.patient.age}y` : 'Age N/A'}{' '}
-              {encounter.patient.gender ? `· ${encounter.patient.gender}` : ''}
-              {encounter.patient.phone ? ` · ${encounter.patient.phone}` : ''}
-            </div>
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          className="w-9 h-9 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
-        >
-          <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
+    <div
+      ref={backdropRef}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 animate-fade-in"
+      onClick={(event) => {
+        if (event.target === backdropRef.current) onClose();
+      }}
+    >
+      <div className="absolute inset-0 bg-slate-950/35 backdrop-blur-[3px]" />
 
-      {/* Vitals strip */}
-      <VitalStrip encounter={encounter} latestTriage={latestTriage} />
-
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 px-6">
-        <button
-          onClick={() => setTab('messages')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${tab === 'messages'
-            ? 'border-priage-600 text-priage-700'
-            : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-        >
-          Messages ({messages.length})
-        </button>
-        <button
-          onClick={() => setTab('profile')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${tab === 'profile'
-            ? 'border-priage-600 text-priage-700'
-            : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-        >
-          Patient Profile
-        </button>
-        <button
-          onClick={() => setTab('remove')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${tab === 'remove'
-            ? 'border-red-500 text-red-600'
-            : 'border-transparent text-gray-500 hover:text-red-500'
-            }`}
-        >
-          Remove
-        </button>
-      </div>
-
-      {/* Tab content */}
-      <div className="h-[500px] flex flex-col">
-        {tab === 'messages' ? (
-          <ChatPanel encounter={encounter} messages={messages} onSendMessage={onSendMessage} />
-        ) : tab === 'profile' ? (
-          <PatientProfile encounter={encounter} latestTriage={latestTriage} />
-        ) : (
-          <RemovePatientPanel encounter={encounter} onRemovePatient={onRemovePatient} onClose={onClose} />
+      <div
+        className="
+          relative flex w-full flex-col overflow-hidden rounded-[34px] border border-white/80
+          bg-[radial-gradient(circle_at_top,_rgba(254,242,242,0.42)_0%,_rgba(255,255,255,0.92)_34%,_rgba(248,250,252,1)_100%)]
+          shadow-[0_32px_90px_-48px_rgba(15,23,42,0.55)] animate-slide-up
+        "
+        style={{
+          width: expanded ? 'calc(100vw - 24px)' : `min(calc(100vw - 24px), ${panelSize.width}px)`,
+          height: expanded ? 'calc(100vh - 24px)' : `min(calc(100vh - 24px), ${panelSize.height}px)`,
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {!expanded && (
+          <button
+            onMouseDown={handleResizeStart}
+            className="absolute bottom-2 right-2 z-20 flex h-8 w-8 items-center justify-center rounded-full text-slate-300 transition-colors hover:text-slate-500 cursor-nwse-resize"
+            title="Drag to resize"
+            aria-label="Drag to resize"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M6 10 10 6M9 12l3-3M12 15l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
         )}
+
+        <div className="relative overflow-hidden border-b border-slate-200/80 bg-white/78">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,_rgba(219,234,254,0.8)_0%,_transparent_62%)]" />
+
+          <div className="relative px-6 pb-4 pt-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-start gap-4">
+                <div
+                  className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] text-lg font-bold text-white shadow-[0_22px_48px_-24px_rgba(15,23,42,0.55)]"
+                  style={{ backgroundImage: avatarTheme.gradient }}
+                >
+                  {initials}
+                </div>
+
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-hospital-display text-[1.75rem] font-semibold tracking-[-0.04em] text-slate-950">
+                      {name}
+                    </h2>
+                    <StatusPill
+                      status={encounter.status}
+                      className={`rounded-md px-2.5 py-1 text-[11px] font-bold tracking-[0.16em] ${statusTheme}`}
+                    />
+                    {encounter.currentCtasLevel && <CTASBadge level={encounter.currentCtasLevel} size="md" />}
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                    <span>{patientSex}</span>
+                    <span>{patientAge}</span>
+                    <span>#{encounter.id}</span>
+                    <span>{language}</span>
+                    {encounter.patient.phone && <span>{encounter.patient.phone}</span>}
+                  </div>
+
+                  <p className="mt-4 max-w-3xl text-[1.08rem] font-semibold leading-7 text-slate-800">
+                    {encounter.chiefComplaint ?? 'No complaint recorded'}
+                  </p>
+
+                  {encounter.details && (
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">{encounter.details}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setExpanded((value) => !value)}
+                  className="
+                    flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/88
+                    text-slate-400 shadow-[0_14px_36px_-28px_rgba(15,23,42,0.45)] transition-colors hover:text-slate-600
+                    hover:border-slate-300 hover:bg-white cursor-pointer
+                  "
+                  title={expanded ? 'Collapse popup' : 'Expand to fullscreen'}
+                >
+                  {expanded ? (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path
+                        d="M10 2v4h4M6 14v-4H2M10 6L14 2M6 10l-4 4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path
+                        d="M14 2l-4 4M2 14l4-4M10 2h4v4M6 14H2v-4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+
+                <button
+                  onClick={onClose}
+                  className="
+                    flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/88
+                    text-slate-400 shadow-[0_14px_36px_-28px_rgba(15,23,42,0.45)] transition-colors hover:text-slate-600
+                    hover:border-slate-300 hover:bg-white cursor-pointer
+                  "
+                  title="Close"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center gap-x-8 gap-y-3 border-t border-slate-200/80 pt-4">
+              <HeaderInlineStat label="Elapsed" value={formatDashboardElapsedMinutes(waitMinutes)} />
+              <HeaderInlineStat label="Arrived" value={formatTimestamp(encounter.arrivedAt)} />
+              <HeaderInlineStat label="Messages" value={String(messages.length)} />
+            </div>
+
+            {vitals && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {vitals.heartRate && <VitalPill label="Heart rate" value={`${vitals.heartRate} bpm`} />}
+                {vitals.bloodPressure && <VitalPill label="Blood pressure" value={vitals.bloodPressure} />}
+                {vitals.oxygenSaturation && <VitalPill label="SpO2" value={`${vitals.oxygenSaturation}%`} />}
+                {vitals.temperature && <VitalPill label="Temperature" value={`${vitals.temperature} C`} />}
+                {vitals.respiratoryRate && <VitalPill label="Respiratory" value={`${vitals.respiratoryRate}/min`} />}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="border-b border-slate-200/80 bg-white/74 px-6 pt-3">
+          <div className="flex items-end justify-between gap-4">
+            <div className="relative grid max-w-[640px] flex-1 grid-cols-3">
+              {tabs.map((tabOption) => {
+                const isActive = tab === tabOption.key;
+                return (
+                  <button
+                    key={tabOption.key}
+                    onClick={() => setTab(tabOption.key)}
+                    className={`
+                      relative pb-3 text-left text-sm font-semibold transition-colors cursor-pointer whitespace-nowrap
+                      ${isActive
+                        ? tabOption.key === 'remove'
+                          ? 'text-rose-700'
+                          : 'text-slate-900'
+                        : tabOption.key === 'remove'
+                          ? 'text-rose-500 hover:text-rose-700'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }
+                    `}
+                  >
+                    {tabOption.label}
+                  </button>
+                );
+              })}
+              <div
+                className={`absolute bottom-0 h-0.5 w-1/3 transition-transform duration-300 ease-out ${tab === 'remove' ? 'bg-rose-600' : 'bg-slate-900'}`}
+                style={{ transform: `translateX(${activeTabIndex * 100}%)` }}
+              />
+            </div>
+
+            <button
+              onClick={() => generatePatientPdf(encounter)}
+              className="
+                mb-2 inline-flex items-center gap-2 rounded-[16px] border border-priage-200 bg-priage-50/88 px-4 py-2.5 text-sm
+                font-semibold text-priage-700 shadow-[0_16px_34px_-28px_rgba(30,58,95,0.45)] transition-all
+                hover:border-priage-300 hover:bg-priage-100 hover:text-priage-800 cursor-pointer
+              "
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path
+                  d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Download PDF
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 px-4 pb-4 pt-4">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/80 bg-white/90 shadow-[0_24px_70px_-42px_rgba(15,23,42,0.32)]">
+            {tab === 'messages' ? (
+              <ChatPanel encounter={encounter} messages={messages} onSendMessage={onSendMessage} hideHeader />
+            ) : tab === 'profile' ? (
+              <PatientProfile encounter={encounter} latestTriage={latestTriage} />
+            ) : (
+              <RemovePatientPanel encounter={encounter} onRemovePatient={onRemovePatient} onClose={onClose} />
+            )}
+          </div>
+        </div>
       </div>
-    </Modal>
-  );
-}
-
-// ─── Sub-components ──────────────────────────────────────────────────────────
-
-function VitalStrip({ latestTriage }: { encounter: Encounter; latestTriage: any }) {
-  const vs = latestTriage?.vitalSigns;
-  if (!vs) return null;
-
-  const bp = vs.bloodPressure?.split('/');
-  const systolic = bp?.[0] ? parseInt(bp[0], 10) : null;
-  const diastolic = bp?.[1] ? parseInt(bp[1], 10) : null;
-
-  if (!vs.heartRate && !systolic) return null;
-
-  return (
-    <div className="px-6 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center gap-6 text-xs">
-      {vs.heartRate && (
-        <div className="flex items-center gap-1.5">
-          <span className="text-red-400 text-sm">♥</span>
-          <span className="font-semibold text-gray-700">{vs.heartRate}</span>
-          <span className="text-gray-400">bpm</span>
-        </div>
-      )}
-      {systolic && diastolic && (
-        <div className="flex items-center gap-1.5">
-          <span className="text-blue-400 text-sm">⬆</span>
-          <span className="font-semibold text-gray-700">{systolic}/{diastolic}</span>
-          <span className="text-gray-400">mmHg</span>
-        </div>
-      )}
-      {vs.oxygenSaturation && (
-        <div className="flex items-center gap-1.5">
-          <span className="text-cyan-400 text-sm">○</span>
-          <span className="font-semibold text-gray-700">{vs.oxygenSaturation}%</span>
-          <span className="text-gray-400">SpO₂</span>
-        </div>
-      )}
-      {vs.temperature && (
-        <div className="flex items-center gap-1.5">
-          <span className="text-orange-400 text-sm">🌡</span>
-          <span className="font-semibold text-gray-700">{vs.temperature}°C</span>
-        </div>
-      )}
-      {vs.respiratoryRate && (
-        <div className="flex items-center gap-1.5">
-          <span className="text-teal-400 text-sm">↕</span>
-          <span className="font-semibold text-gray-700">{vs.respiratoryRate}</span>
-          <span className="text-gray-400">/min</span>
-        </div>
-      )}
     </div>
   );
 }
 
-function PatientProfile({ encounter, latestTriage }: { encounter: Encounter; latestTriage: any }) {
+function HeaderInlineStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-2">
+      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {label}
+      </span>
+      <span className="whitespace-nowrap font-hospital-display text-base font-semibold tracking-[-0.03em] text-slate-900">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function VitalPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/82 px-3 py-1.5 text-xs font-medium text-slate-600">
+      <span className="font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</span>
+      <span className="font-semibold text-slate-800">{value}</span>
+    </span>
+  );
+}
+
+function PatientProfile({
+  encounter,
+  latestTriage,
+}: {
+  encounter: Encounter;
+  latestTriage: TriageAssessment | null;
+}) {
   const warnings = getWarnings(encounter);
-  const vs = latestTriage?.vitalSigns;
+  const vitals = latestTriage?.vitalSigns ?? null;
+  const patient = encounter.patient;
 
   return (
-    <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-6">
-      {/* Download PDF */}
-      <div className="flex justify-end">
-        <button
-          onClick={() => generatePatientPdf(encounter)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-priage-700 transition-colors cursor-pointer"
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M8 2v8m0 0l-3-3m3 3l3-3M3 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Download PDF
-        </button>
-      </div>
-
-      {/* Warnings */}
-      {warnings.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-          <h4 className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1.5">⚠ Medical Alerts</h4>
-          <div className="flex flex-wrap gap-2">
-            {warnings.map((w, i) => (
-              <span key={i} className="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">{w}</span>
-            ))}
+    <div className="h-full overflow-y-auto px-5 py-5 custom-scrollbar">
+      <div className="grid gap-4 xl:grid-cols-[1.15fr,0.85fr]">
+        <SectionCard eyebrow="Identity" title="Patient Information">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <InfoField label="Full Name" value={patientName(patient)} />
+            <InfoField label="Encounter ID" value={`#${encounter.id}`} />
+            <InfoField label="Sex" value={formatDashboardPatientSex(patient.gender)} />
+            <InfoField label="Age" value={patient.age != null ? `${patient.age} years` : 'Not recorded'} />
+            <InfoField label="Phone" value={patient.phone ?? 'Not recorded'} />
+            <InfoField label="Language" value={patient.preferredLanguage?.toUpperCase() ?? 'EN'} />
+            <InfoField label="Height" value={patient.heightCm != null ? `${patient.heightCm} cm` : 'Not recorded'} />
+            <InfoField label="Weight" value={patient.weightKg != null ? `${patient.weightKg} kg` : 'Not recorded'} />
           </div>
-        </div>
-      )}
+        </SectionCard>
 
-      {/* Patient Info */}
-      <div>
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Patient Information</h4>
-        <div className="grid grid-cols-2 gap-3">
-          <InfoField label="Full Name" value={patientName(encounter.patient)} />
-          <InfoField label="Age" value={encounter.patient.age ? `${encounter.patient.age} years` : 'N/A'} />
-          <InfoField label="Gender" value={encounter.patient.gender ?? 'N/A'} />
-          <InfoField label="Phone" value={encounter.patient.phone ?? 'N/A'} />
-          <InfoField label="Language" value={(encounter.patient as any).preferredLanguage ?? 'en'} />
-          <InfoField label="Encounter ID" value={`#${encounter.id}`} />
-        </div>
-      </div>
-
-      {/* Chief Complaint */}
-      <div>
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Chief Complaint</h4>
-        <p className="text-sm text-gray-800 bg-gray-50 rounded-lg p-3 m-0">
-          {encounter.chiefComplaint || 'No complaint recorded'}
-        </p>
-        {encounter.details && (
-          <p className="text-xs text-gray-500 mt-2 m-0">{encounter.details}</p>
-        )}
-      </div>
-
-      {/* Triage Assessment */}
-      {latestTriage && (
-        <div>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Latest Triage Assessment</h4>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <VitalCard label="CTAS Level" value={String(latestTriage.ctasLevel)} />
-            <VitalCard label="Pain" value={latestTriage.painLevel != null ? `${latestTriage.painLevel}/10` : 'N/A'} />
-            <VitalCard label="Priority" value={String(latestTriage.priorityScore)} />
-            <VitalCard label="Assessed" value={new Date(latestTriage.createdAt).toLocaleTimeString()} />
+        <SectionCard eyebrow="Presentation" title="Chief Complaint">
+          <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/88 px-4 py-4">
+            <p className="m-0 text-base font-semibold leading-7 text-slate-800">
+              {encounter.chiefComplaint ?? 'No complaint recorded'}
+            </p>
+            {encounter.details && (
+              <p className="mt-3 text-sm leading-6 text-slate-500">{encounter.details}</p>
+            )}
           </div>
-          {vs && (
-            <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 mt-3">
-              {vs.bloodPressure && <VitalCard label="Blood Pressure" value={vs.bloodPressure} />}
-              {vs.heartRate && <VitalCard label="Heart Rate" value={`${vs.heartRate} bpm`} />}
-              {vs.temperature && <VitalCard label="Temperature" value={`${vs.temperature}°C`} />}
-              {vs.respiratoryRate && <VitalCard label="Resp. Rate" value={`${vs.respiratoryRate}/min`} />}
-              {vs.oxygenSaturation && <VitalCard label="SpO₂" value={`${vs.oxygenSaturation}%`} />}
+        </SectionCard>
+
+        {warnings.length > 0 && (
+          <SectionCard eyebrow="Safety" title="Medical Alerts" tone="rose">
+            <div className="flex flex-wrap gap-2">
+              {warnings.map((warning, index) => (
+                <span
+                  key={`${warning}-${index}`}
+                  className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700"
+                >
+                  {warning}
+                </span>
+              ))}
             </div>
-          )}
-          {latestTriage.note && (
-            <p className="text-xs text-gray-500 mt-2 italic m-0">"{latestTriage.note}"</p>
-          )}
-        </div>
-      )}
+          </SectionCard>
+        )}
 
-      {/* Encounter Timeline */}
-      <div>
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Encounter Timeline</h4>
-        <div className="space-y-2">
-          <TimelineItem label="Expected" time={encounter.expectedAt} />
-          <TimelineItem label="Arrived" time={encounter.arrivedAt} />
-          <TimelineItem label="Triage Started" time={encounter.triagedAt} />
-          <TimelineItem label="Waiting" time={encounter.waitingAt} />
-          <TimelineItem label="Seen" time={encounter.seenAt} />
-          <TimelineItem label="Departed" time={encounter.departedAt} />
-        </div>
+        {latestTriage && (
+          <SectionCard eyebrow="Clinical" title="Latest Triage Assessment">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricTile label="CTAS Level" value={String(latestTriage.ctasLevel)} />
+              <MetricTile label="Priority Score" value={String(latestTriage.priorityScore)} />
+              <MetricTile label="Pain" value={latestTriage.painLevel != null ? `${latestTriage.painLevel}/10` : 'N/A'} />
+              <MetricTile label="Assessed" value={formatTimestamp(latestTriage.createdAt)} />
+            </div>
+
+            {vitals && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <VitalMetric label="Blood Pressure" value={vitals.bloodPressure} />
+                <VitalMetric label="Heart Rate" value={vitals.heartRate != null ? `${vitals.heartRate} bpm` : null} />
+                <VitalMetric label="Temperature" value={vitals.temperature != null ? `${vitals.temperature} C` : null} />
+                <VitalMetric
+                  label="Respiratory Rate"
+                  value={vitals.respiratoryRate != null ? `${vitals.respiratoryRate}/min` : null}
+                />
+                <VitalMetric label="SpO2" value={vitals.oxygenSaturation != null ? `${vitals.oxygenSaturation}%` : null} />
+              </div>
+            )}
+
+            {latestTriage.note && (
+              <div className="mt-4 rounded-[20px] border border-slate-200/80 bg-slate-50/88 px-4 py-4">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Clinical note
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{latestTriage.note}</p>
+              </div>
+            )}
+          </SectionCard>
+        )}
+
+        <SectionCard eyebrow="Flow" title="Encounter Timeline">
+          <div className="space-y-4">
+            <TimelineItem label="Expected" time={encounter.expectedAt} />
+            <TimelineItem label="Arrived" time={encounter.arrivedAt} />
+            <TimelineItem label="Triage Started" time={encounter.triagedAt} />
+            <TimelineItem label="Waiting" time={encounter.waitingAt} />
+            <TimelineItem label="Seen" time={encounter.seenAt} />
+            <TimelineItem label="Departed" time={encounter.departedAt} />
+          </div>
+        </SectionCard>
       </div>
-
     </div>
+  );
+}
+
+function SectionCard({
+  eyebrow,
+  title,
+  children,
+  tone = 'default',
+}: {
+  eyebrow: string;
+  title: string;
+  children: ReactNode;
+  tone?: 'default' | 'rose';
+}) {
+  const toneClass =
+    tone === 'rose'
+      ? 'border-rose-100/90 bg-[linear-gradient(180deg,_rgba(255,241,242,0.95)_0%,_rgba(255,255,255,0.94)_100%)]'
+      : 'border-white/80 bg-white/92';
+
+  return (
+    <section className={`rounded-[24px] border p-5 shadow-[0_20px_50px_-38px_rgba(15,23,42,0.42)] ${toneClass}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{eyebrow}</div>
+      <h3 className="mt-2 font-hospital-display text-xl font-semibold tracking-[-0.03em] text-slate-900">
+        {title}
+      </h3>
+      <div className="mt-4">{children}</div>
+    </section>
   );
 }
 
 function InfoField({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-gray-50 rounded-lg px-3 py-2">
-      <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{label}</div>
-      <div className="text-sm font-medium text-gray-800 mt-0.5">{value}</div>
+    <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/88 px-4 py-3 shadow-[0_16px_32px_-30px_rgba(15,23,42,0.34)]">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-slate-800">{value}</div>
     </div>
   );
 }
 
-function VitalCard({ label, value }: { label: string; value: string }) {
+function MetricTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 text-center">
-      <div className="text-[10px] font-semibold text-gray-400 uppercase">{label}</div>
-      <div className="text-sm font-bold text-gray-800 mt-0.5">{value}</div>
+    <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/88 px-4 py-3 text-center shadow-[0_16px_32px_-30px_rgba(15,23,42,0.34)]">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-bold text-slate-900">{value}</div>
     </div>
   );
+}
+
+function VitalMetric({ label, value }: { label: string; value: string | null | undefined }) {
+  return <MetricTile label={label} value={value ?? 'Not recorded'} />;
 }
 
 function TimelineItem({ label, time }: { label: string; time: string | null | undefined }) {
+  const isActive = Boolean(time);
+
   return (
-    <div className="flex items-center gap-3">
-      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${time ? 'bg-priage-500' : 'bg-gray-300'}`} />
-      <span className="text-xs font-medium text-gray-600 w-28">{label}</span>
-      <span className="text-xs text-gray-400">{formatTimestamp(time)}</span>
+    <div className="flex items-start gap-3">
+      <div className={`mt-1.5 h-2.5 w-2.5 rounded-full ${isActive ? 'bg-priage-500' : 'bg-slate-300'}`} />
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-slate-800">{label}</div>
+        <div className="text-xs text-slate-500">{formatTimestamp(time)}</div>
+      </div>
     </div>
   );
 }
@@ -327,6 +584,7 @@ function RemovePatientPanel({
       setConfirming(true);
       return;
     }
+
     setRemoving(true);
     try {
       await onRemovePatient(encounter.id);
@@ -338,42 +596,49 @@ function RemovePatientPanel({
   };
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-      <div className="w-16 h-16 rounded-full bg-red-100 text-red-500 flex items-center justify-center text-2xl mb-4">
-        ✕
+    <div className="flex h-full items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(254,226,226,0.45)_0%,_rgba(255,255,255,1)_62%)] p-6">
+      <div className="w-full max-w-xl rounded-[28px] border border-rose-200/80 bg-white/94 p-8 text-center shadow-[0_28px_70px_-42px_rgba(190,24,93,0.35)]">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[22px] bg-rose-100 text-2xl text-rose-600">
+          !
+        </div>
+
+        <div className="mt-5 text-[10px] font-semibold uppercase tracking-[0.22em] text-rose-500">
+          Remove from waiting room
+        </div>
+        <h3 className="mt-2 font-hospital-display text-[1.65rem] font-semibold tracking-[-0.04em] text-slate-950">
+          Remove Patient
+        </h3>
+        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-500">
+          You are about to remove <span className="font-semibold text-slate-800">{name}</span> (#{encounter.id}) from
+          the waiting room. This action cannot be undone.
+        </p>
+
+        <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <button
+            onClick={handleClick}
+            disabled={removing}
+            className={`
+              rounded-[16px] px-5 py-3 text-sm font-semibold transition-all cursor-pointer
+              ${confirming
+                ? 'bg-rose-700 text-white shadow-[0_18px_38px_-24px_rgba(190,24,93,0.9)] hover:bg-rose-800'
+                : 'border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+              }
+              disabled:cursor-not-allowed disabled:opacity-60
+            `}
+          >
+            {removing ? 'Removing...' : confirming ? 'Confirm removal' : 'Remove patient'}
+          </button>
+
+          {confirming && !removing && (
+            <button
+              onClick={() => setConfirming(false)}
+              className="rounded-[16px] border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-800 cursor-pointer"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </div>
-      <h3 className="text-lg font-semibold text-gray-900 mb-1">Remove Patient</h3>
-      <p className="text-sm text-gray-500 mb-6 max-w-sm">
-        You are about to remove <span className="font-semibold text-gray-700">{name}</span> (#{encounter.id}) from the waiting room. This action cannot be undone.
-      </p>
-
-      <button
-        onClick={handleClick}
-        disabled={removing}
-        className={`
-          px-6 py-3 rounded-lg text-sm font-semibold transition-all cursor-pointer
-          ${confirming
-            ? 'bg-red-600 hover:bg-red-700 text-white shadow-md'
-            : 'bg-red-100 hover:bg-red-200 text-red-700 border border-red-300'
-          }
-          disabled:opacity-50 disabled:cursor-not-allowed
-        `}
-      >
-        {removing
-          ? 'Removing…'
-          : confirming
-            ? 'Are you sure? Click to confirm'
-            : 'Remove Patient'}
-      </button>
-
-      {confirming && !removing && (
-        <button
-          onClick={() => setConfirming(false)}
-          className="mt-3 text-sm text-gray-500 hover:text-gray-700 cursor-pointer"
-        >
-          Cancel
-        </button>
-      )}
     </div>
   );
 }

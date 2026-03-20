@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { API_BASE_URL } from '../shared/api/client';
+import {
+  API_BASE_URL,
+  DEMO_ACCESS_REQUIRED_EVENT,
+  isDemoAccessRequiredResponse,
+} from '../shared/api/client';
+import { disconnectSocket } from '../shared/realtime/socket';
 
 interface DemoGateState {
   /** True while the initial probe is in flight */
@@ -18,6 +23,18 @@ export function useDemoGate(): DemoGateState {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const handleDemoAccessRequired = () => {
+      disconnectSocket();
+      setError(null);
+      setGateActive(true);
+      setChecking(false);
+    };
+
+    window.addEventListener(DEMO_ACCESS_REQUIRED_EVENT, handleDemoAccessRequired);
+    return () => window.removeEventListener(DEMO_ACCESS_REQUIRED_EVENT, handleDemoAccessRequired);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     // Probe a guarded endpoint with raw fetch (not the app client wrapper)
@@ -28,9 +45,10 @@ export function useDemoGate(): DemoGateState {
           credentials: 'include',
         });
 
-        if (res.status === 403) {
+        if (!res.ok) {
           const body = await res.text().catch(() => '');
-          if (body.includes('Demo access required') && !cancelled) {
+          if (isDemoAccessRequiredResponse(res.status, body) && !cancelled) {
+            disconnectSocket();
             setGateActive(true);
           }
         }

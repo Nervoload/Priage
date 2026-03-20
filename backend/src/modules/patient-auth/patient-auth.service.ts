@@ -13,8 +13,7 @@ import { RegisterPatientDto } from './dto/register-patient.dto';
 import { LoginPatientDto } from './dto/login-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-profile.dto';
 import { UpgradeGuestDto } from './dto/upgrade-guest.dto';
-
-const BCRYPT_ROUNDS = 10;
+import { hashPatientPassword } from './patient-password.util';
 
 @Injectable()
 export class PatientAuthService {
@@ -42,7 +41,7 @@ export class PatientAuthService {
       throw new ConflictException('An account with this email already exists');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    const hashedPassword = await hashPatientPassword(dto.password);
     const token = randomUUID();
 
     const patient = await this.prisma.patientProfile.create({
@@ -223,7 +222,7 @@ export class PatientAuthService {
       throw new ConflictException('An account with this email already exists');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    const hashedPassword = await hashPatientPassword(dto.password);
 
     const updated = await this.prisma.patientProfile.update({
       where: { id: patientId },

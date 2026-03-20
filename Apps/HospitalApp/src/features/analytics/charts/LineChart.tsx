@@ -80,7 +80,7 @@ export function LineChart({
                                 textAnchor="end"
                                 dominantBaseline="central"
                                 className="fill-gray-400"
-                                style={{ fontSize: '0.6rem' }}
+                                style={{ fontSize: '0.72rem' }}
                             >
                                 {val}{unit}
                             </text>
@@ -119,7 +119,7 @@ export function LineChart({
                             y={padding.top + chartH + 16}
                             textAnchor="middle"
                             className="fill-gray-400"
-                            style={{ fontSize: '0.6rem' }}
+                            style={{ fontSize: '0.72rem' }}
                         >
                             {d.label}
                         </text>
@@ -129,7 +129,7 @@ export function LineChart({
 
             {/* Legend for two-line mode */}
             {line2Label && (
-                <div className="flex items-center gap-4 justify-center text-xs text-gray-500">
+                <div className="flex items-center justify-center gap-4 text-sm text-gray-500">
                     <span className="flex items-center gap-1.5">
                         <span className="w-4 h-0.5 rounded" style={{ backgroundColor: lineColor }} />
                         All CTAS

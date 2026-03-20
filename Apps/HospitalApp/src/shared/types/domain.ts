@@ -29,6 +29,8 @@ export interface PatientSummary {
   age: number | null;
   gender?: string | null;
   preferredLanguage?: string;
+  heightCm?: number | null;
+  weightKg?: number | null;
   allergies?: string | null;
   conditions?: string | null;
   optionalHealthInfo?: Record<string, unknown> | null;
@@ -69,15 +71,49 @@ export function formatPatientForApi(
   };
 }
 
+export interface AssetSummary {
+  id: number;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+  url: string;
+}
+
+export interface PriagePreview {
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  progressionRiskCount: number;
+}
+
+export interface PriageSummaryQuestionAnswer {
+  question: string;
+  answer: string;
+  phase: string;
+  answeredAt: string;
+}
+
+export interface PriageSummary {
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  caseSummary: string;
+  questionAnswers: PriageSummaryQuestionAnswer[];
+  progressionRisks: string[];
+  redFlags: string[];
+  recommendedAction: string;
+  generatedAt: string;
+  generationMode: 'ai' | 'fallback';
+}
+
 // ─── Encounter ──────────────────────────────────────────────────────────────
 
-export interface Encounter {
+interface EncounterBase {
   id: number;
   createdAt: string;
   updatedAt: string;
   status: EncounterStatus;
   chiefComplaint: string | null;
-  details: string | null;
+  details?: string | null;
   hospitalId: number;
   patientId: number;
 
@@ -93,15 +129,26 @@ export interface Encounter {
   departedAt?: string | null;
   cancelledAt?: string | null;
 
-  // Nested relations (included on detail fetches)
+  priagePreview?: PriagePreview | null;
+
   patient: PatientSummary;
   triageAssessments?: TriageAssessment[];
   messages?: Message[];
   alerts?: Alert[];
+  intakeImages?: AssetSummary[];
+  priageSummary?: PriageSummary | null;
 }
 
+export interface EncounterListItem extends EncounterBase {}
+
+export interface EncounterDetail extends EncounterBase {
+  details: string | null;
+}
+
+export type Encounter = EncounterListItem | EncounterDetail;
+
 export interface EncounterListResponse {
-  data: Encounter[];
+  data: EncounterListItem[];
   total: number;
 }
 
@@ -150,6 +197,7 @@ export interface Message {
   createdByPatientId: number | null;
   encounterId: number;
   hospitalId: number;
+  attachments?: AssetSummary[];
 }
 
 // ─── Alert ──────────────────────────────────────────────────────────────────

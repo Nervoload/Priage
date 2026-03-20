@@ -16,6 +16,7 @@ import type {
   InterviewPatientContext,
   InterviewPhase,
   InterviewProviderState,
+  InterviewQuestionAnswerRecord,
   InterviewQuestion,
   InterviewStateSnapshot,
   InterviewStatus,
@@ -560,7 +561,12 @@ export class TriageInterviewService {
 
   private buildRescueFallback(input: ProviderGenerationInput): ProviderGenerationResult {
     const urgency = this.inferUrgency(input.patient, input.answers);
+    const redFlags = this.extractRedFlags(input.patient, input.answers);
     const summaryPreview = this.buildSummaryPreview(input.patient, input.answers, urgency);
+    const recommendedCtasLevel = this.inferRecommendedCtasLevel(urgency, input.answers, redFlags);
+    const briefing = this.buildBriefing(input.patient, input.answers, urgency, recommendedCtasLevel);
+    const caseSummary = this.buildCaseSummary(input.patient, input.answers, redFlags, urgency, recommendedCtasLevel);
+    const progressionRisks = this.buildProgressionRisks(input.patient, input.answers, redFlags, urgency);
     const askedPrompts = new Set(input.answers.map((answer) => this.normalizePrompt(answer.prompt)));
     const bank = this.buildRescueQuestionBank();
     const targetQuestionCount = Math.min(MAX_DYNAMIC_QUESTIONS, Math.max(MIN_DYNAMIC_QUESTIONS, RESCUE_TARGET_QUESTION_COUNT));
@@ -579,9 +585,13 @@ export class TriageInterviewService {
           ? 'Rescue fallback gathered a minimal set of intake questions.'
           : '',
         urgency,
-        redFlags: this.extractRedFlags(input.patient, input.answers),
+        redFlags,
         recommendedAction: this.getRecommendedAction(urgency),
         summaryPreview,
+        recommendedCtasLevel,
+        briefing,
+        caseSummary,
+        progressionRisks,
         interrupt: {
           type: 'none',
           title: '',
@@ -818,7 +828,20 @@ export class TriageInterviewService {
     const redFlags = result?.redFlags?.length ? result.redFlags : this.extractRedFlags(patient, answers);
     const summaryPreview = result?.summaryPreview?.trim() || this.buildSummaryPreview(patient, answers, urgency);
     const recommendedAction = result?.recommendedAction?.trim() || this.getRecommendedAction(urgency);
-    const combinedDetails = this.buildCombinedDetails(patient.details ?? '', summaryPreview, answers);
+    const questionAnswers = this.buildQuestionAnswerRecords(answers);
+    const recommendedCtasLevel = result?.recommendedCtasLevel ?? this.inferRecommendedCtasLevel(urgency, answers, redFlags);
+    const briefing = result?.briefing?.trim() || this.buildBriefing(patient, answers, urgency, recommendedCtasLevel);
+    const caseSummary = result?.caseSummary?.trim() || this.buildCaseSummary(patient, answers, redFlags, urgency, recommendedCtasLevel);
+    const progressionRisks = result?.progressionRisks?.length
+      ? this.dedupeStrings(result.progressionRisks)
+      : this.buildProgressionRisks(patient, answers, redFlags, urgency);
+    const combinedDetails = this.buildCombinedDetails(patient.details ?? '', {
+      briefing,
+      caseSummary,
+      recommendedAction,
+      questionAnswers,
+      progressionRisks,
+    });
 
     return {
       urgency,
@@ -826,7 +849,149 @@ export class TriageInterviewService {
       recommendedAction,
       summaryPreview,
       combinedDetails,
+      briefing,
+      recommendedCtasLevel,
+      caseSummary,
+      questionAnswers,
+      progressionRisks,
     };
+  }
+
+  private buildQuestionAnswerRecords(answers: InterviewAnswerRecord[]): InterviewQuestionAnswerRecord[] {
+    return answers
+      .filter((answer) => answer.questionPublicId !== SAFETY_GATE_PUBLIC_ID)
+      .map((answer) => ({
+        question: answer.prompt,
+        answer: answer.answerText,
+        phase: answer.phase,
+        answeredAt: answer.answeredAt,
+      }));
+  }
+
+  private inferRecommendedCtasLevel(
+    urgency: InterviewUrgency,
+    answers: InterviewAnswerRecord[],
+    redFlags: string[],
+  ): number {
+    const severity = this.extractSeverityScore(answers);
+
+    if (urgency === 'emergency' || severity >= 9) {
+      return 1;
+    }
+    if (urgency === 'high' || redFlags.length > 0 || severity >= 7) {
+      return 2;
+    }
+    if (urgency === 'medium' || severity >= 4) {
+      return 3;
+    }
+    if (severity <= 2 && redFlags.length === 0) {
+      return 5;
+    }
+    return 4;
+  }
+
+  private extractSeverityScore(answers: InterviewAnswerRecord[]): number {
+    const severityAnswer = answers.find((answer) => answer.prompt.toLowerCase().includes('scale from 0 to 10'));
+    const severity = severityAnswer ? Number(severityAnswer.answerText) : NaN;
+    return Number.isFinite(severity) ? severity : NaN;
+  }
+
+  private buildBriefing(
+    patient: InterviewPatientContext,
+    answers: InterviewAnswerRecord[],
+    urgency: InterviewUrgency,
+    recommendedCtasLevel: number | null,
+  ): string {
+    const complaint = patient.chiefComplaint?.trim() || 'an acute concern';
+    const timeline = this.findAnswerByPrompt(answers, ['when did this start', 'how long']);
+    const severity = this.extractSeverityScore(answers);
+    const timelineText = timeline ? ` starting ${timeline.answerText}` : '';
+    const severityText = Number.isFinite(severity) ? ` with reported severity ${severity}/10` : '';
+    const ctasText = recommendedCtasLevel != null ? ` and provisional AI CTAS ${recommendedCtasLevel}` : '';
+
+    return `Patient reports ${complaint}${timelineText}${severityText}, with current intake urgency ${urgency}${ctasText}.`;
+  }
+
+  private buildCaseSummary(
+    patient: InterviewPatientContext,
+    answers: InterviewAnswerRecord[],
+    redFlags: string[],
+    _urgency: InterviewUrgency,
+    _recommendedCtasLevel: number | null,
+  ): string {
+    const complaint = patient.chiefComplaint?.trim() || 'an acute concern';
+    const timeline = this.findAnswerByPrompt(answers, ['when did this start', 'how long']);
+    const associated = this.findAnswerByPrompt(answers, ['what other symptoms', 'additional symptoms', 'additional info']);
+    const treatment = this.findAnswerByPrompt(answers, ['have you taken anything', 'done anything for this']);
+    const history = this.findAnswerByPrompt(answers, ['medical conditions', 'medications or allergies', 'care team should know']);
+    const severity = this.extractSeverityScore(answers);
+
+    return [
+      `Chief concern: ${complaint}.`,
+      timeline ? `Timeline: ${timeline.answerText}.` : '',
+      Number.isFinite(severity) ? `Reported severity: ${severity}/10.` : '',
+      associated ? `Associated symptoms: ${associated.answerText}.` : '',
+      treatment ? `Self-management today: ${treatment.answerText}.` : '',
+      history ? `Relevant history: ${history.answerText}.` : '',
+      redFlags.length ? `Key red flags: ${redFlags.join(', ')}.` : '',
+    ].filter(Boolean).join(' ');
+  }
+
+  private buildProgressionRisks(
+    patient: InterviewPatientContext,
+    answers: InterviewAnswerRecord[],
+    redFlags: string[],
+    urgency: InterviewUrgency,
+  ): string[] {
+    const text = [
+      patient.chiefComplaint,
+      patient.details,
+      ...answers.map((answer) => `${answer.prompt} ${answer.answerText}`),
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    const risks: string[] = [];
+    const addRisk = (condition: boolean, label: string) => {
+      if (condition && !risks.includes(label)) {
+        risks.push(label);
+      }
+    };
+
+    addRisk(/chest pain|chest pressure/.test(text), 'Persistent or worsening chest pain, pressure, or new shortness of breath');
+    addRisk(/trouble breathing|shortness of breath|can.t breathe|cannot breathe/.test(text), 'Increasing breathing difficulty, cyanosis, or inability to speak in full sentences');
+    addRisk(/weakness|speech|confusion|seizure|stroke|passed out|fainting/.test(text), 'New confusion, fainting, seizure activity, or one-sided weakness');
+    addRisk(/bleeding|blood/.test(text), 'Heavy bleeding or any new blood loss symptoms');
+    addRisk(/pregnan|pregnancy|pelvic pain|vaginal bleeding/.test(text), 'Pregnancy-related pain, bleeding, or instability');
+    addRisk(/fever|infection|swelling|redness/.test(text), 'Fever spike, spreading redness, or other signs of infection worsening');
+    addRisk(/vomiting|diarrhea|dehydration/.test(text), 'Persistent vomiting, dehydration, or inability to tolerate fluids');
+    addRisk(/rapidly worse|worsening|getting worse|worse with/.test(text), 'Rapid worsening from the current baseline');
+
+    for (const redFlag of redFlags) {
+      addRisk(true, redFlag);
+    }
+
+    if (risks.length === 0) {
+      addRisk(
+        urgency === 'high' || urgency === 'emergency',
+        'Any rapid deterioration, new breathing difficulty, chest pain, confusion, or fainting',
+      );
+      addRisk(
+        urgency === 'low' || urgency === 'medium',
+        'Symptoms worsening from baseline, becoming more frequent, or developing new red-flag features',
+      );
+    }
+
+    return risks.slice(0, 5);
+  }
+
+  private findAnswerByPrompt(answers: InterviewAnswerRecord[], promptFragments: string[]): InterviewAnswerRecord | null {
+    return answers.find((answer) => {
+      const prompt = answer.prompt.toLowerCase();
+      return promptFragments.some((fragment) => prompt.includes(fragment));
+    }) ?? null;
+  }
+
+  private dedupeStrings(values: string[]): string[] {
+    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
   }
 
   private buildSummaryPreview(
@@ -852,18 +1017,28 @@ export class TriageInterviewService {
 
   private buildCombinedDetails(
     originalDetails: string,
-    summaryPreview: string,
-    answers: InterviewAnswerRecord[],
+    summary: {
+      briefing: string;
+      caseSummary: string;
+      recommendedAction: string;
+      questionAnswers: InterviewQuestionAnswerRecord[];
+      progressionRisks: string[];
+    },
   ): string {
     const patientNarrative = originalDetails.trim();
-    const qaLines = answers
-      .filter((answer) => answer.questionPublicId !== SAFETY_GATE_PUBLIC_ID)
-      .map((answer) => `- ${answer.prompt} ${answer.answerText}`)
+    const qaLines = summary.questionAnswers
+      .map((answer) => `- ${answer.question}: ${answer.answer}`)
+      .join('\n');
+    const riskLines = summary.progressionRisks
+      .map((risk) => `- ${risk}`)
       .join('\n');
 
     return [
       patientNarrative ? `Patient note:\n${patientNarrative}` : '',
-      summaryPreview ? `AI intake summary:\n${summaryPreview}` : '',
+      summary.briefing ? `AI briefing:\n${summary.briefing}` : '',
+      summary.caseSummary ? `Case summary:\n${summary.caseSummary}` : '',
+      summary.recommendedAction ? `Recommended action:\n${summary.recommendedAction}` : '',
+      riskLines ? `Progression risks:\n${riskLines}` : '',
       qaLines ? `Structured Q&A:\n${qaLines}` : '',
     ].filter(Boolean).join('\n\n');
   }
@@ -1121,6 +1296,40 @@ export class TriageInterviewService {
       recommendedAction: summary.recommendedAction,
       summaryPreview: summary.summaryPreview,
       combinedDetails: summary.combinedDetails,
+      briefing: typeof summary.briefing === 'string' ? summary.briefing : summary.summaryPreview,
+      recommendedCtasLevel: typeof summary.recommendedCtasLevel === 'number' ? summary.recommendedCtasLevel : null,
+      caseSummary: typeof summary.caseSummary === 'string' ? summary.caseSummary : summary.combinedDetails,
+      questionAnswers: Array.isArray(summary.questionAnswers)
+        ? summary.questionAnswers
+            .map((answer) => this.parseQuestionAnswerRecord(answer))
+            .filter((answer): answer is InterviewQuestionAnswerRecord => answer !== null)
+        : [],
+      progressionRisks: Array.isArray(summary.progressionRisks)
+        ? summary.progressionRisks.filter((risk): risk is string => typeof risk === 'string')
+        : [],
+    };
+  }
+
+  private parseQuestionAnswerRecord(value: unknown): InterviewQuestionAnswerRecord | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    const answer = value as Record<string, unknown>;
+    if (
+      typeof answer.question !== 'string'
+      || typeof answer.answer !== 'string'
+      || !this.isPhase(answer.phase)
+      || typeof answer.answeredAt !== 'string'
+    ) {
+      return null;
+    }
+
+    return {
+      question: answer.question,
+      answer: answer.answer,
+      phase: answer.phase,
+      answeredAt: answer.answeredAt,
     };
   }
 
@@ -1202,40 +1411,59 @@ export class TriageInterviewService {
     state: InterviewStateSnapshot,
     correlationId?: string,
   ): Promise<void> {
-    const latestSummary = await this.prisma.contextItem.findFirst({
-      where: {
-        intakeSessionId,
-        itemType: 'ai_triage_summary',
-        supersededBy: { none: {} },
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: { publicId: true },
-    });
+    const generatedAt = new Date().toISOString();
 
-    await this.intakeSessions.appendContextItemByIntakeSessionId(
-      intakeSessionId,
-      {
-        itemType: 'ai_triage_summary',
-        schemaVersion: 'v2',
-        payload: this.toJsonValue({
-          urgency: summary.urgency,
-          redFlags: summary.redFlags,
-          recommendedAction: summary.recommendedAction,
-          summaryPreview: summary.summaryPreview,
-          details: summary.combinedDetails,
-          sessionGoal: state.sessionGoal,
-          completionReason: state.completionReason,
-          generationMode: state.generationMode,
-        }),
-        sourceType: ContextSourceType.AI,
-        trustTier: TrustTier.UNTRUSTED,
-        reviewState: ReviewState.UNREVIEWED,
-        visibilityScope: VisibilityScope.ADMISSIONS,
-        patientId,
-        supersedesPublicId: latestSummary?.publicId,
-      },
-      correlationId,
-    );
+    await this.prisma.$transaction(async (tx) => {
+      const latestSummary = await tx.contextItem.findFirst({
+        where: {
+          intakeSessionId,
+          itemType: 'ai_triage_summary',
+          supersededBy: { none: {} },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: { publicId: true },
+      });
+
+      const createdSummary = await this.intakeSessions.appendContextItemByIntakeSessionIdTx(
+        tx,
+        intakeSessionId,
+        {
+          itemType: 'ai_triage_summary',
+          schemaVersion: 'v3',
+          payload: this.toJsonValue({
+            urgency: summary.urgency,
+            redFlags: summary.redFlags,
+            recommendedAction: summary.recommendedAction,
+            summaryPreview: summary.summaryPreview,
+            briefing: summary.briefing,
+            recommendedCtasLevel: summary.recommendedCtasLevel,
+            caseSummary: summary.caseSummary,
+            questionAnswers: summary.questionAnswers,
+            progressionRisks: summary.progressionRisks,
+            details: summary.combinedDetails,
+            sessionGoal: state.sessionGoal,
+            completionReason: state.completionReason,
+            generationMode: state.generationMode,
+            generatedAt,
+          }),
+          sourceType: ContextSourceType.AI,
+          trustTier: TrustTier.UNTRUSTED,
+          reviewState: ReviewState.UNREVIEWED,
+          visibilityScope: VisibilityScope.ADMISSIONS,
+          patientId,
+          supersedesPublicId: latestSummary?.publicId,
+        },
+      );
+
+      await this.refreshAiDerivedSummaryProjectionTx(
+        tx,
+        intakeSessionId,
+        createdSummary.encounterId ?? null,
+        summary,
+        state,
+        generatedAt,
+      );
+    });
 
     await this.loggingService.info(
       'Persisted AI triage summary',
@@ -1252,6 +1480,50 @@ export class TriageInterviewService {
         generationMode: state.generationMode,
       },
     );
+  }
+
+  private async refreshAiDerivedSummaryProjectionTx(
+    tx: Prisma.TransactionClient,
+    intakeSessionId: number,
+    encounterId: number | null,
+    summary: InterviewSummaryRecord,
+    state: InterviewStateSnapshot,
+    generatedAt: string,
+  ): Promise<void> {
+    await tx.summaryProjection.updateMany({
+      where: {
+        intakeSessionId,
+        kind: SummaryProjectionKind.AI_DERIVED,
+        active: true,
+      },
+      data: { active: false },
+    });
+
+    await tx.summaryProjection.create({
+      data: {
+        publicId: `sum_${randomUUID()}`,
+        kind: SummaryProjectionKind.AI_DERIVED,
+        intakeSessionId,
+        encounterId,
+        sourceType: ContextSourceType.AI,
+        trustTier: TrustTier.UNTRUSTED,
+        reviewState: ReviewState.UNREVIEWED,
+        visibilityScope: VisibilityScope.CLINICAL,
+        content: this.toJsonValue({
+          briefing: summary.briefing,
+          recommendedCtasLevel: summary.recommendedCtasLevel,
+          caseSummary: summary.caseSummary,
+          questionAnswers: summary.questionAnswers,
+          progressionRisks: summary.progressionRisks,
+          redFlags: summary.redFlags,
+          recommendedAction: summary.recommendedAction,
+          summaryPreview: summary.summaryPreview,
+          urgency: summary.urgency,
+          generationMode: state.generationMode,
+          generatedAt,
+        }),
+      },
+    });
   }
 
   private isPhase(value: unknown): value is InterviewPhase {

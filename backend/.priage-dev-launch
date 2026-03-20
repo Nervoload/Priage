@@ -1,4 +1,0 @@
-#!/bin/zsh
-export HISTFILE='/Users/johnsurette/Documents/Codespace🪐/Priage/Priage/.priage-dev/backend.history'
-unsetopt SHARE_HISTORY INC_APPEND_HISTORY INC_APPEND_HISTORY_TIME
-exec '/Users/johnsurette/Documents/Codespace🪐/Priage/Priage/.priage-dev/backend.command'

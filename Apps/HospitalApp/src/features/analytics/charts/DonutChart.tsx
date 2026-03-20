@@ -70,7 +70,7 @@ export function DonutChart({
                             x={center} y={center - 6}
                             textAnchor="middle" dominantBaseline="central"
                             className="fill-gray-900 font-bold"
-                            style={{ fontSize: '1.5rem' }}
+                            style={{ fontSize: '1.8rem' }}
                         >
                             {centerValue}
                         </text>
@@ -79,7 +79,7 @@ export function DonutChart({
                                 x={center} y={center + 16}
                                 textAnchor="middle" dominantBaseline="central"
                                 className="fill-gray-400"
-                                style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}
+                                style={{ fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}
                             >
                                 {centerLabel}
                             </text>
@@ -91,7 +91,7 @@ export function DonutChart({
             {/* Legend */}
             <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5">
                 {data.map((d, i) => (
-                    <div key={i} className="flex items-center gap-1.5 text-xs text-gray-600">
+                    <div key={i} className="flex items-center gap-1.5 text-sm text-gray-600">
                         <span
                             className="w-2.5 h-2.5 rounded-full shrink-0"
                             style={{ backgroundColor: d.color }}

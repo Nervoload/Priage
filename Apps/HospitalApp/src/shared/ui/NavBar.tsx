@@ -74,26 +74,24 @@ const tabs: NavTab[] = [
 
 export function NavBar({ currentView, onNavigate, onLogout, user }: NavBarProps) {
   return (
-    <nav className="sticky top-0 z-50 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg">
-      <div className="flex items-center justify-between px-6 h-14">
-        {/* Left: Logo + Tabs */}
-        <div className="flex items-center gap-6">
-          {/* Logo */}
+    <nav className="sticky top-0 z-50 overflow-visible border-b border-white/10 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg">
+      <div className="relative h-16 px-6">
+        <div className="absolute left-6 top-1/2 z-30 flex min-w-[220px] -translate-y-1/2 items-center justify-start">
           <button
             onClick={() => onNavigate('waiting')}
-            className="flex items-center gap-2 text-white font-bold text-lg tracking-tight hover:opacity-80 transition-opacity"
+            className="flex items-center gap-2 text-white transition-opacity hover:opacity-80"
           >
-            <div className="w-8 h-8 rounded-lg bg-white/15 text-white flex items-center justify-center text-sm font-black ring-1 ring-white/20">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-sm font-black text-white ring-1 ring-white/20">
               P
             </div>
-            <span>Priage</span>
+            <span className="font-hospital-display text-xl font-semibold tracking-[-0.03em] text-white">
+              Priage
+            </span>
           </button>
+        </div>
 
-          {/* Divider */}
-          <div className="w-px h-6 bg-white/20" />
-
-          {/* Tab buttons */}
-          <div className="flex items-center gap-1">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex w-[min(780px,calc(100vw-30rem))] max-w-[calc(100vw-8rem)] min-w-[560px] -translate-x-1/2 -translate-y-1/2 items-center justify-center">
+          <div className="pointer-events-auto grid w-full grid-cols-5 items-end gap-3">
             {tabs.map((tab) => {
               const isActive = currentView === tab.key;
               return (
@@ -101,38 +99,40 @@ export function NavBar({ currentView, onNavigate, onLogout, user }: NavBarProps)
                   key={tab.key}
                   onClick={() => onNavigate(tab.key)}
                   className={`
-                    flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
-                    transition-all duration-150 cursor-pointer
-                    ${isActive
-                      ? 'bg-white/15 text-white shadow-sm ring-1 ring-white/25'
-                      : 'text-white/60 hover:text-white hover:bg-white/10'
-                    }
+                    group relative flex min-h-[46px] items-center justify-center gap-2 whitespace-nowrap px-3 pb-3 pt-2 text-center
+                    font-hospital-display text-base font-semibold tracking-[-0.02em] transition-all duration-150 cursor-pointer
+                    ${isActive ? 'text-white' : 'text-white/68 hover:text-white'}
                   `}
                 >
-                  {tab.icon}
-                  <span className="hidden lg:inline">{tab.label}</span>
+                  <span className="shrink-0">{tab.icon}</span>
+                  <span>{tab.label}</span>
+                  <span
+                    className={`
+                      pointer-events-none absolute bottom-0 left-1/2 z-20 h-0.5 w-12 -translate-x-1/2 rounded-full transition-all duration-150
+                      ${isActive ? 'bg-white' : 'bg-transparent group-hover:bg-white/45'}
+                    `}
+                  />
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* Right: User info + logout */}
-        <div className="flex items-center gap-3">
+        <div className="absolute right-6 top-1/2 z-30 flex min-w-[320px] -translate-y-1/2 items-center justify-end gap-4 whitespace-nowrap">
           {user && (
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-accent-600 text-white flex items-center justify-center text-xs font-bold">
+            <div className="flex shrink-0 items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-600 text-sm font-bold text-white">
                 {user.email[0].toUpperCase()}
               </div>
-              <div className="hidden md:flex flex-col">
-                <span className="text-xs font-medium text-white/90 leading-tight">{user.email}</span>
-                <span className="text-[10px] font-semibold text-priage-200 uppercase leading-tight">{user.role}</span>
+              <div className="flex min-w-0 shrink-0 flex-col items-end">
+                <span className="max-w-[220px] truncate text-[15px] font-medium leading-tight text-white/92">{user.email}</span>
+                <span className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-priage-200">{user.role}</span>
               </div>
             </div>
           )}
           <button
             onClick={onLogout}
-            className="text-xs text-white/50 hover:text-red-300 transition-colors px-2 py-1 rounded hover:bg-white/10 cursor-pointer"
+            className="shrink-0 rounded-md px-2.5 py-1.5 text-[15px] font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-red-300 cursor-pointer"
           >
             Logout
           </button>

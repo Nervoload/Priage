@@ -194,16 +194,16 @@ export function getQueuePositions(encounters: Encounter[]): Map<number, QueueEnt
 }
 
 /**
- * Format a wait status into a human-readable label with icon.
+ * Format a wait status into a human-readable label and accent color.
  */
-export function formatWaitStatus(status: WaitStatus): { icon: string; label: string; color: string } {
+export function formatWaitStatus(status: WaitStatus): { label: string; color: string } {
     switch (status) {
         case 'on-time':
-            return { icon: '✅', label: 'On Time', color: '#22c55e' };
+            return { label: 'On Time', color: '#22c55e' };
         case 'approaching':
-            return { icon: '⚠️', label: 'Approaching', color: '#f59e0b' };
+            return { label: 'Approaching', color: '#f59e0b' };
         case 'overdue':
-            return { icon: '🔴', label: 'Overdue', color: '#ef4444' };
+            return { label: 'Overdue', color: '#ef4444' };
     }
 }
 

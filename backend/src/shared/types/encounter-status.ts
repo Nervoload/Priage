@@ -37,7 +37,7 @@ export type EncounterStatusType = typeof EncounterStatusValues[keyof typeof Enco
 export const EncounterStatusLabels: Record<EncounterStatusType, string> = {
   EXPECTED: 'Expected',
   ADMITTED: 'Admitted',
-  TRIAGE: 'In Triage',
+  TRIAGE: 'Triage',
   WAITING: 'Waiting',
   COMPLETE: 'Complete',
   UNRESOLVED: 'Unresolved',

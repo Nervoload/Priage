@@ -398,7 +398,64 @@ export function Enroute() {
 
         <article style={styles.card}>
           <h2 style={styles.cardTitle}>Complaint summary</h2>
-          <p style={styles.bodyText}>{encounter.chiefComplaint ?? 'No complaint entered.'}</p>
+          {encounter.priageSummary ? (
+            <div style={styles.priageStack}>
+              <div style={styles.priageHero}>
+                <div style={styles.priageHeroHeader}>
+                  <span style={styles.priageBadge}>AI Briefing</span>
+                  {encounter.priageSummary.recommendedCtasLevel != null && (
+                    <span style={styles.priageCtasPill}>Provisional CTAS {encounter.priageSummary.recommendedCtasLevel}</span>
+                  )}
+                </div>
+                <p style={styles.priageHeroText}>{encounter.priageSummary.briefing}</p>
+              </div>
+
+              <div style={styles.priageBlock}>
+                <div style={styles.priageLabel}>Case summary</div>
+                <p style={styles.priageBody}>{encounter.priageSummary.caseSummary}</p>
+              </div>
+
+              {encounter.priageSummary.questionAnswers.length > 0 && (
+                <div style={styles.priageBlock}>
+                  <div style={styles.priageLabel}>Questions asked</div>
+                  <div style={styles.priageQuestionStack}>
+                    {encounter.priageSummary.questionAnswers.map((item, index) => (
+                      <div key={`${item.answeredAt}-${index}`} style={styles.priageQuestionCard}>
+                        <div style={styles.priageQuestionRow}>
+                          <div style={styles.priageQuestionHeading}>Question</div>
+                          <p style={styles.priageQuestionText}>{item.question}</p>
+                        </div>
+                        <div style={styles.priageQuestionRow}>
+                          <div style={styles.priageAnswerHeading}>Answer</div>
+                          <p style={styles.priageAnswerText}>{item.answer}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {encounter.priageSummary.progressionRisks.length > 0 && (
+                <div style={styles.priageBlock}>
+                  <div style={styles.priageLabel}>Watch for</div>
+                  <div style={styles.priageList}>
+                    {encounter.priageSummary.progressionRisks.map((risk) => (
+                      <div key={risk} style={styles.priageListItem}>{risk}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {encounter.priageSummary.recommendedAction && (
+                <div style={styles.priageBlock}>
+                  <div style={styles.priageLabel}>Recommended next step</div>
+                  <p style={styles.priageBody}>{encounter.priageSummary.recommendedAction}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p style={styles.bodyText}>{encounter.chiefComplaint ?? 'No complaint entered.'}</p>
+          )}
           <p style={styles.mutedText}>
             Expected arrival: {encounter.expectedAt ? new Date(encounter.expectedAt).toLocaleString() : 'Pending'}
           </p>
@@ -612,6 +669,132 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     lineHeight: 1.45,
     fontSize: '0.9rem',
+  },
+  priageStack: {
+    display: 'grid',
+    gap: '0.65rem',
+  },
+  priageHero: {
+    border: '1px solid #bfdbfe',
+    borderRadius: patientTheme.radius.sm,
+    background: '#eff6ff',
+    padding: '0.8rem 0.9rem',
+    display: 'grid',
+    gap: '0.4rem',
+  },
+  priageHeroHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+    flexWrap: 'wrap',
+  },
+  priageBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    background: '#dbeafe',
+    color: '#1d4ed8',
+    padding: '0.22rem 0.58rem',
+    fontSize: '0.7rem',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+  },
+  priageCtasPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    background: '#fff',
+    color: '#1d4ed8',
+    border: '1px solid #bfdbfe',
+    padding: '0.22rem 0.58rem',
+    fontSize: '0.72rem',
+    fontWeight: 700,
+  },
+  priageHeroText: {
+    margin: 0,
+    fontSize: '0.9rem',
+    lineHeight: 1.5,
+    color: '#0f172a',
+  },
+  priageBlock: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    padding: '0.72rem 0.8rem',
+    display: 'grid',
+    gap: '0.38rem',
+  },
+  priageLabel: {
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    color: patientTheme.colors.inkMuted,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  priageBody: {
+    margin: 0,
+    fontSize: '0.88rem',
+    lineHeight: 1.48,
+    color: patientTheme.colors.ink,
+    whiteSpace: 'pre-line',
+  },
+  priageQuestionStack: {
+    display: 'grid',
+    gap: '0.55rem',
+  },
+  priageQuestionCard: {
+    border: '1px solid #e5e7eb',
+    borderRadius: patientTheme.radius.sm,
+    background: '#f8fafc',
+    padding: '0.7rem',
+    display: 'grid',
+    gap: '0.55rem',
+  },
+  priageQuestionRow: {
+    display: 'grid',
+    gap: '0.24rem',
+  },
+  priageQuestionHeading: {
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  priageAnswerHeading: {
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    color: '#0f766e',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  priageQuestionText: {
+    margin: 0,
+    fontSize: '0.86rem',
+    lineHeight: 1.45,
+    color: '#0f172a',
+    whiteSpace: 'pre-line',
+  },
+  priageAnswerText: {
+    margin: 0,
+    fontSize: '0.86rem',
+    lineHeight: 1.45,
+    color: '#134e4a',
+    whiteSpace: 'pre-line',
+  },
+  priageList: {
+    display: 'grid',
+    gap: '0.42rem',
+  },
+  priageListItem: {
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff1f2',
+    color: '#9f1239',
+    padding: '0.52rem 0.6rem',
+    fontSize: '0.84rem',
+    lineHeight: 1.42,
   },
   mutedText: {
     margin: 0,

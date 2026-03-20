@@ -268,12 +268,30 @@ export class OpenAiCompatibleTriageInterviewProvider {
         redFlags,
         recommendedAction: typeof parsed.recommendedAction === 'string' ? parsed.recommendedAction.trim() : '',
         summaryPreview: typeof parsed.summaryPreview === 'string' ? parsed.summaryPreview.trim() : '',
+        recommendedCtasLevel: this.parseRecommendedCtasLevel(parsed.recommendedCtasLevel),
+        briefing: typeof parsed.briefing === 'string' ? parsed.briefing.trim() : '',
+        caseSummary: typeof parsed.caseSummary === 'string' ? parsed.caseSummary.trim() : '',
+        progressionRisks: Array.isArray(parsed.progressionRisks)
+          ? parsed.progressionRisks
+              .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+              .map((value) => value.trim())
+          : [],
         interrupt,
         questions,
       };
     } catch {
       return null;
     }
+  }
+
+  private parseRecommendedCtasLevel(value: unknown): number | null {
+    if (value === null) {
+      return null;
+    }
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 5) {
+      return null;
+    }
+    return value;
   }
 
   private parseInterrupt(value: unknown): InterviewInterrupt | null {

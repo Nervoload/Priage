@@ -64,6 +64,15 @@ body {
   margin: 0;
 }
 
+.font-hospital-display {
+  font-family: "Avenir Next", "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+.font-hospital-body {
+  font-family: "Avenir Next", "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
 /* ─── Animations ──────────────────────────────────────────────────────────── */
 
 @keyframes fadeInUp {

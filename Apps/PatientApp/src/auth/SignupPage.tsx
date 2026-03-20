@@ -1,6 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
+import { getMe } from '../shared/api/auth';
 import { useAuth } from '../shared/hooks/useAuth';
+import { useGuestSession } from '../shared/hooks/useGuestSession';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
@@ -10,8 +13,11 @@ interface SignupPageProps {
 }
 
 export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
-  const { register } = useAuth();
+  const { register, upgradeFromGuest } = useAuth();
+  const { session: guestSession, clearSession: clearGuestSession } = useGuestSession();
   const { showToast } = useToast();
+  const [searchParams] = useSearchParams();
+  const isGuestUpgrade = searchParams.get('mode') === 'guest-upgrade' && !!guestSession;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,7 +25,50 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState('');
+  const [allergies, setAllergies] = useState('');
+  const [conditions, setConditions] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [prefilling, setPrefilling] = useState(isGuestUpgrade);
+
+  useEffect(() => {
+    if (!isGuestUpgrade) {
+      setPrefilling(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadPrefill() {
+      try {
+        const profile = await getMe();
+        if (cancelled) return;
+        setFirstName(profile.firstName ?? guestSession?.firstName ?? '');
+        setLastName(profile.lastName ?? guestSession?.lastName ?? '');
+        setPhone(profile.phone ?? '');
+        setAge(profile.age != null ? String(profile.age) : guestSession?.age != null ? String(guestSession.age) : '');
+        setGender(profile.gender ?? guestSession?.gender ?? '');
+        setAllergies(profile.allergies ?? '');
+        setConditions(profile.conditions ?? '');
+      } catch {
+        if (cancelled) return;
+        setFirstName(guestSession?.firstName ?? '');
+        setLastName(guestSession?.lastName ?? '');
+        setAge(guestSession?.age != null ? String(guestSession.age) : '');
+        setGender(guestSession?.gender ?? '');
+      } finally {
+        if (!cancelled) {
+          setPrefilling(false);
+        }
+      }
+    }
+
+    void loadPrefill();
+    return () => {
+      cancelled = true;
+    };
+  }, [guestSession, isGuestUpgrade]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -39,13 +88,33 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
 
     setSubmitting(true);
     try {
-      await register({
-        email: email.trim().toLowerCase(),
-        password,
-        firstName: firstName.trim() || undefined,
-        lastName: lastName.trim() || undefined,
-        phone: phone.trim() || undefined,
-      });
+      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedFirstName = firstName.trim() || undefined;
+      const normalizedLastName = lastName.trim() || undefined;
+      const normalizedPhone = phone.trim() || undefined;
+
+      if (isGuestUpgrade) {
+        await upgradeFromGuest({
+          email: normalizedEmail,
+          password,
+          firstName: normalizedFirstName,
+          lastName: normalizedLastName,
+          phone: normalizedPhone,
+          age: age ? parseInt(age, 10) : undefined,
+          gender: gender.trim() || undefined,
+          allergies: allergies.trim() || undefined,
+          conditions: conditions.trim() || undefined,
+        });
+        clearGuestSession();
+      } else {
+        await register({
+          email: normalizedEmail,
+          password,
+          firstName: normalizedFirstName,
+          lastName: normalizedLastName,
+          phone: normalizedPhone,
+        });
+      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Registration failed');
     } finally {
@@ -62,8 +131,13 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
           </button>
         )}
         <header style={styles.header}>
-          <span style={styles.badge}>Create Account</span>
-          <h1 style={styles.title}>Set up your patient profile</h1>
+          <span style={styles.badge}>{isGuestUpgrade ? 'Secure Your Visit' : 'Create Account'}</span>
+          <h1 style={styles.title}>{isGuestUpgrade ? 'Create your password to save this visit' : 'Set up your patient profile'}</h1>
+          {isGuestUpgrade && (
+            <p style={styles.subtitle}>
+              We&apos;ll keep this encounter attached to your current patient record and prefill the details we already have.
+            </p>
+          )}
         </header>
 
         <form onSubmit={handleSubmit} style={styles.form}>
@@ -75,6 +149,7 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
                 onChange={(event) => setFirstName(event.target.value)}
                 style={styles.input}
                 autoComplete="given-name"
+                disabled={submitting || prefilling}
               />
             </label>
             <label style={styles.fieldLabel}>
@@ -84,6 +159,7 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
                 onChange={(event) => setLastName(event.target.value)}
                 style={styles.input}
                 autoComplete="family-name"
+                disabled={submitting || prefilling}
               />
             </label>
           </div>
@@ -96,6 +172,7 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
               onChange={(event) => setEmail(event.target.value)}
               style={styles.input}
               autoComplete="email"
+              disabled={submitting}
               required
             />
           </label>
@@ -108,8 +185,56 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
               onChange={(event) => setPhone(event.target.value)}
               style={styles.input}
               autoComplete="tel"
+              disabled={submitting || prefilling}
             />
           </label>
+
+          {isGuestUpgrade && (
+            <>
+              <div style={styles.twoCol}>
+                <label style={styles.fieldLabel}>
+                  Age
+                  <input
+                    type="number"
+                    value={age}
+                    onChange={(event) => setAge(event.target.value)}
+                    style={styles.input}
+                    min={0}
+                    disabled={submitting || prefilling}
+                  />
+                </label>
+                <label style={styles.fieldLabel}>
+                  Gender
+                  <input
+                    value={gender}
+                    onChange={(event) => setGender(event.target.value)}
+                    style={styles.input}
+                    disabled={submitting || prefilling}
+                  />
+                </label>
+              </div>
+
+              <label style={styles.fieldLabel}>
+                Allergies
+                <input
+                  value={allergies}
+                  onChange={(event) => setAllergies(event.target.value)}
+                  style={styles.input}
+                  disabled={submitting || prefilling}
+                />
+              </label>
+
+              <label style={styles.fieldLabel}>
+                Conditions
+                <input
+                  value={conditions}
+                  onChange={(event) => setConditions(event.target.value)}
+                  style={styles.input}
+                  disabled={submitting || prefilling}
+                />
+              </label>
+            </>
+          )}
 
           <label style={styles.fieldLabel}>
             Password *
@@ -119,6 +244,7 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
               onChange={(event) => setPassword(event.target.value)}
               style={styles.input}
               autoComplete="new-password"
+              disabled={submitting}
               required
             />
           </label>
@@ -131,12 +257,13 @@ export function SignupPage({ onSwitchToLogin, onBack }: SignupPageProps) {
               onChange={(event) => setConfirmPassword(event.target.value)}
               style={styles.input}
               autoComplete="new-password"
+              disabled={submitting}
               required
             />
           </label>
 
           <button style={styles.primaryButton} type="submit" disabled={submitting}>
-            {submitting ? 'Creating account…' : 'Create account'}
+            {submitting ? (isGuestUpgrade ? 'Securing account…' : 'Creating account…') : (isGuestUpgrade ? 'Save this visit to my account' : 'Create account')}
           </button>
         </form>
 

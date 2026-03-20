@@ -239,7 +239,7 @@ Log in with the private admin or extra hospital user recorded in `.priage-dev/ac
 | 10 | **Waiting Room** | Click "Waiting Room" in nav | See patients in TRIAGE/WAITING/COMPLETE |
 | 11 | **Alerts** | Check top-right alert badge | Badge shows count of active alerts |
 | 12 | **Refresh** | Click ↻ button on any list | Data refreshes from backend |
-| 13 | **Role test** | Re-run `./priage-dev`, choose to create another hospital user, then log in as that user | Dashboard loads and the selected role shows in the user pill |
+| 13 | **Role test** | Run `./priage-dev newuser`, create another hospital user, then log in as that user | Dashboard loads and the selected role shows in the user pill |
 | 14 | **Bad credentials** | Log out → enter wrong password | "Invalid email or password" error |
 | 15 | **Network tab** | Open DevTools → Network | All calls go to `localhost:3000`, no 404s/500s |
 
@@ -281,6 +281,7 @@ From the repo root:
 Variants:
 
 ```bash
+./priage-dev newuser
 ./priage-dev reseed
 ./priage-dev fullseed
 ./priage-dev test
@@ -290,7 +291,7 @@ Variants:
 ./priage-dev fullseed test
 ```
 
-The launcher verifies Docker + local tooling, installs dependencies in all three apps, runs `npx prisma generate` plus `npx prisma migrate deploy`, creates or reuses a private local admin, optionally clears patient-facing dev data before reseeding, opens the backend and both Vite apps in separate macOS Terminal tabs, and can finish by running the logging test suite (`logs` / `-l`) or the full backend confidence pipeline (`smoke`, `logging`, `realtime`, and frontend-aligned flow checks). Use `reseed` for the lightweight seed and `fullseed` for a denser, more realistic hospital load.
+The launcher verifies Docker + local tooling, creates missing `.env` files from each checked-in `.env.example`, installs dependencies in all three apps, runs `npx prisma generate` plus `npx prisma migrate deploy`, creates or reuses a private local admin, optionally creates an extra hospital user when `newuser` / `-u` is passed, optionally clears patient-facing dev data before reseeding, opens the backend and both Vite apps in separate macOS Terminal tabs, and can finish by running the logging test suite (`logs` / `-l`) or the full backend confidence pipeline (`smoke`, `logging`, `realtime`, and frontend-aligned flow checks). Use `reseed` for the lightweight seed and `fullseed` for a denser, more realistic hospital load.
 
 ---
 

@@ -91,7 +91,8 @@ export function generatePatientPdf(encounter: Encounter): void {
     }
 
     const name = patientName(encounter.patient);
-    const latestTriage = encounter.triageAssessments?.[encounter.triageAssessments.length - 1];
+    const triageAssessments = 'triageAssessments' in encounter ? encounter.triageAssessments : undefined;
+    const latestTriage = triageAssessments?.[triageAssessments.length - 1];
     const warnings = getWarnings(encounter);
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -144,7 +145,7 @@ export function generatePatientPdf(encounter: Encounter): void {
         doc.setFontSize(8);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(...COLORS.danger);
-        doc.text('⚠ MEDICAL ALERTS', margin + 4, y);
+        doc.text('MEDICAL ALERTS', margin + 4, y);
         y += 4;
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(9);

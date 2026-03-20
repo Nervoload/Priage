@@ -17,6 +17,31 @@ export interface EncounterPatientSummary {
   preferredLanguage: string;
 }
 
+export interface PriagePreviewDto {
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  progressionRiskCount: number;
+}
+
+export interface PriageSummaryQuestionAnswerDto {
+  question: string;
+  answer: string;
+  phase: string;
+  answeredAt: string;
+}
+
+export interface PriageSummaryDto {
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  caseSummary: string;
+  questionAnswers: PriageSummaryQuestionAnswerDto[];
+  progressionRisks: string[];
+  redFlags: string[];
+  recommendedAction: string;
+  generatedAt: string;
+  generationMode: 'ai' | 'fallback';
+}
+
 // ─── Staff-facing encounter list item ────────────────────────────────────────
 
 export interface EncounterSummaryDto {
@@ -43,6 +68,8 @@ export interface EncounterSummaryDto {
     phone: string | null;
     age: number | null;
   };
+
+  priagePreview?: PriagePreviewDto | null;
 }
 
 // ─── Staff-facing encounter detail ───────────────────────────────────────────
@@ -83,6 +110,7 @@ export interface EncounterDetailDto extends EncounterSummaryDto {
   }>;
 
   intakeImages: AssetSummaryDto[];
+  priageSummary?: PriageSummaryDto | null;
 
   alerts: Array<{
     id: number;
@@ -127,4 +155,5 @@ export interface PatientEncounterDto {
   }>;
 
   intakeImages: AssetSummaryDto[];
+  priageSummary?: PriageSummaryDto | null;
 }

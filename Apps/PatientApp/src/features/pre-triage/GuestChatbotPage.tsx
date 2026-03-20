@@ -10,9 +10,10 @@ import { QuestionPage } from './QuestionPage';
 interface GuestChatbotPageProps {
   onChooseHospital: () => void;
   onBack?: () => void;
+  mode?: 'guest' | 'authenticated';
 }
 
-export function GuestChatbotPage({ onChooseHospital, onBack }: GuestChatbotPageProps) {
+export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: GuestChatbotPageProps) {
   const { session } = useGuestSession();
   const { showToast } = useToast();
 
@@ -230,7 +231,11 @@ export function GuestChatbotPage({ onChooseHospital, onBack }: GuestChatbotPageP
             </button>
           )}
           <h1 style={styles.title}>We could not load the interview</h1>
-          <p style={styles.subtitle}>Please go back and try starting guest check-in again.</p>
+          <p style={styles.subtitle}>
+            {mode === 'authenticated'
+              ? 'Please go back and restart this visit from your account.'
+              : 'Please go back and try starting guest check-in again.'}
+          </p>
         </section>
       </main>
     );
