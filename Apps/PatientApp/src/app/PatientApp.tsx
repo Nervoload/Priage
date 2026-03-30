@@ -328,7 +328,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     gap: '1rem',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    background: '#f8fafc',
+    background: 'radial-gradient(circle at top, rgba(25,73,184,0.12) 0%, rgba(248,250,252,1) 44%, rgba(241,245,249,1) 100%)',
   },
   spinner: {
     width: '40px',
@@ -340,7 +340,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   loadingText: {
     color: '#64748b',
-    fontSize: '0.95rem',
+    fontSize: '0.92rem',
+    fontWeight: 600,
   },
   appContainer: {
     display: 'flex',
@@ -350,15 +351,17 @@ const styles: Record<string, React.CSSProperties> = {
   },
   routeArea: {
     flex: 1,
-    paddingBottom: '64px', // space for BottomNav
+    paddingBottom: '78px', // space for BottomNav
   },
   topBar: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '0.5rem 1rem',
-    background: '#ffffff',
+    padding: '0.7rem 1rem',
+    background: 'rgba(255,255,255,0.93)',
     borderBottom: '1px solid #e2e8f0',
+    boxShadow: '0 18px 40px -34px rgba(15,23,42,0.55)',
+    backdropFilter: 'blur(10px)',
     position: 'sticky',
     top: 0,
     zIndex: 90,
@@ -366,11 +369,11 @@ const styles: Record<string, React.CSSProperties> = {
   topBarLeft: {
     display: 'flex',
     alignItems: 'center',
-    gap: '0.5rem',
+    gap: '0.62rem',
   },
   topBarAvatar: {
-    width: '30px',
-    height: '30px',
+    width: '34px',
+    height: '34px',
     borderRadius: '50%',
     background: 'linear-gradient(135deg, #1949b8 0%, #3b82f6 100%)',
     color: '#fff',
@@ -378,22 +381,24 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     fontWeight: 800,
-    fontSize: '0.75rem',
+    fontSize: '0.78rem',
+    boxShadow: '0 14px 28px -18px rgba(25,73,184,0.85)',
   },
   topBarName: {
     fontWeight: 600,
-    fontSize: '0.85rem',
+    fontSize: '0.88rem',
     color: '#14213d',
+    letterSpacing: '-0.01em',
   },
   topBarLogout: {
-    border: 'none',
-    background: 'none',
+    border: '1px solid #fee2e2',
+    background: '#fff1f2',
     color: '#9f1239',
     fontWeight: 600,
-    fontSize: '0.78rem',
+    fontSize: '0.76rem',
     cursor: 'pointer',
-    padding: '0.35rem 0.6rem',
-    borderRadius: '8px',
-    transition: 'background 0.15s',
+    padding: '0.38rem 0.66rem',
+    borderRadius: '10px',
+    transition: 'all 0.15s ease',
   },
 };

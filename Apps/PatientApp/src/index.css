@@ -6,6 +6,14 @@ body,
 
 body {
   margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.45;
+}
+
+::selection {
+  background: rgba(25, 73, 184, 0.2);
+  color: #14213d;
 }
 
 @keyframes spin {
