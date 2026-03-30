@@ -62,6 +62,16 @@ body {
   background-color: #f8fafc;
   color: #1f2937;
   margin: 0;
+  line-height: 1.45;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(30, 58, 95, 0.2);
+  color: #0f172a;
 }
 
 .font-hospital-display {

@@ -34,18 +34,18 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex flex-col items-center justify-center p-8">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(255,247,237,0.95)_0%,_rgba(248,250,252,1)_34%,_rgba(241,245,249,1)_100%)] p-8 font-hospital-body">
       {/* Branding */}
-      <div className="text-center mb-10 animate-fade-in-up">
-        <h1 className="text-5xl font-bold text-priage-600 mb-1">Priage</h1>
-        <p className="text-gray-500 text-sm">Emergency Room Information &amp; Monitoring Pipeline</p>
+      <div className="mb-10 text-center animate-fade-in-up">
+        <h1 className="font-hospital-display text-5xl font-semibold tracking-[-0.04em] text-priage-600">Priage</h1>
+        <p className="mt-1 text-sm text-slate-500">Emergency Room Information &amp; Monitoring Pipeline</p>
       </div>
 
       {/* Card */}
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-[400px] animate-fade-in-up">
+      <div className="animate-fade-in-up w-full max-w-[420px] rounded-[28px] border border-white/80 bg-white/90 p-8 shadow-[0_32px_90px_-56px_rgba(15,23,42,0.5)] backdrop-blur-sm">
         {/* Avatar */}
-        <div className="flex justify-center mb-5">
-          <div className="w-16 h-16 rounded-full bg-priage-600 flex items-center justify-center">
+        <div className="mb-5 flex justify-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-[20px] bg-priage-600 shadow-[0_18px_38px_-24px_rgba(30,58,95,0.82)]">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="7" r="4"/>
               <path d="M5 21c0-3.5 3-5 7-5s7 1.5 7 5"/>
@@ -53,44 +53,44 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           </div>
         </div>
 
-        <h2 className="text-xl font-bold text-gray-900 text-center mb-0.5">Hospital App</h2>
-        <p className="text-xs text-gray-400 text-center mb-6">Manage patients, triage, and monitor the ER pipeline</p>
+        <h2 className="text-center font-hospital-display text-xl font-semibold tracking-[-0.02em] text-slate-900">Hospital App</h2>
+        <p className="mb-6 mt-1 text-center text-xs font-medium text-slate-500">Manage patients, triage, and monitor the ER pipeline</p>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
               {error}
             </div>
           )}
 
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label htmlFor="email" className="mb-1 block text-sm font-medium text-slate-700">Email</label>
             <input
               id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-[0_10px_24px_-24px_rgba(15,23,42,0.55)] transition-all placeholder:text-slate-400 focus:border-priage-300 focus:outline-none focus:ring-2 focus:ring-priage-200"
             />
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <label htmlFor="password" className="mb-1 block text-sm font-medium text-slate-700">Password</label>
             <input
               id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-[0_10px_24px_-24px_rgba(15,23,42,0.55)] transition-all placeholder:text-slate-400 focus:border-priage-300 focus:outline-none focus:ring-2 focus:ring-priage-200"
             />
           </div>
 
           <button
             type="submit"
             disabled={loggingIn}
-            className="w-full py-2.5 bg-accent-600 text-white rounded-lg font-semibold text-sm hover:bg-accent-700 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full rounded-xl bg-accent-600 py-2.5 text-sm font-semibold text-white shadow-[0_18px_40px_-26px_rgba(220,38,38,0.72)] transition-all duration-200 hover:bg-accent-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loggingIn ? 'Signing In…' : 'Sign In'}
           </button>

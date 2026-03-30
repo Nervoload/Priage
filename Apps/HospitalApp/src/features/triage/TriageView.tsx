@@ -78,12 +78,12 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
         user={user ?? null}
       />
 
-      <div className="p-6 max-w-[1200px] mx-auto">
+      <div className="mx-auto max-w-[1320px] px-4 py-5 sm:px-5 lg:px-6">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="mb-6 flex items-center justify-between rounded-[28px] border border-white/80 bg-white/78 px-5 py-5 shadow-[0_24px_70px_-48px_rgba(15,23,42,0.5)] backdrop-blur-sm">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Triage</h1>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <h1 className="font-hospital-display text-[1.9rem] font-semibold tracking-[-0.03em] text-slate-950">Triage</h1>
+            <p className="mt-1 text-sm font-medium text-slate-500">
               {queue.length} patient{queue.length === 1 ? '' : 's'} waiting for triage
             </p>
           </div>
@@ -91,7 +91,7 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
             <button
               onClick={onRefresh}
               disabled={loading}
-              className="px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm cursor-pointer"
+              className="rounded-[14px] border border-priage-200 bg-priage-50/80 px-4 py-2.5 text-sm font-semibold text-priage-700 shadow-[0_14px_30px_-26px_rgba(30,58,95,0.45)] transition-all hover:border-priage-300 hover:bg-priage-100 hover:text-priage-800 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
             >
               ↻ Refresh
             </button>
@@ -99,22 +99,22 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
         </div>
 
         {loading ? (
-          <div className="text-center py-12 bg-white rounded-xl border border-gray-200 text-gray-500 text-sm">
+          <div className="rounded-[24px] border border-slate-200/80 bg-white/90 py-14 text-center text-sm font-medium text-slate-500 shadow-[0_20px_50px_-38px_rgba(15,23,42,0.35)]">
             Loading triage patients…
           </div>
         ) : encounters.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
-            <div className="text-gray-400 text-4xl mb-2">📋</div>
-            <div className="text-gray-500 text-sm">No patients waiting for triage</div>
+          <div className="rounded-[24px] border border-slate-200/80 bg-white/92 py-14 text-center shadow-[0_20px_50px_-38px_rgba(15,23,42,0.35)]">
+            <div className="mb-2 text-4xl text-slate-400">📋</div>
+            <div className="text-sm font-medium text-slate-500">No patients waiting for triage</div>
           </div>
         ) : (
           <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+            <h2 className="mb-3 flex items-center gap-2 font-hospital-display text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
               <span className="w-2 h-2 rounded-full bg-amber-400" />
               Triage Queue ({queue.length})
             </h2>
 
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               {queue.map(encounter => {
                 const initials = getInitials(patientName(encounter.patient));
                 const latestCtas = encounter.currentCtasLevel;
@@ -122,32 +122,32 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
                   <div
                     key={encounter.id}
                     onClick={() => void openEncounter(encounter.id)}
-                    className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4 flex items-center gap-4 hover:shadow-md hover:border-priage-300 transition-all cursor-pointer"
+                    className="group flex cursor-pointer items-center gap-4 rounded-[22px] border border-slate-200/80 bg-white/92 px-5 py-4 shadow-[0_20px_45px_-36px_rgba(15,23,42,0.38)] transition-all duration-200 hover:-translate-y-0.5 hover:border-priage-300 hover:shadow-[0_24px_52px_-34px_rgba(15,23,42,0.42)]"
                   >
-                    <div className="w-10 h-10 rounded-full bg-priage-600 text-white flex items-center justify-center text-sm font-bold shrink-0">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-priage-600 text-sm font-bold text-white shadow-[0_14px_30px_-20px_rgba(30,58,95,0.75)]">
                       {initials}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                        <span className="font-semibold text-gray-900">{patientName(encounter.patient)}</span>
-                        <span className="text-xs text-gray-400">#{encounter.id}</span>
+                      <div className="mb-0.5 flex flex-wrap items-center gap-2">
+                        <span className="font-hospital-display text-[1.03rem] font-semibold tracking-[-0.02em] text-slate-900">{patientName(encounter.patient)}</span>
+                        <span className="text-xs font-medium text-slate-400">#{encounter.id}</span>
                         {latestCtas && <CTASBadge level={latestCtas as 1|2|3|4|5} />}
                         {encounter.priagePreview?.recommendedCtasLevel != null && (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-100 text-sky-700">
+                          <span className="rounded-md bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
                             AI CTAS {encounter.priagePreview.recommendedCtasLevel}
                           </span>
                         )}
                       </div>
-                      <div className="text-sm text-gray-500 truncate">
+                      <div className="truncate text-sm text-slate-500">
                         {encounter.chiefComplaint ?? 'No complaint recorded'}
                       </div>
                       {encounter.priagePreview?.briefing && (
-                        <div className="mt-1 text-xs text-sky-700 truncate">
+                        <div className="mt-1 truncate text-xs font-medium text-sky-700">
                           {encounter.priagePreview.briefing}
                         </div>
                       )}
                     </div>
-                    <div className="text-sm text-priage-600 font-semibold shrink-0 flex items-center gap-1">
+                    <div className="flex shrink-0 items-center gap-1 text-sm font-semibold text-priage-600 transition-colors group-hover:text-priage-700">
                       {openingEncounterId === encounter.id
                         ? 'Opening…'
                         : latestCtas != null
