@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 import { GuestChatbotPage } from '../features/pre-triage/GuestChatbotPage';
 import { Routing } from '../features/pre-triage/Routing';
@@ -12,12 +12,17 @@ type IntakeStep = 'capture' | 'interview' | 'routing';
 
 export function PriagePage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { patient } = useAuth();
   const { showToast } = useToast();
 
-  const [step, setStep] = useState<IntakeStep>('capture');
-  const [chiefComplaint, setChiefComplaint] = useState('');
-  const [details, setDetails] = useState('');
+  // If navigated from Dashboard with skipCapture, jump straight to interview
+  const navState = location.state as { skipCapture?: boolean; prefillComplaint?: string; prefillDetails?: string } | null;
+  const initialStep: IntakeStep = navState?.skipCapture ? 'interview' : 'capture';
+
+  const [step, setStep] = useState<IntakeStep>(initialStep);
+  const [chiefComplaint, setChiefComplaint] = useState(navState?.prefillComplaint ?? '');
+  const [details, setDetails] = useState(navState?.prefillDetails ?? '');
   const [submitting, setSubmitting] = useState(false);
 
   async function handleStartInterview(event: React.FormEvent) {

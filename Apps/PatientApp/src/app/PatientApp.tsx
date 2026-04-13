@@ -4,14 +4,12 @@ import { useAuth } from '../shared/hooks/useAuth';
 import { startInterview } from '../shared/api/intake';
 import { useGuestSession } from '../shared/hooks/useGuestSession';
 import { resolveGuestPath } from '../shared/guestFlow';
-import { BottomNav } from '../shared/ui/BottomNav';
 import { isActiveEncounter } from '../shared/encounters';
 import { listMyEncounters } from '../shared/api/encounters';
 import { LoginPage } from '../auth/LoginPage';
 import { SignupPage } from '../auth/SignupPage';
 import { DashboardPage } from '../pages/DashboardPage';
 import { PriagePage } from '../pages/PriagePage';
-import { MessagesPage } from '../pages/MessagesPage';
 import { ChatPage } from '../pages/ChatPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { WelcomePage } from './WelcomePage';
@@ -92,30 +90,9 @@ export function PatientApp() {
         }
       />
       <Route
-        path="/encounters/:id/*"
-        element={session || guestSession?.encounterId ? <EncounterWorkspace /> : <Navigate to={guestPath} replace />}
-      />
-      <Route
-        path="/"
+        path="/*"
         element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
       />
-      <Route
-        path="/priage"
-        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
-      />
-      <Route
-        path="/messages"
-        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
-      />
-      <Route
-        path="/messages/:id"
-        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
-      />
-      <Route
-        path="/settings"
-        element={session ? <AuthenticatedShell /> : <Navigate to="/welcome" replace />}
-      />
-      <Route path="*" element={<Navigate to={session ? '/' : '/welcome'} replace />} />
     </Routes>
   );
 }
@@ -127,6 +104,7 @@ function resolveSafeReturnTo(raw: string | null): string {
 }
 
 function AuthenticatedShell() {
+  const navigate = useNavigate();
   const { patient, logout: doLogout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -147,29 +125,33 @@ function AuthenticatedShell() {
     <div style={styles.appContainer}>
       {/* Top bar */}
       <header style={styles.topBar}>
-        <div style={styles.topBarLeft}>
+        <button style={styles.topBarLeft} onClick={() => navigate('/')}>
           <div style={styles.topBarAvatar}>{initial}</div>
           <span style={styles.topBarName}>{displayName}</span>
-        </div>
-        <button
-          style={styles.topBarLogout}
-          onClick={handleLogout}
-          disabled={loggingOut}
-        >
-          {loggingOut ? 'Logging out…' : 'Log out'}
         </button>
+        <div style={styles.topBarRight}>
+          <button style={styles.topBarIcon} onClick={() => navigate('/settings')} title="Settings">
+            ⚙️
+          </button>
+          <button
+            style={styles.topBarLogout}
+            onClick={handleLogout}
+            disabled={loggingOut}
+          >
+            {loggingOut ? '…' : 'Log out'}
+          </button>
+        </div>
       </header>
       <div style={styles.routeArea}>
         <Routes>
           <Route path="/" element={<HomeRoute />} />
           <Route path="/priage" element={<PriagePage />} />
-          <Route path="/messages" element={<MessagesPage />} />
-          <Route path="/messages/:id" element={<ChatPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/encounters/:id/chat" element={<ChatPage />} />
+          <Route path="/encounters/:id/*" element={<EncounterWorkspace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
-      <BottomNav />
     </div>
   );
 }
@@ -351,7 +333,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   routeArea: {
     flex: 1,
-    paddingBottom: '78px', // space for BottomNav
   },
   topBar: {
     display: 'flex',
@@ -370,6 +351,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '0.62rem',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: 0,
   },
   topBarAvatar: {
     width: '34px',
@@ -389,6 +374,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.88rem',
     color: '#14213d',
     letterSpacing: '-0.01em',
+  },
+  topBarRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  topBarIcon: {
+    border: 'none',
+    background: 'none',
+    fontSize: '1.2rem',
+    cursor: 'pointer',
+    padding: '0.25rem',
+    lineHeight: 1,
   },
   topBarLogout: {
     border: '1px solid #fee2e2',

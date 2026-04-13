@@ -39,16 +39,10 @@ async function bootstrap(): Promise<void> {
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.set('trust proxy', 1);
 
-  // Security headers — helmet sets sensible defaults (X-Content-Type-Options,
-  // Strict-Transport-Security, X-Frame-Options, etc.)
-  app.use(helmet());
-
   const allowedOrigins = getAllowedCorsOrigins();
 
-  // Apply correlation middleware for request tracing
-  app.use(new CorrelationMiddleware().use.bind(new CorrelationMiddleware()));
-
   // CORS configuration - allow frontend origins
+  // Must be registered BEFORE helmet so preflight responses aren't blocked.
   // In production, CORS_ORIGINS must be explicitly configured.
   app.enableCors({
     origin: allowedOrigins,
@@ -56,6 +50,16 @@ async function bootstrap(): Promise<void> {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-patient-token', 'x-correlation-id', 'x-request-id'],
   });
+
+  // Security headers — helmet sets sensible defaults (X-Content-Type-Options,
+  // Strict-Transport-Security, X-Frame-Options, etc.)
+  // crossOriginResourcePolicy + crossOriginOpenerPolicy are relaxed to
+  // "cross-origin" so they don't strip the Access-Control-Allow-Origin header
+  // that the CORS middleware sets above.
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: { policy: 'unsafe-none' },
+  }));
 
   // Global DTO validation:
   // - whitelist: strips unknown properties

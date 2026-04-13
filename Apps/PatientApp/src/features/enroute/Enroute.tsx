@@ -5,7 +5,9 @@ import { cancelMyEncounter, getMyEncounter, listMyMessages, sendPatientMessage }
 import { getMe, updateProfile } from '../../shared/api/auth';
 import { sendLocationPing, updateIntakeDetails } from '../../shared/api/intake';
 import { ENCOUNTER_STATUS_META } from '../../shared/encounters';
+import { useAuth } from '../../shared/hooks/useAuth';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
+import { UpgradeAccountCard } from '../encounter-workspace/UpgradeAccountCard';
 import type { Encounter, Message, PatientProfile } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
@@ -36,8 +38,10 @@ function toGuestProfileState(profile: PatientProfile) {
 export function Enroute() {
   const { encounterId: encounterIdParam } = useParams<{ encounterId: string }>();
   const navigate = useNavigate();
+  const { session: authSession } = useAuth();
   const { session, clearSession } = useGuestSession();
   const { showToast } = useToast();
+  const isGuest = !authSession;
 
   const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -527,6 +531,13 @@ export function Enroute() {
           <li>Queue placement and ongoing updates in your workspace</li>
         </ol>
       </section>
+
+      {/* Guest → Account upgrade prompt */}
+      {isGuest && (
+        <section style={{ maxWidth: '960px', margin: '0 auto 0.8rem' }}>
+          <UpgradeAccountCard returnTo={`/guest/enroute/${encounterId}`} />
+        </section>
+      )}
     </main>
   );
 }
