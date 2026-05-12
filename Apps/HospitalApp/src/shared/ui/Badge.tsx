@@ -17,7 +17,7 @@ const CTAS_COLORS: Record<number, string> = {
 export function CTASBadge({ level, size = 'sm' }: CTASBadgeProps) {
   const sizeClass = size === 'md' ? 'px-3 py-1 text-xs' : 'px-2 py-0.5 text-[10px]';
   return (
-    <span className={`inline-flex items-center rounded font-bold ${sizeClass} ${CTAS_COLORS[level] ?? 'bg-gray-300 text-gray-700'}`}>
+    <span className={`inline-flex items-center rounded-[4px] border border-transparent font-mono font-semibold ${sizeClass} ${CTAS_COLORS[level] ?? 'bg-gray-300 text-gray-700'}`}>
       CTAS {level}
     </span>
   );

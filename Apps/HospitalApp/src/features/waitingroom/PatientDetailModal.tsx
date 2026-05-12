@@ -174,13 +174,12 @@ export function PatientDetailModal({
         if (event.target === backdropRef.current) onClose();
       }}
     >
-      <div className="absolute inset-0 bg-slate-950/35 backdrop-blur-[3px]" />
+      <div className="absolute inset-0 bg-slate-950/35" />
 
       <div
         className="
-          relative flex w-full flex-col overflow-hidden rounded-[34px] border border-white/80
-          bg-[radial-gradient(circle_at_top,_rgba(254,242,242,0.42)_0%,_rgba(255,255,255,0.92)_34%,_rgba(248,250,252,1)_100%)]
-          shadow-[0_32px_90px_-48px_rgba(15,23,42,0.55)] animate-slide-up
+          relative flex w-full flex-col overflow-hidden rounded-[10px] border border-[#e2e8f0]
+          bg-white animate-slide-up
         "
         style={{
           width: expanded ? 'calc(100vw - 24px)' : `min(calc(100vw - 24px), ${panelSize.width}px)`,
@@ -201,14 +200,14 @@ export function PatientDetailModal({
           </button>
         )}
 
-        <div className="relative overflow-hidden border-b border-slate-200/80 bg-white/78">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,_rgba(219,234,254,0.8)_0%,_transparent_62%)]" />
+        <div className="relative overflow-hidden border-b border-[#e2e8f0] bg-white">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[#f1f5f9]" />
 
           <div className="relative px-6 pb-4 pt-5">
             <div className="flex items-start justify-between gap-4">
               <div className="flex min-w-0 items-start gap-4">
                 <div
-                  className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] text-lg font-bold text-white shadow-[0_22px_48px_-24px_rgba(15,23,42,0.55)]"
+                  className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[8px] text-lg font-bold text-white"
                   style={{ backgroundImage: avatarTheme.gradient }}
                 >
                   {initials}
@@ -216,7 +215,7 @@ export function PatientDetailModal({
 
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="font-hospital-display text-[1.75rem] font-semibold tracking-[-0.04em] text-slate-950">
+                    <h2 className="text-[1.75rem] font-semibold tracking-[-0.04em] text-slate-950">
                       {name}
                     </h2>
                     <StatusPill
@@ -247,11 +246,7 @@ export function PatientDetailModal({
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setExpanded((value) => !value)}
-                  className="
-                    flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/88
-                    text-slate-400 shadow-[0_14px_36px_-28px_rgba(15,23,42,0.45)] transition-colors hover:text-slate-600
-                    hover:border-slate-300 hover:bg-white cursor-pointer
-                  "
+                  className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-[8px] border border-[#e2e8f0] bg-white text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600"
                   title={expanded ? 'Collapse popup' : 'Expand to fullscreen'}
                 >
                   {expanded ? (
@@ -279,11 +274,7 @@ export function PatientDetailModal({
 
                 <button
                   onClick={onClose}
-                  className="
-                    flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/88
-                    text-slate-400 shadow-[0_14px_36px_-28px_rgba(15,23,42,0.45)] transition-colors hover:text-slate-600
-                    hover:border-slate-300 hover:bg-white cursor-pointer
-                  "
+                  className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-[8px] border border-[#e2e8f0] bg-white text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600"
                   title="Close"
                 >
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -311,7 +302,7 @@ export function PatientDetailModal({
           </div>
         </div>
 
-        <div className="border-b border-slate-200/80 bg-white/74 px-6 pt-3">
+        <div className="border-b border-[#e2e8f0] bg-white px-6 pt-3">
           <div className="flex items-end justify-between gap-4">
             <div className="relative grid max-w-[640px] flex-1 grid-cols-3">
               {tabs.map((tabOption) => {
@@ -344,11 +335,7 @@ export function PatientDetailModal({
 
             <button
               onClick={() => generatePatientPdf(encounter)}
-              className="
-                mb-2 inline-flex items-center gap-2 rounded-[16px] border border-priage-200 bg-priage-50/88 px-4 py-2.5 text-sm
-                font-semibold text-priage-700 shadow-[0_16px_34px_-28px_rgba(30,58,95,0.45)] transition-all
-                hover:border-priage-300 hover:bg-priage-100 hover:text-priage-800 cursor-pointer
-              "
+              className="mb-2 inline-flex cursor-pointer items-center gap-2 rounded-[8px] border border-[#e2e8f0] bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                 <path
@@ -365,7 +352,7 @@ export function PatientDetailModal({
         </div>
 
         <div className="min-h-0 flex-1 px-4 pb-4 pt-4">
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-white/80 bg-white/90 shadow-[0_24px_70px_-42px_rgba(15,23,42,0.32)]">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white">
             {tab === 'messages' ? (
               <ChatPanel encounter={encounter} messages={messages} onSendMessage={onSendMessage} hideHeader />
             ) : tab === 'profile' ? (
@@ -596,16 +583,16 @@ function RemovePatientPanel({
   };
 
   return (
-    <div className="flex h-full items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(254,226,226,0.45)_0%,_rgba(255,255,255,1)_62%)] p-6">
-      <div className="w-full max-w-xl rounded-[28px] border border-rose-200/80 bg-white/94 p-8 text-center shadow-[0_28px_70px_-42px_rgba(190,24,93,0.35)]">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[22px] bg-rose-100 text-2xl text-rose-600">
+    <div className="flex h-full items-center justify-center bg-slate-50 p-6">
+      <div className="w-full max-w-xl rounded-[10px] border border-rose-200 bg-white p-8 text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[8px] bg-rose-100 text-2xl text-rose-600">
           !
         </div>
 
         <div className="mt-5 text-[10px] font-semibold uppercase tracking-[0.22em] text-rose-500">
           Remove from waiting room
         </div>
-        <h3 className="mt-2 font-hospital-display text-[1.65rem] font-semibold tracking-[-0.04em] text-slate-950">
+        <h3 className="mt-2 text-[1.65rem] font-semibold tracking-[-0.04em] text-slate-950">
           Remove Patient
         </h3>
         <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-500">
@@ -618,9 +605,9 @@ function RemovePatientPanel({
             onClick={handleClick}
             disabled={removing}
             className={`
-              rounded-[16px] px-5 py-3 text-sm font-semibold transition-all cursor-pointer
+              rounded-[8px] px-5 py-3 text-sm font-semibold transition-colors cursor-pointer
               ${confirming
-                ? 'bg-rose-700 text-white shadow-[0_18px_38px_-24px_rgba(190,24,93,0.9)] hover:bg-rose-800'
+                ? 'bg-rose-700 text-white hover:bg-rose-800'
                 : 'border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
               }
               disabled:cursor-not-allowed disabled:opacity-60
@@ -632,7 +619,7 @@ function RemovePatientPanel({
           {confirming && !removing && (
             <button
               onClick={() => setConfirming(false)}
-              className="rounded-[16px] border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-800 cursor-pointer"
+              className="rounded-[8px] border border-[#e2e8f0] bg-white px-5 py-3 text-sm font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-800 cursor-pointer"
             >
               Cancel
             </button>

@@ -78,12 +78,12 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
         user={user ?? null}
       />
 
-      <div className="mx-auto max-w-[1320px] px-4 py-5 sm:px-5 lg:px-6">
+      <div className="mx-auto max-w-7xl px-8 py-6">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between rounded-[28px] border border-white/80 bg-white/78 px-5 py-5 shadow-[0_24px_70px_-48px_rgba(15,23,42,0.5)] backdrop-blur-sm">
+        <div className="mb-6 flex items-center justify-between rounded-[10px] border border-[#e2e8f0] bg-white px-5 py-5">
           <div>
-            <h1 className="font-hospital-display text-[1.9rem] font-semibold tracking-[-0.03em] text-slate-950">Triage</h1>
-            <p className="mt-1 text-sm font-medium text-slate-500">
+            <h1 className="text-[1.9rem] font-semibold tracking-[-0.03em] text-slate-900">Triage</h1>
+            <p className="mt-1 text-sm text-slate-500">
               {queue.length} patient{queue.length === 1 ? '' : 's'} waiting for triage
             </p>
           </div>
@@ -91,7 +91,7 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
             <button
               onClick={onRefresh}
               disabled={loading}
-              className="rounded-[14px] border border-priage-200 bg-priage-50/80 px-4 py-2.5 text-sm font-semibold text-priage-700 shadow-[0_14px_30px_-26px_rgba(30,58,95,0.45)] transition-all hover:border-priage-300 hover:bg-priage-100 hover:text-priage-800 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              className="cursor-pointer rounded-[8px] border border-[#e2e8f0] bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               ↻ Refresh
             </button>
@@ -99,17 +99,17 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
         </div>
 
         {loading ? (
-          <div className="rounded-[24px] border border-slate-200/80 bg-white/90 py-14 text-center text-sm font-medium text-slate-500 shadow-[0_20px_50px_-38px_rgba(15,23,42,0.35)]">
+          <div className="rounded-[10px] border border-[#e2e8f0] bg-white py-14 text-center text-sm text-slate-500">
             Loading triage patients…
           </div>
         ) : encounters.length === 0 ? (
-          <div className="rounded-[24px] border border-slate-200/80 bg-white/92 py-14 text-center shadow-[0_20px_50px_-38px_rgba(15,23,42,0.35)]">
+          <div className="rounded-[10px] border border-[#e2e8f0] bg-white py-14 text-center">
             <div className="mb-2 text-4xl text-slate-400">📋</div>
             <div className="text-sm font-medium text-slate-500">No patients waiting for triage</div>
           </div>
         ) : (
           <section>
-            <h2 className="mb-3 flex items-center gap-2 font-hospital-display text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+            <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
               <span className="w-2 h-2 rounded-full bg-amber-400" />
               Triage Queue ({queue.length})
             </h2>
@@ -122,18 +122,18 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
                   <div
                     key={encounter.id}
                     onClick={() => void openEncounter(encounter.id)}
-                    className="group flex cursor-pointer items-center gap-4 rounded-[22px] border border-slate-200/80 bg-white/92 px-5 py-4 shadow-[0_20px_45px_-36px_rgba(15,23,42,0.38)] transition-all duration-200 hover:-translate-y-0.5 hover:border-priage-300 hover:shadow-[0_24px_52px_-34px_rgba(15,23,42,0.42)]"
+                    className="group flex cursor-pointer items-center gap-4 rounded-[10px] border border-[#e2e8f0] bg-white px-5 py-4 transition-colors hover:border-[#cbd5e1]"
                   >
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-priage-600 text-sm font-bold text-white shadow-[0_14px_30px_-20px_rgba(30,58,95,0.75)]">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] bg-slate-900 font-mono text-sm font-bold text-white">
                       {initials}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="mb-0.5 flex flex-wrap items-center gap-2">
-                        <span className="font-hospital-display text-[1.03rem] font-semibold tracking-[-0.02em] text-slate-900">{patientName(encounter.patient)}</span>
-                        <span className="text-xs font-medium text-slate-400">#{encounter.id}</span>
+                        <span className="text-[1.03rem] font-semibold tracking-[-0.02em] text-slate-900">{patientName(encounter.patient)}</span>
+                        <span className="font-mono text-xs text-slate-400">#{encounter.id}</span>
                         {latestCtas && <CTASBadge level={latestCtas as 1|2|3|4|5} />}
                         {encounter.priagePreview?.recommendedCtasLevel != null && (
-                          <span className="rounded-md bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
+                          <span className="rounded-[4px] border border-violet-200 bg-violet-50 px-2 py-0.5 font-mono text-[10px] font-semibold text-violet-700">
                             AI CTAS {encounter.priagePreview.recommendedCtasLevel}
                           </span>
                         )}
@@ -147,7 +147,7 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
                         </div>
                       )}
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 text-sm font-semibold text-priage-600 transition-colors group-hover:text-priage-700">
+                    <div className="flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-600 transition-colors group-hover:text-slate-900">
                       {openingEncounterId === encounter.id
                         ? 'Opening…'
                         : latestCtas != null

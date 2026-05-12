@@ -9,12 +9,7 @@ import { patientName } from '../../shared/types/domain';
 import type { EncounterStatus } from '../../shared/types/domain';
 import { NavBar, type View } from '../../shared/ui/NavBar';
 import { CTASBadge } from '../../shared/ui/Badge';
-import { StatusPill } from '../../shared/ui/StatusPill';
 import {
-  DASHBOARD_EMPTY_STATE_CLASS,
-  DASHBOARD_GLASS_PANEL_CLASS,
-  DASHBOARD_PAGE_CLASS,
-  DASHBOARD_STATUS_THEME,
   formatDashboardElapsedMinutes,
   formatDashboardPatientSex,
   getDashboardAvatarTheme,
@@ -50,23 +45,34 @@ const STATUS_OPTIONS: { key: EncounterStatus; label: string }[] = [
 
 const DEFAULT_STATUSES = new Set<EncounterStatus>(['EXPECTED', 'ADMITTED']);
 
-const CATEGORY_STYLES: Record<CategoryFilter, { card: string; pill: string }> = {
-  unseen: {
-    card: 'border-sky-700 bg-sky-700 text-white shadow-[0_20px_45px_-28px_rgba(3,105,161,0.9)]',
-    pill: 'border-sky-700 bg-sky-700 text-white shadow-[0_16px_36px_-26px_rgba(3,105,161,0.9)]',
-  },
-  stale: {
-    card: 'border-rose-700 bg-rose-700 text-white shadow-[0_20px_45px_-28px_rgba(190,24,93,0.92)]',
-    pill: 'border-rose-700 bg-rose-700 text-white shadow-[0_16px_36px_-26px_rgba(190,24,93,0.92)]',
-  },
-  incomplete: {
-    card: 'border-orange-600 bg-orange-600 text-white shadow-[0_20px_45px_-28px_rgba(234,88,12,0.92)]',
-    pill: 'border-orange-600 bg-orange-600 text-white shadow-[0_16px_36px_-26px_rgba(234,88,12,0.92)]',
-  },
+const ADMIT_PAGE_CLASS = 'min-h-screen bg-[#f8fafc] font-sans';
+
+const ADMIT_PANEL_CLASS =
+  'rounded-[10px] border border-[#e2e8f0] bg-white transition-all duration-300';
+
+const ADMIT_EMPTY_CLASS =
+  'rounded-[10px] border border-[#e2e8f0] bg-white px-5 py-12 text-center text-sm text-slate-500';
+
+const STAT_TOP_ACCENT: Record<string, string> = {
+  Unseen: 'bg-[#ef4444]',
+  Expecting: 'bg-[#3b82f6]',
+  Admitted: 'bg-[#10b981]',
+  'Stale (2h+)': 'bg-[#f59e0b]',
+  Incomplete: 'bg-[#8b5cf6]',
 };
 
-const ADMIT_CARD_GRID_CLASS =
-  'grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
+const STAT_SPARKLINE_HINT: Record<string, string> = {
+  Unseen: 'vs last hour',
+  Expecting: '—',
+  Admitted: '—',
+  'Stale (2h+)': 'vs last hour',
+  Incomplete: '—',
+};
+
+/** Narrow column: cards stay compact (not full-bleed) while fitting name, complaint, and badges. */
+const ADMIT_PATIENT_COLUMN_CLASS = 'w-full max-w-sm';
+
+const ADMIT_CARD_LIST_CLASS = 'grid w-full grid-cols-1 gap-3';
 
 function minutesSince(iso: string | null | undefined): number {
   if (!iso) return 0;
@@ -76,7 +82,6 @@ function minutesSince(iso: string | null | undefined): number {
 function getArrivalTimestamp(encounter: Encounter): string {
   return encounter.arrivedAt ?? encounter.createdAt;
 }
-
 
 export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, onRefresh, user }: AdmitViewProps) {
   const { showToast } = useToast();
@@ -197,19 +202,22 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
     ![...DEFAULT_STATUSES].every((status) => statusFilters.has(status)) ||
     categoryFilters.size > 0;
 
+  const filterRowActive = 'rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white transition';
+  const filterRowIdle =
+    'rounded-md px-3 py-1.5 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-slate-900';
+
   return (
-    <div className={DASHBOARD_PAGE_CLASS}>
+    <div className={ADMIT_PAGE_CLASS}>
       <NavBar
         currentView="admit"
         onNavigate={(view) => onNavigate?.(view)}
         onLogout={() => onBack?.()}
         user={user ?? null}
       />
+      <div className="border-b border-[#e2e8f0]" aria-hidden />
 
-      <div className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6">
-        <div
-          className={`${DASHBOARD_GLASS_PANEL_CLASS} transition-all duration-300 ${filtersVisible ? 'mb-7 p-4 sm:p-5' : 'mb-5 p-4'}`}
-        >
+      <div className="mx-auto max-w-7xl px-8 py-6">
+        <div className={`${ADMIT_PANEL_CLASS} ${filtersVisible ? 'mb-6 p-5' : 'mb-6 p-4'}`}>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div
               className={`
@@ -218,14 +226,13 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
               `}
             >
               <svg
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                width="18"
-                height="18"
-                fill="none"
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300"
                 viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden
               >
-                <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.5" />
-                <path d="m11 11 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1" />
+                <path d="m11 11 3 3" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
               </svg>
               <input
                 type="text"
@@ -233,23 +240,22 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 className="
-                  w-full rounded-[18px] border border-slate-200/80 bg-white px-4 py-3 pl-11
-                  text-sm font-medium text-slate-700 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.5)]
-                  placeholder:text-slate-400
-                  focus:border-priage-300 focus:outline-none focus:ring-2 focus:ring-priage-200
+                  h-[44px] w-full rounded-[8px] border border-[#e2e8f0] bg-white pl-10 pr-3
+                  text-sm text-slate-800 placeholder:text-slate-300
+                  focus:border-[#3b82f6] focus:outline-none focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)]
                 "
               />
             </div>
 
             {onRefresh && (
               <button
+                type="button"
                 onClick={onRefresh}
                 disabled={loading}
                 title="Refresh encounters"
                 className="
-                  rounded-[16px] border border-priage-200 bg-priage-50/80 px-4 py-3 text-sm font-semibold text-priage-700
-                  transition-all hover:border-priage-300 hover:bg-priage-100 hover:text-priage-800
-                  disabled:cursor-not-allowed disabled:opacity-50
+                  h-[44px] shrink-0 rounded-[8px] border border-[#e2e8f0] bg-white px-4 text-sm font-semibold text-slate-600
+                  transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50
                 "
               >
                 Refresh
@@ -258,13 +264,14 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
 
             {hasCustomFilters && (
               <button
+                type="button"
                 onClick={() => {
                   setStatusFilters(new Set(DEFAULT_STATUSES));
                   setCategoryFilters(new Set());
                 }}
                 className="
-                  rounded-[16px] border border-orange-200 bg-orange-50/85 px-4 py-3 text-sm font-semibold text-orange-700
-                  transition-all hover:border-orange-300 hover:bg-orange-100 hover:text-orange-800
+                  h-[44px] shrink-0 rounded-[8px] border border-[#e2e8f0] bg-white px-4 text-sm font-semibold text-slate-600
+                  transition hover:bg-slate-50
                 "
               >
                 Reset
@@ -272,10 +279,11 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
             )}
 
             <button
+              type="button"
               onClick={() => setFiltersVisible((value) => !value)}
               className="
-                rounded-[16px] border border-slate-200 bg-slate-900 px-4 py-3 text-sm font-semibold text-white
-                transition-all hover:bg-slate-800
+                h-[44px] shrink-0 rounded-[8px] bg-slate-900 px-4 text-sm font-semibold text-white
+                transition hover:bg-slate-700
               "
             >
               {filtersVisible ? 'Hide filters' : 'Show filters'}
@@ -285,7 +293,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
           <div
             className={`
               transition-[max-height,margin,padding] duration-300 ease-out
-              ${filtersVisible ? 'mt-4 max-h-[620px] overflow-visible px-1 pt-2 pb-1' : 'mt-0 max-h-0 overflow-hidden px-0 pt-0 pb-0'}
+              ${filtersVisible ? 'mt-5 max-h-[720px] overflow-visible' : 'mt-0 max-h-0 overflow-hidden'}
             `}
           >
             <div
@@ -294,15 +302,14 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
                 ${filtersVisible ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0'}
               `}
             >
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <div className="grid h-full grid-cols-2 gap-3 lg:grid-cols-5">
                 {stats.map((stat) => {
                   const isCategoryActive = stat.category ? categoryFilters.has(stat.category) : false;
                   const isStatusActive = stat.status ? statusFilters.has(stat.status) && statusFilters.size === 1 : false;
                   const isActive = isCategoryActive || isStatusActive;
                   const isClickable = Boolean(stat.category || stat.status);
-                  const activeClasses = stat.category
-                    ? CATEGORY_STYLES[stat.category].card
-                    : DASHBOARD_STATUS_THEME[stat.status!].summary;
+                  const accent = STAT_TOP_ACCENT[stat.label] ?? 'bg-slate-300';
+                  const hint = STAT_SPARKLINE_HINT[stat.label] ?? '—';
 
                   return (
                     <div
@@ -319,101 +326,86 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
                         }
                       }}
                       className={`
-                        rounded-[22px] border px-4 py-4 transition-all duration-200
-                        ${isClickable ? 'cursor-pointer hover:-translate-y-0.5' : ''}
-                        ${isActive
-                          ? activeClasses
-                          : 'border-slate-200/80 bg-white/92 text-slate-900 shadow-[0_18px_40px_-32px_rgba(15,23,42,0.45)] hover:border-slate-300'
-                        }
+                        flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-white
+                        ${isActive ? 'border-slate-900' : 'border-[#e2e8f0]'}
+                        ${isClickable ? 'cursor-pointer transition hover:border-[#cbd5e1]' : ''}
                       `}
                     >
-                      <div className={`text-[12px] font-bold uppercase tracking-[0.16em] ${isActive ? 'text-white/78' : 'text-slate-600'}`}>
-                        {stat.label}
-                      </div>
-                      <div className={`mt-2 font-hospital-display text-[2.15rem] font-semibold tracking-[-0.03em] ${isActive ? 'text-white' : 'text-slate-900'}`}>
-                        {stat.value}
+                      <div className={`h-[3px] w-full shrink-0 ${accent}`} aria-hidden />
+                      <div className="flex flex-1 flex-col p-5">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+                          {stat.label}
+                        </div>
+                        <div className="mt-2 text-[2.5rem] font-bold leading-none text-slate-800">{stat.value}</div>
+                        <div className="mt-2 text-[11px] text-slate-300">{hint}</div>
                       </div>
                     </div>
                   );
                 })}
               </div>
 
-              <div className="mt-5 rounded-[22px] border border-slate-200/80 bg-slate-50/90 px-3 py-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Status</span>
-                  {STATUS_OPTIONS.map((option) => {
-                    const active = statusFilters.has(option.key);
-                    const count = encounters.filter((encounter) => encounter.status === option.key).length;
-                    const buttonClasses = active ? DASHBOARD_STATUS_THEME[option.key].filterActive : DASHBOARD_STATUS_THEME[option.key].filterIdle;
+              <div className="mt-5 flex flex-wrap items-center gap-x-1 gap-y-2">
+                {STATUS_OPTIONS.map((option) => {
+                  const active = statusFilters.has(option.key);
+                  const count = encounters.filter((encounter) => encounter.status === option.key).length;
 
-                    return (
-                      <button
-                        key={option.key}
-                        onClick={() => toggleStatus(option.key)}
-                        className={`
-                          inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[13px] font-semibold transition-all
-                          ${buttonClasses}
-                        `}
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => toggleStatus(option.key)}
+                      className={`inline-flex items-baseline gap-1.5 ${active ? filterRowActive : filterRowIdle}`}
+                    >
+                      <span className="font-sans font-semibold">{option.label}</span>
+                      <span
+                        className={`text-[10px] font-mono ${active ? 'text-slate-300' : 'text-slate-400'}`}
                       >
-                        <span>{option.label}</span>
-                        <span className={active ? 'text-white/78' : 'text-current/70'}>{count}</span>
-                      </button>
-                    );
-                  })}
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
 
-                  <div className="mx-1 h-5 w-px bg-slate-200" />
+                <div className="mx-2 h-4 w-px shrink-0 self-center bg-[#e2e8f0]" aria-hidden />
 
-                  <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Focus</span>
-                  {([
-                    { key: 'unseen' as CategoryFilter, label: 'Unseen', count: unseenCount },
-                    { key: 'stale' as CategoryFilter, label: 'Stale', count: staleCount },
-                    { key: 'incomplete' as CategoryFilter, label: 'Incomplete', count: incompleteCount },
-                  ]).map((filter) => {
-                    const active = categoryFilters.has(filter.key);
-                    const buttonClasses = active
-                      ? CATEGORY_STYLES[filter.key].pill
-                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900';
+                {([
+                  { key: 'unseen' as CategoryFilter, label: 'Unseen', count: unseenCount },
+                  { key: 'stale' as CategoryFilter, label: 'Stale', count: staleCount },
+                  { key: 'incomplete' as CategoryFilter, label: 'Incomplete', count: incompleteCount },
+                ]).map((filter) => {
+                  const active = categoryFilters.has(filter.key);
 
-                    return (
-                      <button
-                        key={filter.key}
-                        onClick={() => toggleCategory(filter.key)}
-                        className={`
-                          inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[13px] font-semibold transition-all
-                          ${buttonClasses}
-                        `}
+                  return (
+                    <button
+                      key={filter.key}
+                      type="button"
+                      onClick={() => toggleCategory(filter.key)}
+                      className={`inline-flex items-baseline gap-1.5 ${active ? filterRowActive : filterRowIdle}`}
+                    >
+                      <span className="font-sans font-semibold">{filter.label}</span>
+                      <span
+                        className={`text-[10px] font-mono ${active ? 'text-slate-300' : 'text-slate-400'}`}
                       >
-                        <span>{filter.label}</span>
-                        <span className={active ? 'text-white/72' : 'text-slate-500'}>{filter.count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                        {filter.count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
         </div>
 
         {loading ? (
-          <div className={DASHBOARD_EMPTY_STATE_CLASS}>
-            Loading encounters…
-          </div>
+          <div className={ADMIT_EMPTY_CLASS}>Loading encounters…</div>
         ) : filteredEncounters.length === 0 ? (
-          <div className={DASHBOARD_EMPTY_STATE_CLASS}>
-            No patients found
-          </div>
+          <div className={ADMIT_EMPTY_CLASS}>No patients found</div>
         ) : (
           <div className="space-y-6 transition-all duration-300">
             {newArrivals.length > 0 && (
-              <section>
-                <h2 className="mb-3 flex items-center gap-2 font-hospital-display text-sm font-semibold uppercase tracking-[0.22em] text-slate-500">
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
-                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-orange-500" />
-                  </span>
-                  New Arrivals ({newArrivals.length})
-                </h2>
-                <div className={ADMIT_CARD_GRID_CLASS}>
+              <section className={ADMIT_PATIENT_COLUMN_CLASS}>
+                <AdmitSectionHeaderNewArrivals count={newArrivals.length} />
+                <div className={ADMIT_CARD_LIST_CLASS}>
                   {newArrivals.map((encounter) => (
                     <EncounterCard
                       key={encounter.id}
@@ -429,17 +421,14 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
               </section>
             )}
 
-            <section>
-              <h2 className="mb-3 flex items-center gap-2 font-hospital-display text-sm font-semibold uppercase tracking-[0.22em] text-slate-500">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Reviewed ({reviewed.length})
-              </h2>
+            <section className={ADMIT_PATIENT_COLUMN_CLASS}>
+              <AdmitSectionHeaderReviewed count={reviewed.length} />
               {reviewed.length === 0 ? (
-                <div className="rounded-[26px] border border-slate-200/80 bg-white/90 px-5 py-8 text-center text-sm text-slate-400 shadow-[0_18px_50px_-38px_rgba(15,23,42,0.55)]">
+                <div className="w-full rounded-[10px] border border-[#e2e8f0] bg-white px-5 py-8 text-center text-sm text-slate-400">
                   {newArrivals.length > 0 ? 'Open new arrivals above to review them' : 'No patients to display'}
                 </div>
               ) : (
-                <div className={ADMIT_CARD_GRID_CLASS}>
+                <div className={ADMIT_CARD_LIST_CLASS}>
                   {reviewed.map((encounter) => (
                     <EncounterCard
                       key={encounter.id}
@@ -475,6 +464,50 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
   );
 }
 
+function AdmitSectionHeaderNewArrivals({ count }: { count: number }) {
+  return (
+    <div className="mb-3 flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 shrink-0 items-baseline gap-2 border-l-2 border-l-[#ef4444] pl-3">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">New Arrivals</span>
+        <span className="font-mono text-sm text-slate-400">({count})</span>
+      </div>
+      <div className="h-px min-w-[2rem] flex-1 bg-[#f1f5f9]" aria-hidden />
+    </div>
+  );
+}
+
+function AdmitSectionHeaderReviewed({ count }: { count: number }) {
+  return (
+    <div className="mb-3 flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 shrink-0 items-baseline gap-2 border-l-2 border-l-[#e2e8f0] pl-3">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Reviewed</span>
+        <span className="font-mono text-sm text-slate-400">({count})</span>
+      </div>
+      <div className="h-px min-w-[2rem] flex-1 bg-[#f1f5f9]" aria-hidden />
+    </div>
+  );
+}
+
+function encounterLaneStripeClass(encounter: EncounterListItem, isStale: boolean): string {
+  if (isStale) return 'bg-[#ef4444]';
+  if (encounter.status === 'EXPECTED') return 'bg-[#3b82f6]';
+  if (encounter.status === 'ADMITTED') return 'bg-[#10b981]';
+  return 'bg-[#cbd5e1]';
+}
+
+const STATUS_BADGE_BASE =
+  'inline-flex items-center border font-mono text-[10px] font-semibold uppercase tracking-wide rounded-[4px] px-2 py-0.5';
+
+const STATUS_BADGE_BY_STATUS: Record<EncounterStatus, string> = {
+  EXPECTED: `${STATUS_BADGE_BASE} border-blue-200 bg-blue-50 text-blue-600`,
+  ADMITTED: `${STATUS_BADGE_BASE} border-emerald-200 bg-emerald-50 text-emerald-600`,
+  TRIAGE: `${STATUS_BADGE_BASE} border-slate-200 bg-slate-50 text-slate-600`,
+  WAITING: `${STATUS_BADGE_BASE} border-slate-200 bg-slate-50 text-slate-600`,
+  COMPLETE: `${STATUS_BADGE_BASE} border-emerald-200 bg-emerald-50 text-emerald-600`,
+  UNRESOLVED: `${STATUS_BADGE_BASE} border-slate-200 bg-slate-50 text-slate-600`,
+  CANCELLED: `${STATUS_BADGE_BASE} border-red-200 bg-red-50 text-red-600`,
+};
+
 function EncounterCard({
   encounter,
   isNew,
@@ -499,8 +532,8 @@ function EncounterCard({
   const arrivalMinutes = minutesSince(arrivalAt);
   const complaint = encounter.chiefComplaint ?? 'No chief complaint recorded';
   const patientSex = formatDashboardPatientSex(encounter.patient.gender);
-  const patientAge = encounter.patient.age != null ? `Age: ${encounter.patient.age}` : 'Age: N/A';
-  const statusPillStyle = DASHBOARD_STATUS_THEME[encounter.status].cardPill;
+  const patientAge = encounter.patient.age != null ? `${encounter.patient.age}` : '—';
+  const laneStripe = encounterLaneStripeClass(encounter, isStale);
   const [isComplaintOverflowing, setIsComplaintOverflowing] = useState(false);
 
   useEffect(() => {
@@ -524,134 +557,98 @@ function EncounterCard({
     return () => observer.disconnect();
   }, [complaint]);
 
-  const completenessStyle =
+  const completenessBadge =
     completeness.score >= 80
-      ? 'bg-emerald-100 text-emerald-800 shadow-none'
+      ? `${STATUS_BADGE_BASE} border-emerald-200 bg-emerald-50 text-emerald-600`
       : completeness.score >= 50
-        ? 'bg-amber-100 text-amber-800 shadow-none'
-        : 'bg-rose-100 text-rose-800 shadow-none';
+        ? `${STATUS_BADGE_BASE} border-amber-200 bg-amber-50 text-amber-600`
+        : `${STATUS_BADGE_BASE} border-red-200 bg-red-50 text-red-600`;
+
+  const statusLabel = encounter.status.split('_').join(' ');
 
   return (
     <div
-      className={`
-        group relative flex h-full min-h-[274px] cursor-pointer flex-col overflow-hidden rounded-[28px] border p-5 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.48)]
-        transition-all duration-300 hover:-translate-y-1 hover:border-[var(--card-accent)] hover:shadow-[0_28px_70px_-38px_rgba(15,23,42,0.5)]
-        ${isNew
-          ? isStale
-            ? 'border-rose-200/80'
-            : 'border-orange-200/80'
-          : 'border-slate-200/80'
-        }
-      `}
-      style={{
-        backgroundImage: isNew
-          ? isStale
-            ? 'linear-gradient(180deg, rgba(255,241,242,0.96) 0%, rgba(255,255,255,0.98) 46%, rgba(255,255,255,1) 100%)'
-            : 'linear-gradient(180deg, rgba(255,247,237,0.96) 0%, rgba(255,255,255,0.98) 46%, rgba(255,255,255,1) 100%)'
-          : 'linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.98) 100%)',
-        '--card-accent': avatarTheme.accent,
-      } as CSSProperties}
+      className="flex w-full max-w-full cursor-pointer overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-white transition-colors hover:border-[#cbd5e1]"
       onClick={onClick}
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.86),_transparent_65%)]" />
-
-      <div className="relative flex items-start gap-4">
-        <div
-          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[20px] text-base font-bold text-white shadow-[0_16px_40px_-20px_rgba(15,23,42,0.55)]"
-          style={{ backgroundImage: avatarTheme.gradient }}
-        >
-          {initials}
-        </div>
-
-        <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate font-hospital-display text-[1.1rem] font-semibold tracking-[-0.03em] text-slate-900">
-              {name}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-              <span>{patientSex}</span>
-              <span>{patientAge}</span>
-              <span>#{encounter.id}</span>
-            </div>
+      <div className={`w-1 shrink-0 self-stretch ${laneStripe}`} aria-hidden />
+      <div className="min-w-0 flex-1 p-4">
+        <div className="grid grid-cols-[auto_1fr_auto] items-start gap-x-4 gap-y-1">
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] font-mono text-sm font-bold text-white"
+            style={{ backgroundImage: avatarTheme.gradient } as CSSProperties}
+          >
+            {initials}
           </div>
 
-          {isNew && (
-            <span
-              className={`
-                inline-flex shrink-0 items-center rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.22em]
-                ${isStale ? 'bg-rose-600 text-white' : 'bg-orange-500 text-orange-950'}
-              `}
-            >
-              {isStale ? 'Stale' : 'New'}
-            </span>
-          )}
+          <div className="min-w-0">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 font-semibold text-[15px] leading-tight text-slate-800">{name}</div>
+            {isNew && (
+              <span
+                className={`
+                  shrink-0 ${STATUS_BADGE_BASE}
+                  ${isStale ? 'border-red-200 bg-red-50 text-red-600' : 'border-blue-200 bg-blue-50 text-blue-600'}
+                `}
+              >
+                {isStale ? 'Stale' : 'New'}
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 font-mono text-[11px] tracking-wide text-slate-400">
+            {patientSex} / AGE {patientAge} / #{encounter.id}
+          </div>
+          <p ref={complaintRef} className="relative mt-0.5 line-clamp-2 text-sm text-slate-600">
+            {complaint}
+            {isComplaintOverflowing && (
+              <span
+                className="pointer-events-none absolute bottom-0 right-0 block h-5 w-16 bg-gradient-to-l from-white to-transparent"
+                aria-hidden
+              />
+            )}
+          </p>
+          </div>
+
+          <div className="flex flex-col items-end gap-1 text-right font-mono text-[11px] text-slate-400">
+            <span>{formatTime(arrivalAt)}</span>
+            {isNew ? (
+              <span
+                className="rounded-[4px] border border-red-100 bg-red-50 px-2 py-0.5 font-mono text-[10px] font-semibold text-red-500"
+              >
+                {formatDashboardElapsedMinutes(arrivalMinutes)} unseen
+              </span>
+            ) : (
+              <span className="font-mono text-[10px] text-slate-400">
+                {formatDashboardElapsedMinutes(arrivalMinutes)} since
+              </span>
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className="relative mt-4 min-h-[3rem]">
-        <p
-          ref={complaintRef}
-          className="line-clamp-2 pr-10 text-[17px] font-semibold leading-6 text-slate-800"
-        >
-          {complaint}
-        </p>
-        {isComplaintOverflowing && (
-          <div className="pointer-events-none absolute bottom-0 right-0 h-6 w-28 bg-gradient-to-l from-white via-white/95 to-transparent" />
-        )}
-      </div>
+        <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 border-t border-[#f1f5f9] pt-3">
+        <span className={STATUS_BADGE_BY_STATUS[encounter.status]}>{statusLabel}</span>
 
-      <div className="relative mt-4 mb-2 flex flex-wrap items-center gap-2">
-        <StatusPill
-          status={encounter.status}
-          className={`rounded-md px-3 py-1.5 text-[11px] font-bold tracking-[0.16em] ${statusPillStyle}`}
-        />
-
-        <span className={`inline-flex items-center rounded-md px-3 py-1.5 text-[11px] font-bold ${completenessStyle}`}>
-          {completeness.score}% complete
-        </span>
+        <span className={completenessBadge}>{completeness.score}%</span>
 
         {encounter.currentCtasLevel && (
-          <CTASBadge level={encounter.currentCtasLevel as 1 | 2 | 3 | 4 | 5} />
+          <span className="[&>span]:rounded-[4px] [&>span]:border [&>span]:border-slate-200 [&>span]:bg-slate-50 [&>span]:px-2 [&>span]:py-0.5 [&>span]:font-mono [&>span]:text-[10px] [&>span]:font-semibold [&>span]:uppercase [&>span]:text-slate-600">
+            <CTASBadge level={encounter.currentCtasLevel as 1 | 2 | 3 | 4 | 5} />
+          </span>
         )}
 
         {encounter.priagePreview?.recommendedCtasLevel != null && (
-          <span className="inline-flex items-center rounded-md bg-sky-50 px-3 py-1.5 text-[11px] font-bold text-sky-800">
+          <span
+            className={`${STATUS_BADGE_BASE} border-violet-200 bg-violet-50 text-violet-600`}
+          >
             AI CTAS {encounter.priagePreview.recommendedCtasLevel}
           </span>
         )}
 
         {encounter.priagePreview && encounter.priagePreview.progressionRiskCount > 0 && (
-          <span className="inline-flex items-center rounded-md bg-rose-50 px-3 py-1.5 text-[11px] font-bold text-rose-700">
-            {encounter.priagePreview.progressionRiskCount} watch item{encounter.priagePreview.progressionRiskCount === 1 ? '' : 's'}
+          <span className={`${STATUS_BADGE_BASE} border-amber-200 bg-amber-50 text-amber-600`}>
+            {encounter.priagePreview.progressionRiskCount} watch
           </span>
         )}
-      </div>
-
-      <div className="relative mt-auto pt-4">
-        <div className="absolute inset-x-0 top-0 h-px bg-slate-200/80" />
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-nowrap items-center gap-2 text-xs text-slate-500">
-            <svg width="13" height="13" fill="none" viewBox="0 0 16 16">
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Arrived</span>
-            <span className="whitespace-nowrap text-[13px] font-semibold text-slate-700">{formatTime(arrivalAt)}</span>
-          </div>
-
-          <span
-            className={`
-              inline-flex shrink-0 whitespace-nowrap items-center rounded-full px-3 py-1 text-[11px] font-semibold
-              ${isStale
-                ? 'bg-rose-100 text-rose-700'
-                : isNew
-                  ? 'bg-orange-100 text-orange-700'
-                  : 'bg-slate-100 text-slate-600'
-              }
-            `}
-          >
-            {formatDashboardElapsedMinutes(arrivalMinutes)} {isNew ? 'unseen' : 'since arrival'}
-          </span>
         </div>
       </div>
     </div>

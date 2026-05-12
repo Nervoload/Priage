@@ -8,59 +8,59 @@ export interface DashboardStatusTheme {
 }
 
 export const DASHBOARD_PAGE_CLASS =
-  'min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,247,237,0.95)_0%,_rgba(248,250,252,1)_34%,_rgba(241,245,249,1)_100%)] font-hospital-body';
+  'min-h-screen bg-[#f8fafc] font-sans';
 
 export const DASHBOARD_GLASS_PANEL_CLASS =
-  'rounded-[30px] border border-white/80 bg-white/80 backdrop-blur-xl shadow-[0_24px_80px_-48px_rgba(15,23,42,0.55)]';
+  'rounded-[10px] border border-[#e2e8f0] bg-white';
 
 export const DASHBOARD_EMPTY_STATE_CLASS =
-  'rounded-[28px] border border-slate-200/80 bg-white/90 px-5 py-12 text-center text-sm text-slate-500 shadow-[0_18px_50px_-38px_rgba(15,23,42,0.55)]';
+  'rounded-[10px] border border-[#e2e8f0] bg-white px-5 py-12 text-center text-sm text-slate-500';
 
 export const DASHBOARD_CARD_GRID_CLASS =
   'grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-5';
 
 export const DASHBOARD_STATUS_THEME: Record<EncounterStatus, DashboardStatusTheme> = {
   EXPECTED: {
-    summary: 'border-sky-600 bg-sky-600 text-white shadow-[0_20px_45px_-28px_rgba(2,132,199,0.92)]',
-    filterActive: 'border-sky-600 bg-sky-600 text-white shadow-[0_16px_36px_-26px_rgba(2,132,199,0.92)]',
-    filterIdle: 'border-sky-200 bg-white text-sky-900 hover:border-sky-300 hover:bg-sky-50',
-    cardPill: 'border-transparent bg-sky-100 text-sky-800 shadow-none',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    filterActive: 'border-slate-900 bg-slate-900 text-white',
+    filterIdle: 'border-[#e2e8f0] bg-white text-slate-700 hover:bg-slate-50',
+    cardPill: 'border border-blue-200 bg-blue-50 text-blue-700',
   },
   ADMITTED: {
-    summary: 'border-teal-600 bg-teal-600 text-white shadow-[0_20px_45px_-28px_rgba(13,148,136,0.92)]',
-    filterActive: 'border-teal-600 bg-teal-600 text-white shadow-[0_16px_36px_-26px_rgba(13,148,136,0.92)]',
-    filterIdle: 'border-teal-200 bg-white text-teal-900 hover:border-teal-300 hover:bg-teal-50',
-    cardPill: 'border-transparent bg-emerald-100 text-emerald-800 shadow-none',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    filterActive: 'border-slate-900 bg-slate-900 text-white',
+    filterIdle: 'border-[#e2e8f0] bg-white text-slate-700 hover:bg-slate-50',
+    cardPill: 'border border-emerald-200 bg-emerald-50 text-emerald-700',
   },
   TRIAGE: {
-    summary: 'border-amber-600 bg-amber-600 text-white shadow-[0_20px_45px_-28px_rgba(217,119,6,0.95)]',
-    filterActive: 'border-amber-600 bg-amber-600 text-white shadow-[0_16px_36px_-26px_rgba(217,119,6,0.95)]',
-    filterIdle: 'border-amber-200 bg-white text-amber-900 hover:border-amber-300 hover:bg-amber-50',
-    cardPill: 'border-transparent bg-amber-600 text-white shadow-[0_12px_28px_-22px_rgba(217,119,6,0.95)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    filterActive: 'border-slate-900 bg-slate-900 text-white',
+    filterIdle: 'border-[#e2e8f0] bg-white text-slate-700 hover:bg-slate-50',
+    cardPill: 'border border-amber-200 bg-amber-50 text-amber-700',
   },
   WAITING: {
-    summary: 'border-sky-700 bg-sky-700 text-white shadow-[0_20px_45px_-28px_rgba(3,105,161,0.95)]',
-    filterActive: 'border-sky-700 bg-sky-700 text-white shadow-[0_16px_36px_-26px_rgba(3,105,161,0.95)]',
-    filterIdle: 'border-sky-200 bg-white text-sky-900 hover:border-sky-300 hover:bg-sky-50',
-    cardPill: 'border-transparent bg-sky-700 text-white shadow-[0_12px_28px_-22px_rgba(3,105,161,0.95)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    filterActive: 'border-slate-900 bg-slate-900 text-white',
+    filterIdle: 'border-[#e2e8f0] bg-white text-slate-700 hover:bg-slate-50',
+    cardPill: 'border border-sky-200 bg-sky-50 text-sky-700',
   },
   COMPLETE: {
-    summary: 'border-emerald-600 bg-emerald-600 text-white shadow-[0_20px_45px_-28px_rgba(5,150,105,0.95)]',
-    filterActive: 'border-emerald-600 bg-emerald-600 text-white shadow-[0_16px_36px_-26px_rgba(5,150,105,0.95)]',
-    filterIdle: 'border-emerald-200 bg-white text-emerald-900 hover:border-emerald-300 hover:bg-emerald-50',
-    cardPill: 'border-transparent bg-emerald-100 text-emerald-800 shadow-none',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    filterActive: 'border-slate-900 bg-slate-900 text-white',
+    filterIdle: 'border-[#e2e8f0] bg-white text-slate-700 hover:bg-slate-50',
+    cardPill: 'border border-emerald-200 bg-emerald-50 text-emerald-700',
   },
   UNRESOLVED: {
-    summary: 'border-slate-700 bg-slate-700 text-white shadow-[0_20px_45px_-28px_rgba(51,65,85,0.95)]',
-    filterActive: 'border-slate-700 bg-slate-700 text-white shadow-[0_16px_36px_-26px_rgba(51,65,85,0.95)]',
-    filterIdle: 'border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50',
-    cardPill: 'border-transparent bg-slate-700 text-white shadow-[0_12px_28px_-22px_rgba(51,65,85,0.95)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    filterActive: 'border-slate-900 bg-slate-900 text-white',
+    filterIdle: 'border-[#e2e8f0] bg-white text-slate-700 hover:bg-slate-50',
+    cardPill: 'border border-slate-300 bg-slate-100 text-slate-700',
   },
   CANCELLED: {
-    summary: 'border-rose-700 bg-rose-700 text-white shadow-[0_20px_45px_-28px_rgba(190,24,93,0.95)]',
-    filterActive: 'border-rose-700 bg-rose-700 text-white shadow-[0_16px_36px_-26px_rgba(190,24,93,0.95)]',
-    filterIdle: 'border-rose-200 bg-white text-rose-900 hover:border-rose-300 hover:bg-rose-50',
-    cardPill: 'border-transparent bg-rose-700 text-white shadow-[0_12px_28px_-22px_rgba(190,24,93,0.95)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    filterActive: 'border-slate-900 bg-slate-900 text-white',
+    filterIdle: 'border-[#e2e8f0] bg-white text-slate-700 hover:bg-slate-50',
+    cardPill: 'border border-rose-200 bg-rose-50 text-rose-700',
   },
 };
 

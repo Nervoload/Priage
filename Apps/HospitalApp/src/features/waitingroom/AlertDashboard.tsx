@@ -23,6 +23,7 @@ const DEFAULT_PANEL_WIDTH = 420;
 
 type Severity = 'ok' | 'warn' | 'critical';
 
+/** Severity accents on neutral clinical cards (border stays #e2e8f0). */
 const SEVERITY_THEME: Record<
   Severity,
   {
@@ -34,25 +35,25 @@ const SEVERITY_THEME: Record<
   }
 > = {
   ok: {
-    card: 'bg-[linear-gradient(180deg,_rgba(236,253,245,0.94)_0%,_rgba(255,255,255,0.94)_100%)]',
-    border: 'border-emerald-200/90',
+    card: 'bg-white',
+    border: 'border-[#e2e8f0]',
     dot: 'bg-emerald-500',
-    pill: 'bg-emerald-100 text-emerald-800',
-    text: 'text-emerald-800',
+    pill: 'border border-emerald-200 bg-emerald-50 text-emerald-800',
+    text: 'text-slate-700',
   },
   warn: {
-    card: 'bg-[linear-gradient(180deg,_rgba(255,251,235,0.94)_0%,_rgba(255,255,255,0.94)_100%)]',
-    border: 'border-amber-200/90',
+    card: 'bg-white',
+    border: 'border-[#e2e8f0]',
     dot: 'bg-amber-500',
-    pill: 'bg-amber-100 text-amber-800',
+    pill: 'border border-amber-200 bg-amber-50 text-amber-800',
     text: 'text-amber-800',
   },
   critical: {
-    card: 'bg-[linear-gradient(180deg,_rgba(255,241,242,0.96)_0%,_rgba(255,255,255,0.94)_100%)]',
-    border: 'border-rose-200/90',
-    dot: 'bg-rose-600',
-    pill: 'bg-rose-100 text-rose-800',
-    text: 'text-rose-800',
+    card: 'bg-white',
+    border: 'border-[#e2e8f0]',
+    dot: 'bg-rose-500',
+    pill: 'border border-rose-200 bg-rose-50 text-rose-800',
+    text: 'text-rose-700',
   },
 };
 
@@ -220,11 +221,11 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
       <button
         onClick={() => setOpen((value) => !value)}
         className={`
-          fixed right-0 z-40 cursor-pointer rounded-l-[20px] border border-r-0 px-3 py-4 shadow-[0_18px_42px_-24px_rgba(15,23,42,0.45)]
-          transition-all duration-300
+          fixed right-0 z-40 cursor-pointer rounded-l-[10px] border border-r-0 px-3 py-4
+          shadow-[0_4px_14px_-6px_rgba(15,23,42,0.12)] transition-colors duration-200
           ${totalAlerts > 0
-            ? 'border-rose-700 bg-rose-700 text-white hover:bg-rose-800'
-            : 'border-slate-200 bg-white/95 text-slate-600 hover:bg-slate-50'
+            ? 'border-[#e2e8f0] border-r-0 bg-slate-900 text-white hover:bg-slate-800'
+            : 'border-[#e2e8f0] bg-white text-slate-600 hover:bg-slate-50'
           }
         `}
         style={{
@@ -238,11 +239,15 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
         <span className="text-[11px] font-bold uppercase tracking-[0.18em]">
           {open ? 'Close' : 'Alerts'}
         </span>
-        <span className={`mt-2 rounded-full px-2 py-1 text-[11px] font-bold ${open ? 'bg-white/18' : totalAlerts > 0 ? 'bg-white/18' : 'bg-slate-100 text-slate-700'}`}>
+        <span
+          className={`mt-2 rounded-full px-2 py-1 text-[11px] font-bold ${
+            totalAlerts > 0 || open ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-700'
+          }`}
+        >
           {totalAlerts}
         </span>
         {messageCount > 0 && !open && (
-          <span className="absolute -left-2 top-2 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-priage-600 px-1.5 text-[10px] font-bold text-white">
+          <span className="absolute -left-2 top-2 flex h-5 min-w-[20px] items-center justify-center rounded-full border border-[#e2e8f0] bg-white px-1.5 text-[10px] font-bold text-slate-800 shadow-sm">
             {messageCount}
           </span>
         )}
@@ -257,11 +262,11 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
           transition: expanded ? 'width 0.3s ease-out' : undefined,
         }}
       >
-        <div className="relative flex h-full flex-col overflow-hidden border-l border-white/80 bg-[linear-gradient(180deg,_rgba(248,250,252,0.98)_0%,_rgba(255,255,255,0.96)_40%,_rgba(241,245,249,0.98)_100%)] shadow-[-18px_0_60px_-38px_rgba(15,23,42,0.45)]">
+        <div className="relative flex h-full flex-col overflow-hidden border-l border-[#e2e8f0] bg-[#f8fafc]">
           {!expanded && (
             <div
               onMouseDown={onDragStart}
-              className="absolute left-0 top-0 bottom-0 z-20 flex w-2.5 cursor-col-resize items-center justify-center transition-colors hover:bg-priage-200/40 active:bg-priage-400/40"
+              className="absolute left-0 top-0 bottom-0 z-20 flex w-2.5 cursor-col-resize items-center justify-center transition-colors hover:bg-slate-200/50 active:bg-slate-300/50"
               title="Drag to resize"
             >
               <div className="flex h-14 items-center gap-1 opacity-35 transition-opacity hover:opacity-75">
@@ -271,8 +276,8 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
             </div>
           )}
 
-          <div className="relative border-b border-slate-200/80 bg-white/78 px-5 pb-4 pt-5 backdrop-blur-xl">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top_right,_rgba(219,234,254,0.74)_0%,_transparent_64%)]" />
+          <div className="relative border-b border-[#e2e8f0] bg-white px-5 pb-4 pt-5">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[#f1f5f9]" />
 
             <div className="relative flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -290,7 +295,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setExpanded((value) => !value)}
-                  className="flex h-9 w-9 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/90 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600 cursor-pointer"
+                  className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#e2e8f0] bg-white text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-800 cursor-pointer"
                   title={expanded ? 'Collapse to side panel' : 'Expand to full view'}
                 >
                   {expanded ? (
@@ -321,7 +326,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                     setOpen(false);
                     setExpanded(false);
                   }}
-                  className="flex h-9 w-9 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/90 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600 cursor-pointer"
+                  className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#e2e8f0] bg-white text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-800 cursor-pointer"
                   title="Close panel"
                 >
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -343,7 +348,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
             </div>
 
             <div className="relative mt-4 flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center gap-2 rounded-[18px] border border-slate-200/80 bg-slate-50/90 p-1 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.34)]">
+              <div className="inline-flex items-center gap-2 rounded-[8px] border border-[#e2e8f0] bg-slate-50 p-1">
                 {(['alerts', 'summary'] as const).map((tab) => {
                   const isActive = activeTab === tab;
                   return (
@@ -351,9 +356,9 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                       key={tab}
                       onClick={() => setActiveTab(tab)}
                       className={`
-                        rounded-[14px] px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer
+                        rounded-[6px] px-4 py-2.5 text-sm font-semibold transition-colors cursor-pointer
                         ${isActive
-                          ? 'bg-slate-900 text-white shadow-[0_16px_34px_-24px_rgba(15,23,42,0.82)]'
+                          ? 'bg-slate-900 text-white'
                           : 'text-slate-600 hover:bg-white hover:text-slate-900'
                         }
                       `}
@@ -376,7 +381,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
             {activeTab === 'alerts' ? (
               items.length === 0 ? (
                 <div className="flex h-full items-center justify-center">
-                  <div className="max-w-sm rounded-[28px] border border-white/80 bg-white/92 px-6 py-8 text-center shadow-[0_24px_60px_-42px_rgba(15,23,42,0.42)]">
+                  <div className="max-w-sm rounded-[10px] border border-[#e2e8f0] bg-white px-6 py-8 text-center">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-500">
                       All clear
                     </div>
@@ -389,7 +394,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="flex flex-col items-start gap-3">
                   {items.map(({ encounter, minutes, severity, name, newMessageCount }) => {
                     const avatarTheme = getDashboardAvatarTheme(encounter.patientId);
                     const severityTheme = SEVERITY_THEME[severity];
@@ -407,58 +412,61 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                         role="button"
                         tabIndex={0}
                         className={`
-                          group w-full cursor-pointer rounded-[24px] border p-4 text-left shadow-[0_22px_54px_-40px_rgba(15,23,42,0.4)]
-                          transition-all hover:-translate-y-0.5 hover:shadow-[0_26px_60px_-36px_rgba(15,23,42,0.45)]
-                          focus:outline-none focus:ring-2 focus:ring-priage-200
+                          group w-full max-w-sm cursor-pointer rounded-[10px] border p-4 text-left
+                          transition-colors hover:border-[#cbd5e1] focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2
                           ${severityTheme.card} ${severityTheme.border}
                         `}
                       >
-                        <div className="flex items-start gap-4">
+                        <div className="flex items-start gap-3">
                           <div className="relative shrink-0">
                             <div
-                              className="flex h-12 w-12 items-center justify-center rounded-[18px] text-sm font-bold text-white shadow-[0_16px_38px_-22px_rgba(15,23,42,0.5)]"
+                              className="flex h-10 w-10 items-center justify-center rounded-[6px] font-mono text-sm font-bold text-white"
                               style={{ backgroundImage: avatarTheme.gradient }}
                             >
                               {getDashboardInitials(name)}
                             </div>
                             <span
-                              className={`absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-white ${severityTheme.dot} ${severity === 'critical' ? 'animate-pulse-dot' : ''}`}
+                              className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white ${severityTheme.dot} ${severity === 'critical' ? 'animate-pulse-dot' : ''}`}
                             />
                           </div>
 
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <div className="truncate font-hospital-display text-lg font-semibold tracking-[-0.03em] text-slate-950">
+                              <div className="truncate text-[15px] font-semibold leading-tight text-slate-800">
                                 {name}
                               </div>
                               <StatusPill
                                 status={encounter.status}
-                                className={`rounded-md px-2 py-1 text-[10px] font-bold tracking-[0.16em] ${DASHBOARD_STATUS_THEME[encounter.status].cardPill}`}
+                                className={`rounded-[4px] px-2 py-0.5 font-mono text-[10px] font-semibold tracking-[0.16em] ${DASHBOARD_STATUS_THEME[encounter.status].cardPill}`}
                               />
-                              {encounter.currentCtasLevel && <CTASBadge level={encounter.currentCtasLevel} />}
+                              {encounter.currentCtasLevel && (
+                                <span className="[&>span]:rounded-[4px] [&>span]:border [&>span]:border-slate-200 [&>span]:bg-slate-50 [&>span]:px-2 [&>span]:py-0.5 [&>span]:font-mono [&>span]:text-[10px] [&>span]:font-semibold [&>span]:uppercase [&>span]:text-slate-600">
+                                  <CTASBadge level={encounter.currentCtasLevel} size="sm" />
+                                </span>
+                              )}
                               {newMessageCount > 0 && (
-                                <span className="inline-flex items-center rounded-full bg-priage-600 px-2.5 py-1 text-[10px] font-bold text-white">
+                                <span className="inline-flex items-center rounded-[4px] border border-[#e2e8f0] bg-slate-900 px-2 py-0.5 font-mono text-[10px] font-semibold text-white">
                                   {newMessageCount} new
                                 </span>
                               )}
                             </div>
 
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                              <span className={`rounded-full px-2.5 py-1 ${severityTheme.pill}`}>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-slate-500">
+                              <span className={`inline-flex items-center rounded-[4px] px-2 py-0.5 font-semibold uppercase tracking-[0.12em] ${severityTheme.pill}`}>
                                 {severity === 'critical' ? 'Critical wait' : severity === 'warn' ? 'Warning wait' : 'On time'}
                               </span>
-                              <span>{formatDashboardElapsedMinutes(minutes)} elapsed</span>
-                              <span>{formatTimestamp(waitingSince(encounter))}</span>
+                              <span className="text-slate-600">{formatDashboardElapsedMinutes(minutes)} elapsed</span>
+                              <span className="text-slate-400">{formatTimestamp(waitingSince(encounter))}</span>
                             </div>
 
-                            <p className="mt-3 line-clamp-2 text-sm font-medium leading-6 text-slate-700">
+                            <p className="mt-2 line-clamp-2 text-sm leading-snug text-slate-600">
                               {encounter.chiefComplaint ?? 'No complaint recorded'}
                             </p>
 
-                            <div className="mt-4 flex items-center justify-between gap-3">
+                            <div className="mt-3 flex items-center justify-between gap-3 border-t border-[#f1f5f9] pt-3">
                               <div className="min-w-0 text-xs text-slate-500">
                                 <span className={`font-semibold ${severityTheme.text}`}>{Math.round(minutes)} min waiting</span>
-                                {' · '}
+                                <span className="text-slate-300"> · </span>
                                 <span>{encounter.patient.phone ?? 'No phone on file'}</span>
                               </div>
 
@@ -467,7 +475,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                                   event.stopPropagation();
                                   dismiss(encounter.id);
                                 }}
-                                className="rounded-[12px] border border-white/80 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 cursor-pointer"
+                                className="shrink-0 rounded-[8px] border border-[#e2e8f0] bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
                                 title="Dismiss alert"
                               >
                                 Dismiss
@@ -525,7 +533,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                           <button
                             key={encounter.id}
                             onClick={() => onSelectPatient?.(encounter.id)}
-                            className="flex w-full items-center justify-between gap-3 rounded-[18px] border border-slate-200/80 bg-slate-50/85 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white cursor-pointer"
+                            className="flex w-full items-center justify-between gap-3 rounded-[8px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-3 text-left transition-colors hover:border-[#cbd5e1] hover:bg-white cursor-pointer"
                           >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-slate-800">
@@ -533,7 +541,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                               </div>
                               <div className="mt-1 text-xs text-slate-500">{encounter.chiefComplaint ?? 'No complaint recorded'}</div>
                             </div>
-                            <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${theme.pill}`}>
+                            <span className={`shrink-0 rounded-[4px] px-2.5 py-1 text-xs font-semibold ${theme.pill}`}>
                               {formatDashboardElapsedMinutes(minutes)}
                             </span>
                           </button>
@@ -549,7 +557,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                           <button
                             key={item.encounter.id}
                             onClick={() => onSelectPatient?.(item.encounter.id)}
-                            className="flex w-full items-center justify-between gap-3 rounded-[18px] border border-slate-200/80 bg-slate-50/85 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white cursor-pointer"
+                            className="flex w-full items-center justify-between gap-3 rounded-[8px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-3 text-left transition-colors hover:border-[#cbd5e1] hover:bg-white cursor-pointer"
                           >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-slate-800">{item.name}</div>
@@ -557,14 +565,14 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                                 {item.encounter.chiefComplaint ?? 'No complaint recorded'}
                               </div>
                             </div>
-                            <span className="shrink-0 rounded-full bg-priage-600 px-2.5 py-1 text-xs font-semibold text-white">
+                            <span className="shrink-0 rounded-[4px] border border-[#e2e8f0] bg-slate-900 px-2.5 py-1 font-mono text-xs font-semibold text-white">
                               {item.newMessageCount}
                             </span>
                           </button>
                         ))}
                       </div>
                     ) : (
-                      <div className="rounded-[18px] border border-slate-200/80 bg-slate-50/85 px-4 py-4 text-sm text-slate-500">
+                      <div className="rounded-[8px] border border-[#e2e8f0] bg-[#f8fafc] px-4 py-4 text-sm text-slate-500">
                         No new patient messages right now.
                       </div>
                     )}
@@ -578,7 +586,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
 
       {open && (
         <div
-          className="fixed left-0 right-0 bottom-0 z-20 bg-black/12"
+          className="fixed left-0 right-0 bottom-0 z-20 bg-slate-950/20"
           style={{ top: NAV_HEIGHT }}
           onClick={() => setOpen(false)}
         />
@@ -596,17 +604,19 @@ function PanelStatCard({
   value: string;
   tone: 'emerald' | 'amber' | 'rose' | 'slate';
 }) {
-  const toneClasses = {
-    emerald: 'border-emerald-200 bg-emerald-50/90 text-emerald-900',
-    amber: 'border-amber-200 bg-amber-50/90 text-amber-900',
-    rose: 'border-rose-200 bg-rose-50/90 text-rose-900',
-    slate: 'border-slate-200 bg-white/92 text-slate-900',
-  };
+  const valueTone =
+    tone === 'rose'
+      ? 'text-rose-700'
+      : tone === 'amber'
+        ? 'text-amber-700'
+        : tone === 'emerald'
+          ? 'text-emerald-700'
+          : 'text-slate-900';
 
   return (
-    <div className={`rounded-[22px] border px-4 py-3 shadow-[0_20px_44px_-36px_rgba(15,23,42,0.42)] ${toneClasses[tone]}`}>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">{label}</div>
-      <div className="mt-1 font-hospital-display text-[1.4rem] font-semibold tracking-[-0.03em]">{value}</div>
+    <div className="rounded-[10px] border border-[#e2e8f0] bg-white px-4 py-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</div>
+      <div className={`mt-1 font-hospital-display text-[1.25rem] font-semibold tracking-[-0.03em] ${valueTone}`}>{value}</div>
     </div>
   );
 }
@@ -621,9 +631,9 @@ function PanelSection({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[24px] border border-white/80 bg-white/92 p-5 shadow-[0_22px_50px_-40px_rgba(15,23,42,0.42)]">
+    <section className="rounded-[10px] border border-[#e2e8f0] bg-white p-5">
       <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{eyebrow}</div>
-      <h3 className="mt-2 font-hospital-display text-xl font-semibold tracking-[-0.03em] text-slate-900">
+      <h3 className="mt-2 font-hospital-display text-lg font-semibold tracking-[-0.03em] text-slate-900">
         {title}
       </h3>
       <div className="mt-4">{children}</div>
@@ -633,7 +643,7 @@ function PanelSection({
 
 function BreakdownRow({ label, value }: { label: ReactNode; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-[18px] border border-slate-200/80 bg-slate-50/85 px-3 py-3">
+    <div className="flex items-center justify-between gap-3 rounded-[8px] border border-[#e2e8f0] bg-[#f8fafc] px-3 py-3">
       <div className="min-w-0">{label}</div>
       <div className="shrink-0 text-sm font-semibold text-slate-800">{value}</div>
     </div>

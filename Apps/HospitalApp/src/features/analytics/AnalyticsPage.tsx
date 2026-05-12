@@ -54,9 +54,9 @@ function KpiCard({
     trend === 'up' ? '↑' : trend === 'down' ? '↓' : '';
 
   return (
-    <div className="animate-fade-in-up flex min-h-[136px] flex-col gap-3 rounded-[22px] border border-slate-200/80 bg-white/92 p-4 shadow-[0_20px_50px_-40px_rgba(15,23,42,0.35)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_56px_-36px_rgba(15,23,42,0.45)]">
+    <div className="animate-fade-in-up flex min-h-[136px] flex-col gap-3 rounded-[10px] border border-[#e2e8f0] bg-white p-4 transition-colors hover:border-[#cbd5e1]">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</span>
+        <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</span>
         {trend && (
           <span className={`text-sm font-semibold ${trendColor}`}>{trendIcon}</span>
         )}
@@ -73,7 +73,7 @@ function KpiCard({
 
         <div className="flex items-baseline justify-end gap-1 text-right">
           <span
-            className="font-hospital-display text-[2.1rem] font-semibold tracking-[-0.03em] text-slate-950"
+            className="text-[2.1rem] font-semibold tracking-[-0.03em] text-slate-950"
             style={{ color: accent ?? '#020617' }}
           >
             {value}
@@ -99,8 +99,8 @@ function Section({
   className?: string;
 }) {
   return (
-    <div className={`animate-fade-in-up rounded-[24px] border border-slate-200/80 bg-white/92 p-5 shadow-[0_22px_52px_-40px_rgba(15,23,42,0.35)] ${className}`}>
-      <h2 className="font-hospital-display text-[1.08rem] font-semibold tracking-[-0.02em] text-slate-900 mb-0.5">{title}</h2>
+    <div className={`animate-fade-in-up rounded-[10px] border border-[#e2e8f0] bg-white p-5 ${className}`}>
+      <h2 className="text-[1.08rem] font-semibold tracking-[-0.02em] text-slate-900 mb-0.5">{title}</h2>
       {subtitle && <p className="mb-4 text-[13px] text-slate-500">{subtitle}</p>}
       {!subtitle && <div className="mb-4" />}
       {children}
@@ -124,9 +124,9 @@ function MetricCard({
   color?: string;
 }) {
   return (
-    <div className="flex flex-col gap-2.5 rounded-[14px] border border-slate-200/80 bg-slate-50/90 p-3">
+    <div className="flex flex-col gap-2.5 rounded-[8px] border border-[#e2e8f0] bg-slate-50 p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
+        <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
         {icon && (
           <span className="flex h-8 w-8 items-center justify-center rounded-[10px] border border-slate-200 bg-white text-slate-700">
             {icon}
@@ -134,7 +134,7 @@ function MetricCard({
         )}
       </div>
       <div className="flex items-baseline gap-1">
-        <span className="font-hospital-display text-[1.4rem] font-semibold tracking-[-0.02em] text-slate-950" style={{ color: color ?? '#020617' }}>
+        <span className="text-[1.4rem] font-semibold tracking-[-0.02em] text-slate-950" style={{ color: color ?? '#020617' }}>
           {value}
         </span>
         {unit && <span className="text-xs text-gray-400">{unit}</span>}
@@ -148,7 +148,7 @@ function MetricCard({
 function EmptyState({ message }: { message: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-6 text-center">
-      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500">
+      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-[8px] border border-[#e2e8f0] bg-slate-50 text-slate-500">
         <AnalyticsIcon kind="empty" />
       </div>
       <p className="text-sm text-gray-400">{message}</p>
@@ -283,16 +283,16 @@ export function AnalyticsPage({ onNavigate, onLogout, user, encounters, chatMess
     <div className={DASHBOARD_PAGE_CLASS}>
       <NavBar currentView="analytics" onNavigate={onNavigate} onLogout={onLogout} user={user} />
 
-      <div className="mx-auto max-w-[1500px] space-y-5 px-4 py-5 sm:px-5 lg:px-6">
+      <div className="mx-auto max-w-7xl space-y-5 px-8 py-6">
         {/* ── Header ────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between rounded-[28px] border border-white/80 bg-white/78 px-6 py-5 shadow-[0_24px_70px_-48px_rgba(15,23,42,0.5)] backdrop-blur-sm">
+        <div className="flex items-center justify-between rounded-[10px] border border-[#e2e8f0] bg-white px-6 py-5">
           <div>
-            <h1 className="font-hospital-display text-[2rem] font-semibold tracking-[-0.03em] text-slate-950">Department Analytics</h1>
+            <h1 className="text-[2rem] font-semibold tracking-[-0.03em] text-slate-950">Department Analytics</h1>
             <p className="mt-1 text-[0.98rem] text-slate-500">
               Emergency Department — Real-time overview
             </p>
           </div>
-          <div className="flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50/85 px-3 py-1.5">
+          <div className="flex items-center gap-2 rounded-[6px] border border-emerald-200 bg-emerald-50 px-3 py-1.5">
             <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse-dot" />
             <span className="text-xs font-medium text-emerald-700">
               Live — {encounters.length} encounter{encounters.length !== 1 ? 's' : ''} loaded
@@ -453,7 +453,7 @@ export function AnalyticsPage({ onNavigate, onLogout, user, encounters, chatMess
           <Section title="Staffing & Workload" subtitle="Patients per triage nurse by shift">
             <div className="space-y-3">
               {staffing.map((s, i) => (
-                <div key={i} className="bg-gray-50 rounded-lg p-3">
+                <div key={i} className="rounded-[8px] border border-[#e2e8f0] bg-gray-50 p-3">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-sm font-semibold text-gray-700">{s.shift}</span>
                     <span className="text-xs text-gray-400">{s.nursesOnDuty} nurses</span>

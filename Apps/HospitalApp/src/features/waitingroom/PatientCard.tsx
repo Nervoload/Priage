@@ -53,7 +53,7 @@ export function PatientCard({ encounter, messages, alertSeverity, queueEntry, on
   const avatarTheme = getDashboardAvatarTheme(encounter.patientId);
   const complaint = encounter.chiefComplaint ?? 'No complaint recorded';
   const patientSex = formatDashboardPatientSex(encounter.patient.gender);
-  const patientAge = encounter.patient.age != null ? `Age: ${encounter.patient.age}` : 'Age: N/A';
+  const patientAgeDisplay = encounter.patient.age != null ? `${encounter.patient.age}` : '—';
   const statusPillStyle = DASHBOARD_STATUS_THEME[encounter.status].cardPill;
   const waitStart = encounter.waitingAt ?? encounter.triagedAt ?? encounter.arrivedAt ?? encounter.createdAt;
   const waitMinutes = minutesSince(waitStart);
@@ -65,10 +65,10 @@ export function PatientCard({ encounter, messages, alertSeverity, queueEntry, on
 
   const queueTone =
     queueEntry?.waitStatus === 'overdue'
-      ? 'border-rose-200/90'
+      ? 'border-rose-200'
       : queueEntry?.waitStatus === 'approaching'
-        ? 'border-amber-200/90'
-        : 'border-slate-200/80';
+        ? 'border-amber-200'
+        : 'border-[#e2e8f0]';
 
   useEffect(() => {
     const timer = setInterval(() => setTick((value) => value + 1), 30_000);
@@ -99,22 +99,17 @@ export function PatientCard({ encounter, messages, alertSeverity, queueEntry, on
     <div
       onClick={onClick}
       className={`
-        group relative flex h-full min-h-[320px] cursor-pointer flex-col overflow-visible rounded-[28px] border p-5
-        shadow-[0_24px_60px_-42px_rgba(15,23,42,0.48)]
-        transition-all duration-300 hover:-translate-y-1 hover:border-[var(--card-accent)] hover:shadow-[0_28px_70px_-38px_rgba(15,23,42,0.5)]
+        group relative flex w-full max-w-sm cursor-pointer flex-col overflow-visible rounded-[10px] border p-4
+        transition-colors hover:border-[#cbd5e1]
         ${queueTone}
       `}
       style={{
-        backgroundImage:
-          queueEntry?.waitStatus === 'overdue'
-            ? 'linear-gradient(180deg, rgba(255,241,242,0.94) 0%, rgba(255,255,255,0.98) 46%, rgba(255,255,255,1) 100%)'
-            : queueEntry?.waitStatus === 'approaching'
-              ? 'linear-gradient(180deg, rgba(255,251,235,0.94) 0%, rgba(255,255,255,0.98) 46%, rgba(255,255,255,1) 100%)'
-              : 'linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.98) 100%)',
+        backgroundImage: 'none',
+        backgroundColor: '#ffffff',
         '--card-accent': avatarTheme.accent,
       } as CSSProperties}
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-24 rounded-t-[28px] bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.86),_transparent_65%)]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[#f1f5f9]" />
 
       {alertSeverity ? (
         <div className="absolute -left-[4px] top-[4px] z-20">
@@ -123,59 +118,60 @@ export function PatientCard({ encounter, messages, alertSeverity, queueEntry, on
       ) : null}
 
       <div className="relative flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-4">
+        <div className="flex min-w-0 items-start gap-3">
           <div
-            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[20px] text-base font-bold text-white shadow-[0_16px_40px_-20px_rgba(15,23,42,0.55)]"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] font-mono text-sm font-bold text-white"
             style={{ backgroundImage: avatarTheme.gradient }}
           >
             {initials}
           </div>
           <div className="min-w-0">
-            <div className="truncate font-hospital-display text-[1.08rem] font-semibold tracking-[-0.03em] text-slate-900">
+            <div className="truncate text-[15px] font-semibold leading-tight text-slate-800">
               {name}
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-              <span>{patientSex}</span>
-              <span>{patientAge}</span>
-              <span>#{encounter.id}</span>
+            <div className="mt-0.5 font-mono text-[11px] tracking-wide text-slate-400">
+              {patientSex} / AGE {patientAgeDisplay} / #{encounter.id}
             </div>
           </div>
         </div>
 
         {encounter.currentCtasLevel && (
-          <div className="shrink-0 -translate-x-1">
-            <CTASBadge level={encounter.currentCtasLevel} size="md" />
+          <div className="shrink-0 [&>span]:rounded-[4px] [&>span]:border [&>span]:border-slate-200 [&>span]:bg-slate-50 [&>span]:px-2 [&>span]:py-0.5 [&>span]:font-mono [&>span]:text-[10px] [&>span]:font-semibold [&>span]:uppercase [&>span]:text-slate-600">
+            <CTASBadge level={encounter.currentCtasLevel} size="sm" />
           </div>
         )}
       </div>
 
-      <div className="relative mt-4 min-h-[3.3rem]">
+      <div className="relative mt-1">
         <p
           ref={complaintRef}
-          className="line-clamp-2 pr-10 text-[17px] font-semibold leading-6 text-slate-800"
+          className="relative line-clamp-2 pr-8 text-sm leading-snug text-slate-600"
         >
           {complaint}
         </p>
         {isComplaintOverflowing && (
-          <div className="pointer-events-none absolute bottom-0 right-0 h-6 w-28 bg-gradient-to-l from-white via-white/95 to-transparent" />
+          <span
+            className="pointer-events-none absolute bottom-0 right-0 block h-5 w-16 bg-gradient-to-l from-white to-transparent"
+            aria-hidden
+          />
         )}
       </div>
 
-      <div className="relative mt-4 flex flex-wrap items-center gap-2">
+      <div className="relative mt-3 flex flex-wrap items-center gap-2 border-t border-[#f1f5f9] pt-3">
         <StatusPill
           status={encounter.status}
-          className={`rounded-md px-1.5 py-0.75 text-[11px] font-bold tracking-[0.16em] ${statusPillStyle}`}
+          className={`rounded-[4px] px-2 py-0.5 font-mono text-[10px] font-semibold tracking-[0.16em] ${statusPillStyle}`}
         />
 
         {queueEntry && (
-          <span className="inline-flex items-center rounded-md bg-priage-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-priage-700">
+          <span className="inline-flex items-center rounded-[4px] border border-[#e2e8f0] bg-slate-50 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-700">
             Queue #{queueEntry.position}
           </span>
         )}
       </div>
 
       {(vitals?.heartRate || vitals?.bloodPressure || vitals?.oxygenSaturation || vitals?.temperature) && (
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium text-slate-500">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-slate-500">
           {vitals?.heartRate && <span>HR {vitals.heartRate} bpm</span>}
           {vitals?.bloodPressure && <span>BP {vitals.bloodPressure}</span>}
           {vitals?.oxygenSaturation && <span>SpO₂ {vitals.oxygenSaturation}%</span>}
@@ -184,7 +180,7 @@ export function PatientCard({ encounter, messages, alertSeverity, queueEntry, on
       )}
 
       {warnings.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {warnings.slice(0, 2).map((warning, index) => (
             <span
               key={`${warning}-${index}`}
@@ -201,22 +197,19 @@ export function PatientCard({ encounter, messages, alertSeverity, queueEntry, on
         </div>
       )}
 
-      <div className="relative mt-auto pt-4">
-        <div className="absolute inset-x-0 top-0 h-px bg-slate-200/80" />
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-nowrap items-center gap-2 text-xs text-slate-500">
-            <svg width="13" height="13" fill="none" viewBox="0 0 16 16">
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Waiting</span>
-            <span className="whitespace-nowrap text-[13px] font-semibold text-slate-700">{formatDashboardElapsedMinutes(waitMinutes)}</span>
-          </div>
-
-          <span className="shrink-0 whitespace-nowrap rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
-            {messageSummary}
-          </span>
+      <div className="mt-3 flex items-center justify-between gap-3 pt-1">
+        <div className="flex min-w-0 flex-nowrap items-center gap-2 text-xs text-slate-500">
+          <svg width="13" height="13" fill="none" viewBox="0 0 16 16">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M8 4v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <span className="whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500">Waiting</span>
+          <span className="whitespace-nowrap font-mono text-[11px] text-slate-700">{formatDashboardElapsedMinutes(waitMinutes)}</span>
         </div>
+
+        <span className="shrink-0 whitespace-nowrap rounded-[4px] border border-[#e2e8f0] bg-slate-50 px-3 py-1 font-mono text-[11px] text-slate-600">
+          {messageSummary}
+        </span>
       </div>
     </div>
   );

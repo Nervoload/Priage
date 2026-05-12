@@ -32,29 +32,29 @@ type FilterKey = 'all' | 'ctas12' | 'ctas3' | 'ctas45' | 'alerts';
 
 const FILTER_THEME: Record<FilterKey, { summary: string; pill: string }> = {
   all: {
-    summary: 'border-slate-900 bg-slate-900 text-white shadow-[0_20px_45px_-28px_rgba(15,23,42,0.9)]',
-    pill: 'border-slate-900 bg-slate-900 text-white shadow-[0_16px_36px_-26px_rgba(15,23,42,0.9)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    pill: 'border-slate-900 bg-slate-900 text-white',
   },
   ctas12: {
-    summary: 'border-rose-700 bg-rose-700 text-white shadow-[0_20px_45px_-28px_rgba(190,24,93,0.92)]',
-    pill: 'border-rose-700 bg-rose-700 text-white shadow-[0_16px_36px_-26px_rgba(190,24,93,0.92)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    pill: 'border-slate-900 bg-slate-900 text-white',
   },
   ctas3: {
-    summary: 'border-amber-600 bg-amber-600 text-white shadow-[0_20px_45px_-28px_rgba(217,119,6,0.92)]',
-    pill: 'border-amber-600 bg-amber-600 text-white shadow-[0_16px_36px_-26px_rgba(217,119,6,0.92)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    pill: 'border-slate-900 bg-slate-900 text-white',
   },
   ctas45: {
-    summary: 'border-emerald-700 bg-emerald-700 text-white shadow-[0_20px_45px_-28px_rgba(4,120,87,0.92)]',
-    pill: 'border-emerald-700 bg-emerald-700 text-white shadow-[0_16px_36px_-26px_rgba(4,120,87,0.92)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    pill: 'border-slate-900 bg-slate-900 text-white',
   },
   alerts: {
-    summary: 'border-red-700 bg-red-700 text-white shadow-[0_20px_45px_-28px_rgba(185,28,28,0.92)]',
-    pill: 'border-red-700 bg-red-700 text-white shadow-[0_16px_36px_-26px_rgba(185,28,28,0.92)]',
+    summary: 'border-slate-900 bg-slate-900 text-white',
+    pill: 'border-slate-900 bg-slate-900 text-white',
   },
 };
 
 const WAITING_ROOM_CARD_GRID_CLASS =
-  'grid justify-start [grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr))] gap-5';
+  'grid w-full grid-cols-1 gap-3 justify-items-start sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4';
 
 export function WaitingRoomView({
   onBack,
@@ -158,7 +158,7 @@ export function WaitingRoomView({
         user={user ?? null}
       />
 
-      <div className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6">
+      <div className="mx-auto max-w-7xl px-8 py-6">
         <div className={`${DASHBOARD_GLASS_PANEL_CLASS} transition-all duration-300 ${filtersVisible ? 'mb-7 p-4 sm:p-5' : 'mb-5 p-4'}`}>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className={`relative flex-1 transition-all duration-300 ${filtersVisible ? 'translate-y-0' : '-translate-y-0.5'}`}>
@@ -178,10 +178,9 @@ export function WaitingRoomView({
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 className="
-                  w-full rounded-[18px] border border-slate-200/80 bg-white px-4 py-3 pl-11
-                  text-sm font-medium text-slate-700 shadow-[0_10px_24px_-22px_rgba(15,23,42,0.5)]
-                  placeholder:text-slate-400
-                  focus:border-priage-300 focus:outline-none focus:ring-2 focus:ring-priage-200
+                  h-[44px] w-full rounded-[8px] border border-[#e2e8f0] bg-white px-4 py-3 pl-11
+                  text-sm text-slate-700 placeholder:text-slate-300
+                  focus:border-[#3b82f6] focus:outline-none focus:shadow-[0_0_0_3px_rgba(59,130,246,0.1)]
                 "
               />
               {searchQuery && (
@@ -203,9 +202,8 @@ export function WaitingRoomView({
                 disabled={loading}
                 title="Refresh waiting room"
                 className="
-                  rounded-[16px] border border-priage-200 bg-priage-50/80 px-4 py-3 text-sm font-semibold text-priage-700
-                  transition-all hover:border-priage-300 hover:bg-priage-100 hover:text-priage-800
-                  disabled:cursor-not-allowed disabled:opacity-50
+                  rounded-[8px] border border-[#e2e8f0] bg-white px-4 py-3 text-sm font-semibold text-slate-600
+                  transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50
                 "
               >
                 Refresh
@@ -219,8 +217,8 @@ export function WaitingRoomView({
                   setFilter('all');
                 }}
                 className="
-                  rounded-[16px] border border-orange-200 bg-orange-50/85 px-4 py-3 text-sm font-semibold text-orange-700
-                  transition-all hover:border-orange-300 hover:bg-orange-100 hover:text-orange-800
+                  rounded-[8px] border border-[#e2e8f0] bg-white px-4 py-3 text-sm font-semibold text-slate-600
+                  transition hover:bg-slate-50
                 "
               >
                 Reset
@@ -230,8 +228,8 @@ export function WaitingRoomView({
             <button
               onClick={() => setFiltersVisible((value) => !value)}
               className="
-                rounded-[16px] border border-slate-200 bg-slate-900 px-4 py-3 text-sm font-semibold text-white
-                transition-all hover:bg-slate-800
+                rounded-[8px] bg-slate-900 px-4 py-3 text-sm font-semibold text-white
+                transition hover:bg-slate-700
               "
             >
               {filtersVisible ? 'Hide filters' : 'Show filters'}
@@ -259,17 +257,17 @@ export function WaitingRoomView({
                       key={filterOption.key}
                       onClick={() => toggleFilter(filterOption.key)}
                       className={`
-                        cursor-pointer rounded-[22px] border px-4 py-4 transition-all duration-200 hover:-translate-y-0.5
+                        cursor-pointer rounded-[8px] border px-4 py-4 transition-colors hover:border-[#cbd5e1]
                         ${isActive
                           ? activeClasses
-                          : 'border-slate-200/80 bg-white/92 text-slate-900 shadow-[0_18px_40px_-32px_rgba(15,23,42,0.45)] hover:border-slate-300'
+                          : 'border-[#e2e8f0] bg-white text-slate-900 hover:border-[#cbd5e1]'
                         }
                       `}
                     >
-                      <div className={`text-[12px] font-bold uppercase tracking-[0.16em] ${isActive ? 'text-white/78' : 'text-slate-600'}`}>
+                      <div className={`font-mono text-[12px] font-semibold uppercase tracking-[0.16em] ${isActive ? 'text-white/78' : 'text-slate-600'}`}>
                         {filterOption.label}
                       </div>
-                      <div className={`mt-2 font-hospital-display text-[2.15rem] font-semibold tracking-[-0.03em] ${isActive ? 'text-white' : 'text-slate-900'}`}>
+                      <div className={`mt-2 text-[2.15rem] font-semibold tracking-[-0.03em] ${isActive ? 'text-white' : 'text-slate-900'}`}>
                         {filterOption.count}
                       </div>
                     </div>
@@ -277,7 +275,7 @@ export function WaitingRoomView({
                 })}
               </div>
 
-              <div className="mt-5 rounded-[22px] border border-slate-200/80 bg-slate-50/90 px-3 py-3">
+              <div className="mt-5 rounded-[10px] border border-[#e2e8f0] bg-slate-50 px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Focus</span>
                   {filters.map((filterOption) => {
@@ -291,7 +289,7 @@ export function WaitingRoomView({
                         key={filterOption.key}
                         onClick={() => toggleFilter(filterOption.key)}
                         className={`
-                          inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[13px] font-semibold transition-all
+                          inline-flex items-center gap-2 rounded-[6px] border px-3.5 py-2 text-[13px] font-semibold transition
                           ${buttonClasses}
                         `}
                       >
@@ -311,7 +309,7 @@ export function WaitingRoomView({
             {Array.from({ length: 8 }).map((_, index) => (
               <div
                 key={index}
-                className="h-[280px] rounded-[28px] border border-slate-200/80 bg-white/90 p-5 shadow-[0_18px_50px_-38px_rgba(15,23,42,0.55)] animate-shimmer"
+                className="h-36 max-w-sm rounded-[10px] border border-[#e2e8f0] bg-white p-4 animate-shimmer"
               />
             ))}
           </div>

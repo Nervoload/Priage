@@ -57,12 +57,14 @@ export function AdmitDetailPanel({ encounter, onClose, onAdmit, onSendReminder }
   const [sendingReminder, setSendingReminder] = useState(false);
   const [reminderSent, setReminderSent] = useState(false);
   const [reminderError, setReminderError] = useState<string | null>(null);
+  const [detailsVisible, setDetailsVisible] = useState(true);
 
   useEffect(() => {
     setActiveTab('overview');
     setExpanded(false);
     setReminderSent(false);
     setReminderError(null);
+    setDetailsVisible(true);
   }, [encounter.id]);
 
   useEffect(() => {
@@ -127,72 +129,72 @@ export function AdmitDetailPanel({ encounter, onClose, onAdmit, onSendReminder }
         if (event.target === backdropRef.current) onClose();
       }}
     >
-      <div className="absolute inset-0 bg-slate-950/35 backdrop-blur-[3px]" />
+      <div className="absolute inset-0 bg-slate-950/35" />
 
       <div
         className={`
-          relative flex w-full flex-col overflow-hidden rounded-[34px] border border-white/80
-          bg-[radial-gradient(circle_at_top,_rgba(255,247,237,0.95)_0%,_rgba(255,255,255,0.96)_34%,_rgba(248,250,252,1)_100%)]
-          shadow-[0_32px_90px_-48px_rgba(15,23,42,0.55)] animate-slide-up
+          relative flex w-full flex-col overflow-hidden rounded-[10px] border border-[#e2e8f0]
+          bg-white animate-slide-up
           ${expanded ? 'h-[calc(100vh-24px)] max-w-none w-[calc(100vw-24px)]' : 'max-h-[88vh] max-w-6xl'}
         `}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="relative overflow-hidden border-b border-slate-200/80 bg-white/78">
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_right,_rgba(219,234,254,0.8)_0%,_transparent_62%)]" />
+        <div className="min-h-0 flex-1 overflow-y-auto bg-white custom-scrollbar">
+          <div className="relative border-b border-[#e2e8f0]">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[#f1f5f9]" />
 
-          <div className="relative px-6 pb-5 pt-5">
-            <div className="flex items-center justify-between gap-4">
-              <button
-                onClick={handleBack}
-                className="inline-flex items-center gap-2 rounded-[16px] border border-slate-200/80 bg-white/90 px-3 py-2 text-sm font-semibold text-slate-600 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)] transition-colors hover:border-slate-300 hover:text-slate-900 cursor-pointer"
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                  <path d="M10 3 5 8l5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+            <div className="relative px-6 pb-5 pt-5">
+              <div className="flex items-center justify-between gap-4">
+                <button
+                  onClick={handleBack}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-[8px] border border-[#e2e8f0] bg-white px-3 py-2 text-sm font-semibold text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path d="M10 3 5 8l5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
                   Back
-              </button>
+                </button>
 
-              <button
-                onClick={() => setExpanded((value) => !value)}
-                className="flex h-10 w-10 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/90 text-slate-400 shadow-[0_16px_36px_-30px_rgba(15,23,42,0.35)] transition-colors hover:border-slate-300 hover:text-slate-700 cursor-pointer"
-                title={expanded ? 'Collapse popup' : 'Expand to fullscreen'}
-              >
-                {expanded ? (
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path
-                      d="M10 2v4h4M6 14v-4H2M10 6L14 2M6 10l-4 4"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path
-                      d="M14 2l-4 4M2 14l4-4M10 2h4v4M6 14H2v-4"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
-              </button>
-            </div>
-
-            <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start">
-              <div
-                className="flex h-18 w-18 shrink-0 items-center justify-center rounded-[24px] text-xl font-bold text-white shadow-[0_22px_48px_-24px_rgba(15,23,42,0.55)]"
-                style={{ backgroundImage: avatarTheme.gradient }}
-              >
-                {initials}
+                <button
+                  onClick={() => setExpanded((value) => !value)}
+                  className="flex h-10 w-10 items-center justify-center rounded-[8px] border border-[#e2e8f0] bg-white text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-700 cursor-pointer"
+                  title={expanded ? 'Collapse popup' : 'Expand to fullscreen'}
+                >
+                  {expanded ? (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path
+                        d="M10 2v4h4M6 14v-4H2M10 6L14 2M6 10l-4 4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <path
+                        d="M14 2l-4 4M2 14l4-4M10 2h4v4M6 14H2v-4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </button>
               </div>
 
-              <div className="min-w-0 flex-1">
+              <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start">
+                <div
+                  className="flex h-18 w-18 shrink-0 items-center justify-center rounded-[8px] text-xl font-bold text-white"
+                  style={{ backgroundImage: avatarTheme.gradient }}
+                >
+                  {initials}
+                </div>
+
+                <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="font-hospital-display text-[1.9rem] font-semibold tracking-[-0.04em] text-slate-950">
+                  <h2 className="text-[1.9rem] font-semibold tracking-[-0.04em] text-slate-950">
                     {name}
                   </h2>
                   <StatusPill
@@ -218,93 +220,107 @@ export function AdmitDetailPanel({ encounter, onClose, onAdmit, onSendReminder }
                   {encounter.chiefComplaint ?? 'No chief complaint recorded'}
                 </p>
                 {encounter.details && (
-                  <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-500">{encounter.details}</p>
+                  <div className="mt-2 max-w-4xl">
+                    <button
+                      type="button"
+                      onClick={() => setDetailsVisible((value) => !value)}
+                      className="rounded-[6px] border border-[#e2e8f0] bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50"
+                    >
+                      {detailsVisible ? 'Hide text' : 'Show text'}
+                    </button>
+                    {detailsVisible && (
+                      <p className="mt-2 break-words text-sm leading-6 text-slate-500">
+                        {encounter.details}
+                      </p>
+                    )}
+                  </div>
+                )}
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <HeaderMetric
+                  label="Form completion"
+                  value={`${completeness.score}%`}
+                  supporting={
+                    completeness.issues.length === 0
+                      ? 'All required intake fields are complete'
+                      : `${completeness.issues.length} intake items still need review`
+                  }
+                />
+                <HeaderMetric
+                  label="Encounter status"
+                  value={encounter.status}
+                  supporting={encounter.currentPriorityScore != null ? `Priority ${encounter.currentPriorityScore}` : 'Priority pending'}
+                />
+                <HeaderMetric
+                  label="Arrival"
+                  value={formatDateTime(encounter.arrivedAt)}
+                  supporting={encounter.expectedAt ? `Expected ${formatDateTime(encounter.expectedAt)}` : 'No expected arrival time'}
+                />
+                <HeaderMetric
+                  label="AI handoff"
+                  value={encounter.priageSummary ? 'Available' : 'Pending'}
+                  supporting={
+                    encounter.priageSummary
+                      ? `${encounter.priageSummary.questionAnswers.length} intake answers summarized`
+                      : 'No Priage summary has been generated yet'
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="relative border-t border-[#e2e8f0] px-6 py-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="inline-flex items-center gap-2 rounded-[8px] border border-[#e2e8f0] bg-slate-50 p-1">
+                  <PageButton
+                    active={activeTab === 'overview'}
+                    onClick={() => setActiveTab('overview')}
+                    label="Overview"
+                  />
+                  <PageButton
+                    active={activeTab === 'form'}
+                    onClick={() => setActiveTab('form')}
+                    label="Form Details"
+                  />
+                  <PageButton
+                    active={activeTab === 'summary'}
+                    onClick={() => setActiveTab('summary')}
+                    label="Priage AI Summary"
+                  />
+                </div>
+
+                {activeTab === 'summary' && !encounter.priageSummary && (
+                  <span className="text-xs font-medium text-slate-500">
+                    The Priage AI summary has not been generated for this encounter yet.
+                  </span>
                 )}
               </div>
             </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <HeaderMetric
-                label="Form completion"
-                value={`${completeness.score}%`}
-                supporting={
-                  completeness.issues.length === 0
-                    ? 'All required intake fields are complete'
-                    : `${completeness.issues.length} intake items still need review`
-                }
-              />
-              <HeaderMetric
-                label="Encounter status"
-                value={encounter.status}
-                supporting={encounter.currentPriorityScore != null ? `Priority ${encounter.currentPriorityScore}` : 'Priority pending'}
-              />
-              <HeaderMetric
-                label="Arrival"
-                value={formatDateTime(encounter.arrivedAt)}
-                supporting={encounter.expectedAt ? `Expected ${formatDateTime(encounter.expectedAt)}` : 'No expected arrival time'}
-              />
-              <HeaderMetric
-                label="AI handoff"
-                value={encounter.priageSummary ? 'Available' : 'Pending'}
-                supporting={
-                  encounter.priageSummary
-                    ? `${encounter.priageSummary.questionAnswers.length} intake answers summarized`
-                    : 'No Priage summary has been generated yet'
-                }
-              />
-            </div>
           </div>
 
-          <div className="relative border-t border-slate-200/80 px-6 py-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center gap-2 rounded-[18px] border border-slate-200/80 bg-slate-50/90 p-1 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.34)]">
-                <PageButton
-                  active={activeTab === 'overview'}
-                  onClick={() => setActiveTab('overview')}
-                  label="Overview"
-                />
-                <PageButton
-                  active={activeTab === 'form'}
-                  onClick={() => setActiveTab('form')}
-                  label="Form Details"
-                />
-                <PageButton
-                  active={activeTab === 'summary'}
-                  onClick={() => setActiveTab('summary')}
-                  label="Priage AI Summary"
-                />
-              </div>
-
-              {activeTab === 'summary' && !encounter.priageSummary && (
-                <span className="text-xs font-medium text-slate-500">
-                  The Priage AI summary has not been generated for this encounter yet.
-                </span>
-              )}
-            </div>
+          <div className="px-6 pb-6 pt-4">
+            {activeTab === 'overview' ? (
+              <OverviewPage
+                encounter={encounter}
+              />
+            ) : activeTab === 'form' ? (
+              <FormDetailsPage
+                encounter={encounter}
+                completeness={completeness}
+                reminderSent={reminderSent}
+                reminderError={reminderError}
+                sendingReminder={sendingReminder}
+                healthInfoEntries={healthInfoEntries}
+                onSendReminder={onSendReminder ? handleSendReminder : undefined}
+              />
+            ) : (
+              <SummaryPage encounter={encounter} />
+            )}
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-4 custom-scrollbar">
-          {activeTab === 'overview' ? (
-            <OverviewPage
-              encounter={encounter}
-            />
-          ) : activeTab === 'form' ? (
-            <FormDetailsPage
-              encounter={encounter}
-              completeness={completeness}
-              reminderSent={reminderSent}
-              reminderError={reminderError}
-              sendingReminder={sendingReminder}
-              healthInfoEntries={healthInfoEntries}
-              onSendReminder={onSendReminder ? handleSendReminder : undefined}
-            />
-          ) : (
-            <SummaryPage encounter={encounter} />
-          )}
-        </div>
-
-        <div className="border-t border-slate-200/80 bg-white/84 px-6 py-4">
+        <div className="shrink-0 border-t border-[#e2e8f0] bg-white px-6 py-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs font-medium text-slate-500">
               {encounter.priageSummary
@@ -313,7 +329,7 @@ export function AdmitDetailPanel({ encounter, onClose, onAdmit, onSendReminder }
             </div>
             <button
               onClick={() => onAdmit(encounter)}
-              className="inline-flex items-center justify-center rounded-[18px] bg-accent-600 px-5 py-3 text-sm font-semibold text-white shadow-[0_22px_42px_-24px_rgba(220,38,38,0.6)] transition-all hover:bg-accent-700 active:scale-[0.98] cursor-pointer"
+              className="inline-flex cursor-pointer items-center justify-center rounded-[8px] bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-700"
             >
               {actionLabel}
             </button>
@@ -567,7 +583,7 @@ function SummaryPage({ encounter }: { encounter: EncounterDetail }) {
 
   if (!summary) {
     return (
-      <div className="flex h-full min-h-[320px] items-center justify-center">
+      <div className="flex min-h-[280px] flex-col items-center justify-center py-16">
         <div className="max-w-lg rounded-[28px] border border-slate-200/80 bg-white/92 px-6 py-8 text-center shadow-[0_24px_60px_-42px_rgba(15,23,42,0.38)]">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-[18px] bg-slate-100 text-slate-500">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -659,9 +675,9 @@ function PageButton({ active, onClick, label }: { active: boolean; onClick: () =
     <button
       onClick={onClick}
       className={`
-        rounded-[14px] px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer
+        rounded-[6px] px-4 py-2.5 text-sm font-semibold transition-colors cursor-pointer
         ${active
-          ? 'bg-slate-900 text-white shadow-[0_16px_34px_-24px_rgba(15,23,42,0.82)]'
+          ? 'bg-slate-900 text-white'
           : 'text-slate-600 hover:bg-white hover:text-slate-900'
         }
       `}
