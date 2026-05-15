@@ -19,9 +19,18 @@ interface TriageViewProps {
   loading?: boolean;
   onRefresh?: () => void;
   user?: { email: string; role: string } | null;
+  availableViews?: View[];
 }
 
-export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh, user }: TriageViewProps) {
+export function TriageView({
+  onBack,
+  onNavigate,
+  encounters,
+  loading,
+  onRefresh,
+  user,
+  availableViews,
+}: TriageViewProps) {
   const { showToast } = useToast();
   const [activeEncounter, setActiveEncounter] = useState<EncounterDetail | null>(null);
   const [openingEncounterId, setOpeningEncounterId] = useState<number | null>(null);
@@ -76,6 +85,7 @@ export function TriageView({ onBack, onNavigate, encounters, loading, onRefresh,
         onNavigate={(v) => onNavigate?.(v)}
         onLogout={() => onBack?.()}
         user={user ?? null}
+        availableViews={availableViews}
       />
 
       <div className="p-6 max-w-[1200px] mx-auto">

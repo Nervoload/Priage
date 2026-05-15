@@ -7,6 +7,13 @@ const DEFAULT_HOSPITAL_CONFIG = {
     messaging: true,
     alerts: true,
   },
+  patientExperience: {
+    address: null,
+    phone: null,
+    checkInInstructions: null,
+    parkingNotes: null,
+    coordinates: null,
+  },
 };
 
 class TestFixtureTracker {

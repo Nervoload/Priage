@@ -20,10 +20,6 @@ export class CreateMessageDto {
   isInternal?: boolean;
 
   @IsOptional()
-  @IsBoolean()
-  isWorsening?: boolean;
-
-  @IsOptional()
   @IsArray()
   @ArrayUnique()
   @ArrayMaxSize(ASSET_MAX_FILES_PER_REQUEST)

@@ -4,6 +4,8 @@
 // GET  /patient-auth/me       — returns current patient profile (PatientGuard)
 // PATCH /patient-auth/profile — update profile fields (PatientGuard)
 // POST /patient-auth/upgrade  — convert guest intake profile to full account (PatientGuard)
+// POST /patient-auth/feedback — store patient feedback or bug report (PatientGuard)
+// DELETE /patient-auth/account — deactivate patient account access (PatientGuard)
 // POST /patient-auth/logout   — delete current session (PatientGuard)
 
 import { Body, Controller, Delete, Get, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
@@ -27,6 +29,8 @@ import { RegisterPatientDto } from './dto/register-patient.dto';
 import { LoginPatientDto } from './dto/login-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-profile.dto';
 import { UpgradeGuestDto } from './dto/upgrade-guest.dto';
+import { SubmitPatientFeedbackDto } from './dto/submit-feedback.dto';
+import { DeletePatientAccountDto } from './dto/delete-account.dto';
 
 @Controller('patient-auth')
 export class PatientAuthController {
@@ -90,6 +94,29 @@ export class PatientAuthController {
       req.correlationId,
     );
     res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
+    return result;
+  }
+
+  @Post('feedback')
+  @UseGuards(PatientGuard)
+  async submitFeedback(
+    @Body() dto: SubmitPatientFeedbackDto,
+    @CurrentPatient() patient: PatientContext,
+    @Req() req: Request,
+  ) {
+    return this.patientAuthService.submitFeedback(patient, dto, req.correlationId);
+  }
+
+  @Delete('account')
+  @UseGuards(PatientGuard)
+  async deleteAccount(
+    @Body() dto: DeletePatientAccountDto,
+    @CurrentPatient() patient: PatientContext,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.patientAuthService.deleteAccount(patient.patientId, dto, req.correlationId);
+    res.clearCookie(PATIENT_SESSION_COOKIE, buildClearedAuthCookieOptions());
     return result;
   }
 

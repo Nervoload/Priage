@@ -4,7 +4,13 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { AdmitDetailPanel } from './AdmitDetailPanel';
-import type { Encounter, EncounterDetail, EncounterListItem } from '../../shared/types/domain';
+import type {
+  CreateAdmittanceEncounterPayload,
+  Encounter,
+  EncounterDetail,
+  EncounterListItem,
+  HospitalCustomIntakeQuestion,
+} from '../../shared/types/domain';
 import { patientName } from '../../shared/types/domain';
 import type { EncounterStatus } from '../../shared/types/domain';
 import { NavBar, type View } from '../../shared/ui/NavBar';
@@ -23,8 +29,10 @@ import {
 import { useSeenEncounters } from '../../shared/hooks/useSeenEncounters';
 import { checkFormCompleteness } from '../../shared/hooks/formCompleteness';
 import { useToast } from '../../shared/ui/ToastContext';
-import { getEncounter } from '../../shared/api/encounters';
+import { createAdmittanceEncounter, getEncounter } from '../../shared/api/encounters';
 import { sendMessage } from '../../shared/api/messaging';
+import { Modal } from '../../shared/ui/Modal';
+import { ApiError } from '../../shared/api/client';
 
 interface AdmitViewProps {
   onBack?: () => void;
@@ -34,9 +42,33 @@ interface AdmitViewProps {
   loading?: boolean;
   onRefresh?: () => void;
   user?: { email: string; role: string } | null;
+  availableViews?: View[];
+  customFormQuestions?: HospitalCustomIntakeQuestion[];
 }
 
 type CategoryFilter = 'unseen' | 'stale' | 'incomplete';
+
+type AdmittanceEncounterFormState = {
+  email: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  age: string;
+  gender: string;
+  chiefComplaint: string;
+  details: string;
+};
+
+const EMPTY_ADMIT_FORM: AdmittanceEncounterFormState = {
+  email: '',
+  firstName: '',
+  lastName: '',
+  phone: '',
+  age: '',
+  gender: '',
+  chiefComplaint: '',
+  details: '',
+};
 
 const STALE_MINUTES = 120;
 
@@ -68,6 +100,12 @@ const CATEGORY_STYLES: Record<CategoryFilter, { card: string; pill: string }> = 
 const ADMIT_CARD_GRID_CLASS =
   'grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4';
 
+const ADMIT_FORM_FIELD_CLASS = `
+  w-full rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-900
+  shadow-[0_14px_30px_-26px_rgba(15,23,42,0.45)] outline-none transition-colors
+  placeholder:text-slate-400 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100
+`;
+
 function minutesSince(iso: string | null | undefined): number {
   if (!iso) return 0;
   return Math.max(0, (Date.now() - new Date(iso).getTime()) / 60_000);
@@ -78,12 +116,25 @@ function getArrivalTimestamp(encounter: Encounter): string {
 }
 
 
-export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, onRefresh, user }: AdmitViewProps) {
+export function AdmitView({
+  onBack,
+  onNavigate,
+  encounters,
+  onAdmit,
+  loading,
+  onRefresh,
+  user,
+  availableViews,
+  customFormQuestions = [],
+}: AdmitViewProps) {
   const { showToast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilters, setStatusFilters] = useState<Set<EncounterStatus>>(new Set(DEFAULT_STATUSES));
   const [categoryFilters, setCategoryFilters] = useState<Set<CategoryFilter>>(new Set());
   const [selectedEncounter, setSelectedEncounter] = useState<EncounterDetail | null>(null);
+  const [showCreateEncounterModal, setShowCreateEncounterModal] = useState(false);
+  const [createEncounterForm, setCreateEncounterForm] = useState<AdmittanceEncounterFormState>(EMPTY_ADMIT_FORM);
+  const [creatingEncounter, setCreatingEncounter] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(true);
   const { markSeen, seenIds } = useSeenEncounters();
 
@@ -134,7 +185,9 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
       );
     }
     if (categoryFilters.has('incomplete')) {
-      filtered = filtered.filter((encounter) => checkFormCompleteness(encounter).score < 80);
+      filtered = filtered.filter(
+        (encounter) => checkFormCompleteness(encounter, customFormQuestions).score < 80,
+      );
     }
 
     if (searchQuery) {
@@ -147,7 +200,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
     }
 
     return filtered;
-  }, [categoryFilters, encounters, searchQuery, seenIds, statusFilters]);
+  }, [categoryFilters, customFormQuestions, encounters, searchQuery, seenIds, statusFilters]);
 
   const newArrivals = useMemo(
     () => filteredEncounters
@@ -176,13 +229,86 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
   const formatTime = (dateString: string) =>
     new Date(dateString).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
+  const resetCreateEncounterForm = () => {
+    setCreateEncounterForm(EMPTY_ADMIT_FORM);
+  };
+
+  const openCreateEncounterModal = () => {
+    resetCreateEncounterForm();
+    setShowCreateEncounterModal(true);
+  };
+
+  const closeCreateEncounterModal = () => {
+    if (creatingEncounter) return;
+    setShowCreateEncounterModal(false);
+    resetCreateEncounterForm();
+  };
+
+  const handleCreateAdmittanceEncounter = async () => {
+    const email = createEncounterForm.email.trim();
+    const chiefComplaint = createEncounterForm.chiefComplaint.trim();
+    const ageValue = createEncounterForm.age.trim();
+    const parsedAge = ageValue ? Number(ageValue) : undefined;
+
+    if (!email) {
+      showToast('Please enter a patient email.', 'error');
+      return;
+    }
+
+    if (!chiefComplaint) {
+      showToast('Please enter a chief complaint.', 'error');
+      return;
+    }
+
+    if (parsedAge !== undefined && (!Number.isInteger(parsedAge) || parsedAge < 0)) {
+      showToast('Please enter a valid age.', 'error');
+      return;
+    }
+
+    const payload: CreateAdmittanceEncounterPayload = {
+      email,
+      firstName: createEncounterForm.firstName.trim() || null,
+      lastName: createEncounterForm.lastName.trim() || null,
+      phone: createEncounterForm.phone.trim() || null,
+      age: parsedAge ?? null,
+      gender: createEncounterForm.gender.trim() || null,
+      chiefComplaint,
+      details: createEncounterForm.details.trim() || null,
+    };
+
+    setCreatingEncounter(true);
+    try {
+      await createAdmittanceEncounter(payload);
+      showToast('Patient account and encounter created.', 'success');
+      setShowCreateEncounterModal(false);
+      resetCreateEncounterForm();
+      try {
+        await Promise.resolve(onRefresh?.());
+      } catch (refreshError) {
+        console.error('[AdmitView] Encounter created, but board refresh failed:', refreshError);
+      }
+    } catch (error) {
+      console.error('[AdmitView] Failed to create admittance encounter:', error);
+      if (error instanceof ApiError && error.status === 401) return;
+      if (error instanceof ApiError && error.status === 409) {
+        showToast('That patient email already has an account. Use the existing patient flow instead.', 'error');
+        return;
+      }
+      showToast('Could not create the encounter. Please try again.', 'error');
+    } finally {
+      setCreatingEncounter(false);
+    }
+  };
+
   const unseenCount = encounters.filter((encounter) => !seenIds.has(encounter.id)).length;
   const expecting = encounters.filter((encounter) => encounter.status === 'EXPECTED').length;
   const inAdmittance = encounters.filter((encounter) => encounter.status === 'ADMITTED').length;
   const staleCount = encounters.filter(
     (encounter) => !seenIds.has(encounter.id) && minutesSince(getArrivalTimestamp(encounter)) >= STALE_MINUTES,
   ).length;
-  const incompleteCount = encounters.filter((encounter) => checkFormCompleteness(encounter).score < 80).length;
+  const incompleteCount = encounters.filter(
+    (encounter) => checkFormCompleteness(encounter, customFormQuestions).score < 80,
+  ).length;
 
   const stats: { label: string; value: number; category?: CategoryFilter; status?: EncounterStatus }[] = [
     { label: 'Unseen', value: unseenCount, category: 'unseen' },
@@ -204,6 +330,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
         onNavigate={(view) => onNavigate?.(view)}
         onLogout={() => onBack?.()}
         user={user ?? null}
+        availableViews={availableViews}
       />
 
       <div className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6">
@@ -251,10 +378,20 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
                   transition-all hover:border-priage-300 hover:bg-priage-100 hover:text-priage-800
                   disabled:cursor-not-allowed disabled:opacity-50
                 "
-              >
-                Refresh
-              </button>
+                >
+                  Refresh
+                </button>
             )}
+
+            <button
+              onClick={openCreateEncounterModal}
+              className="
+                rounded-[16px] border border-emerald-200 bg-emerald-50/85 px-4 py-3 text-sm font-semibold text-emerald-700
+                transition-all hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800
+              "
+            >
+              Create encounter
+            </button>
 
             {hasCustomFilters && (
               <button
@@ -423,6 +560,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
                       getInitials={getDashboardInitials}
                       formatTime={formatTime}
                       onClick={() => void handleSelectEncounter(encounter)}
+                      customFormQuestions={customFormQuestions}
                     />
                   ))}
                 </div>
@@ -449,6 +587,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
                       getInitials={getDashboardInitials}
                       formatTime={formatTime}
                       onClick={() => void handleSelectEncounter(encounter)}
+                      customFormQuestions={customFormQuestions}
                     />
                   ))}
                 </div>
@@ -457,6 +596,133 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
           </div>
         )}
       </div>
+
+      <Modal
+        open={showCreateEncounterModal}
+        onClose={closeCreateEncounterModal}
+        width="max-w-4xl"
+        title={(
+          <div className="space-y-1 pr-10">
+            <div className="text-lg font-semibold text-slate-950">Create patient + encounter</div>
+            <div className="text-sm text-slate-500">
+              Creates a new patient account with the temporary password <span className="font-semibold text-slate-700">00000</span> and opens an expected encounter.
+            </div>
+          </div>
+        )}
+      >
+        <div className="px-6 py-5">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <label className="space-y-2">
+              <span className="block text-sm font-semibold text-slate-800">Patient email</span>
+              <input
+                type="email"
+                value={createEncounterForm.email}
+                onChange={(event) => setCreateEncounterForm((current) => ({ ...current, email: event.target.value }))}
+                placeholder="patient@example.com"
+                className={ADMIT_FORM_FIELD_CLASS}
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="block text-sm font-semibold text-slate-800">Phone</span>
+              <input
+                type="tel"
+                value={createEncounterForm.phone}
+                onChange={(event) => setCreateEncounterForm((current) => ({ ...current, phone: event.target.value }))}
+                placeholder="(555) 555-1234"
+                className={ADMIT_FORM_FIELD_CLASS}
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="block text-sm font-semibold text-slate-800">First name</span>
+              <input
+                type="text"
+                value={createEncounterForm.firstName}
+                onChange={(event) => setCreateEncounterForm((current) => ({ ...current, firstName: event.target.value }))}
+                placeholder="Optional"
+                className={ADMIT_FORM_FIELD_CLASS}
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="block text-sm font-semibold text-slate-800">Last name</span>
+              <input
+                type="text"
+                value={createEncounterForm.lastName}
+                onChange={(event) => setCreateEncounterForm((current) => ({ ...current, lastName: event.target.value }))}
+                placeholder="Optional"
+                className={ADMIT_FORM_FIELD_CLASS}
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="block text-sm font-semibold text-slate-800">Age</span>
+              <input
+                type="number"
+                min={0}
+                value={createEncounterForm.age}
+                onChange={(event) => setCreateEncounterForm((current) => ({ ...current, age: event.target.value }))}
+                placeholder="Optional"
+                className={ADMIT_FORM_FIELD_CLASS}
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="block text-sm font-semibold text-slate-800">Gender</span>
+              <input
+                type="text"
+                value={createEncounterForm.gender}
+                onChange={(event) => setCreateEncounterForm((current) => ({ ...current, gender: event.target.value }))}
+                placeholder="Optional"
+                className={ADMIT_FORM_FIELD_CLASS}
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            <label className="space-y-2 block">
+              <span className="block text-sm font-semibold text-slate-800">Chief complaint</span>
+              <input
+                type="text"
+                value={createEncounterForm.chiefComplaint}
+                onChange={(event) => setCreateEncounterForm((current) => ({ ...current, chiefComplaint: event.target.value }))}
+                placeholder="Brief reason for visit"
+                className={ADMIT_FORM_FIELD_CLASS}
+              />
+            </label>
+
+            <label className="space-y-2 block">
+              <span className="block text-sm font-semibold text-slate-800">Details</span>
+              <textarea
+                value={createEncounterForm.details}
+                onChange={(event) => setCreateEncounterForm((current) => ({ ...current, details: event.target.value }))}
+                placeholder="Optional context for the chart"
+                className={`${ADMIT_FORM_FIELD_CLASS} min-h-[120px] resize-y`}
+              />
+            </label>
+          </div>
+
+          <div className="mt-5 flex flex-col gap-3 border-t border-slate-200/80 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-slate-500">
+              This creates a patient account and the first encounter without any name or email matching heuristics.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={closeCreateEncounterModal}
+                disabled={creatingEncounter}
+                className="rounded-[16px] border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCreateAdmittanceEncounter()}
+                disabled={creatingEncounter}
+                className="rounded-[16px] bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creatingEncounter ? 'Creating…' : 'Create encounter'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Modal>
 
       {selectedEncounter && (
         <AdmitDetailPanel
@@ -469,6 +735,7 @@ export function AdmitView({ onBack, onNavigate, encounters, onAdmit, loading, on
           onSendReminder={async (encounter, message) => {
             await sendMessage(encounter.id, { content: message });
           }}
+          customFormQuestions={customFormQuestions}
         />
       )}
     </div>
@@ -482,6 +749,7 @@ function EncounterCard({
   getInitials,
   formatTime,
   onClick,
+  customFormQuestions,
 }: {
   encounter: EncounterListItem;
   isNew: boolean;
@@ -489,12 +757,13 @@ function EncounterCard({
   getInitials: (name: string) => string;
   formatTime: (d: string) => string;
   onClick: () => void;
+  customFormQuestions: HospitalCustomIntakeQuestion[];
 }) {
   const name = patientName(encounter.patient);
   const initials = getInitials(name);
   const avatarTheme = getDashboardAvatarTheme(encounter.patientId);
   const complaintRef = useRef<HTMLParagraphElement | null>(null);
-  const completeness = checkFormCompleteness(encounter);
+  const completeness = checkFormCompleteness(encounter, customFormQuestions);
   const arrivalAt = getArrivalTimestamp(encounter);
   const arrivalMinutes = minutesSince(arrivalAt);
   const complaint = encounter.chiefComplaint ?? 'No chief complaint recorded';

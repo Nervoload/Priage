@@ -29,6 +29,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { EncountersService } from './encounters.service';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
+import { CreateAdmittanceEncounterDto } from './dto/create-admittance-encounter.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
 
 @Controller('encounters')
@@ -44,6 +45,21 @@ export class EncountersController {
     @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
     return this.encountersService.createEncounter(
+      user.hospitalId,
+      dto,
+      { actorUserId: user.userId },
+      req.correlationId,
+    );
+  }
+
+  @Post('admit')
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  async createAdmittanceEncounter(
+    @Body() dto: CreateAdmittanceEncounterDto,
+    @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number },
+  ) {
+    return this.encountersService.createAdmittanceEncounter(
       user.hospitalId,
       dto,
       { actorUserId: user.userId },

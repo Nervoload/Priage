@@ -55,6 +55,12 @@ const services = [
     env: () => ({}),
   },
 ];
+const backendService = services[0];
+const hospitalService = services[1];
+const patientService = services[2];
+const backendReadinessUrl = `http://localhost:${backendService.port}/health/ready`;
+const hospitalAppUrl = `http://localhost:${hospitalService.port}`;
+const patientAppUrl = `http://localhost:${patientService.port}`;
 
 if (wantsHelp) {
   printUsage();
@@ -83,18 +89,43 @@ async function main() {
   ensurePlatform();
   ensureEnvFiles();
   ensurePrerequisites();
-  ensureDockerServices();
-  installDependencies();
-  runPrismaSetup();
-  const bootstrapArgs = ['scripts/bootstrap-dev-accounts.js'];
-  if (wantsNewUser) {
-    bootstrapArgs.push('--create-extra-user');
+  const stackStatus = await getStackStatus();
+  logStackStatus(stackStatus);
+
+  const shouldRunStartup = !stackStatus.ready;
+  if (shouldRunStartup) {
+    console.log('\n== Startup ==');
+    console.log('[priage-dev] Stack is not fully ready; running startup flow.');
+    ensureDockerServices(stackStatus.docker);
+    installDependencies();
+    runPrismaSetup();
+  } else {
+    console.log('\n== Startup ==');
+    console.log('[priage-dev] Stack already fully running; skipping startup flow.');
+    if (wantsVerbose) {
+      console.warn(
+        '[priage-dev] --verbose only affects freshly launched backend processes; the current backend log level is unchanged.',
+      );
+    }
   }
-  runStep('Ensuring local dev accounts', 'node', bootstrapArgs, {
-    cwd: backendDir,
-    env: { PRIAGE_DEV_RUNTIME_DIR: runtimeDir },
-  });
-  const devAccountEnv = loadDevAccountEnv();
+
+  let devAccountEnv = loadDevAccountEnv();
+  if (shouldRunStartup || wantsNewUser) {
+    const bootstrapArgs = ['scripts/bootstrap-dev-accounts.js'];
+    if (wantsNewUser) {
+      bootstrapArgs.push('--create-extra-user');
+    }
+
+    const bootstrapLabel = wantsNewUser && !shouldRunStartup
+      ? 'Adding one new hospital user'
+      : 'Ensuring local dev accounts';
+    runStep(bootstrapLabel, 'node', bootstrapArgs, {
+      cwd: backendDir,
+      env: { PRIAGE_DEV_RUNTIME_DIR: runtimeDir },
+    });
+    devAccountEnv = loadDevAccountEnv();
+  }
+
   if (wantsReseed || wantsFullseed) {
     runStep('Reseeding patient-facing dev data', 'node', ['scripts/reseed-dev.js'], {
       cwd: backendDir,
@@ -109,8 +140,9 @@ async function main() {
       env: buildSeedEnv(devAccountEnv),
     });
   }
-  const launchedServices = launchServices(version, devAccountEnv);
-  if (wantsSmoke || wantsLogs) {
+
+  const launchedServices = shouldRunStartup ? launchServices(version, devAccountEnv) : new Set();
+  if (shouldRunStartup && (wantsSmoke || wantsLogs)) {
     await waitForBackend(launchedServices);
   }
   if (wantsLogs && !wantsSmoke) {
@@ -121,8 +153,10 @@ async function main() {
     });
   }
   if (wantsSmoke) {
-    await waitForFrontendService(services[1], 'http://localhost:5173', launchedServices);
-    await waitForFrontendService(services[2], 'http://localhost:5174', launchedServices);
+    if (shouldRunStartup) {
+      await waitForFrontendService(hospitalService, hospitalAppUrl, launchedServices);
+      await waitForFrontendService(patientService, patientAppUrl, launchedServices);
+    }
     runStep('Running developer confidence pipeline', 'npm', ['run', 'test:dev-pipeline'], {
       cwd: backendDir,
       env: devAccountEnv,
@@ -230,10 +264,59 @@ function ensureRuntimeDir() {
   mkdirSync(runtimeDir, { recursive: true });
 }
 
-function ensureDockerServices() {
-  console.log('\n== Docker ==');
-  const servicesOutput = capture('docker', ['compose', 'config', '--services'], { cwd: projectRoot }).trim();
-  const expectedServices = servicesOutput.split('\n').map((line) => line.trim()).filter(Boolean);
+async function getStackStatus() {
+  const docker = getDockerStatus();
+  const [backendReady, hospitalReady, patientReady] = await Promise.all([
+    checkBackendReady(),
+    checkFrontendReady(hospitalAppUrl),
+    checkFrontendReady(patientAppUrl),
+  ]);
+
+  return {
+    docker,
+    backendReady,
+    hospitalReady,
+    patientReady,
+    ready: docker.ready && backendReady && hospitalReady && patientReady,
+  };
+}
+
+function logStackStatus(stackStatus) {
+  console.log('\n== Stack Check ==');
+  console.log(`[priage-dev] Docker: ${formatDockerStatus(stackStatus.docker)}.`);
+  console.log(`[priage-dev] Backend: ${stackStatus.backendReady ? 'ready' : 'not ready'}.`);
+  console.log(`[priage-dev] Hospital app: ${stackStatus.hospitalReady ? 'ready' : 'not ready'}.`);
+  console.log(`[priage-dev] Patient app: ${stackStatus.patientReady ? 'ready' : 'not ready'}.`);
+}
+
+function formatDockerStatus(dockerStatus) {
+  if (dockerStatus.ready) {
+    return 'ready';
+  }
+
+  const issues = [];
+  if (dockerStatus.missingServices.length > 0) {
+    issues.push(`missing ${dockerStatus.missingServices.join(', ')}`);
+  }
+  if (dockerStatus.stoppedServices.length > 0) {
+    issues.push(`stopped ${dockerStatus.stoppedServices.join(', ')}`);
+  }
+
+  return issues.length > 0 ? `not ready (${issues.join('; ')})` : 'not ready';
+}
+
+function getExpectedDockerServices() {
+  const servicesOutput = capture('docker', ['compose', 'config', '--services'], {
+    cwd: projectRoot,
+  }).trim();
+  return servicesOutput
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function getDockerStatus() {
+  const expectedServices = getExpectedDockerServices();
   const currentState = getComposeState();
 
   const missingServices = expectedServices.filter((name) => !currentState.has(name));
@@ -241,6 +324,22 @@ function ensureDockerServices() {
     const entry = currentState.get(name);
     return entry && !isRunningStatus(entry.state);
   });
+
+  return {
+    expectedServices,
+    missingServices,
+    stoppedServices,
+    ready: missingServices.length === 0 && stoppedServices.length === 0,
+  };
+}
+
+function ensureDockerServices(dockerStatus = getDockerStatus()) {
+  console.log('\n== Docker ==');
+  const {
+    expectedServices,
+    missingServices,
+    stoppedServices,
+  } = dockerStatus;
 
   if (missingServices.length > 0) {
     console.log(`[priage-dev] Missing containers for: ${missingServices.join(', ')}.`);
@@ -665,45 +764,57 @@ function appleScriptQuote(value) {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+async function checkBackendReady() {
+  return fetchWithTimeout(backendReadinessUrl, async (response) => {
+    if (!response.ok) {
+      return false;
+    }
+
+    const payload = await response.json().catch(() => null);
+    return Boolean(payload && payload.ok === true && payload.status === 'ready');
+  });
+}
+
+async function checkFrontendReady(url) {
+  return fetchWithTimeout(url, async (response) => response.ok);
+}
+
+async function fetchWithTimeout(url, parser) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1_500);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    return await parser(response);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function waitForBackend(launchedServices = new Set()) {
   console.log('\n== Backend Readiness ==');
   const timeoutMs = 90_000;
   const intervalMs = 1_500;
   const deadline = Date.now() + timeoutMs;
-  const readinessUrl = 'http://localhost:3000/health/ready';
-  const backendService = services[0];
 
   while (Date.now() < deadline) {
     ensureManagedServiceAlive(backendService, launchedServices);
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 1_500);
-      const response = await fetch(readinessUrl, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (!response.ok) {
-        await sleep(intervalMs);
-        continue;
-      }
-
-      const payload = await response.json().catch(() => null);
-      if (!payload || payload.ok !== true || payload.status !== 'ready') {
-        await sleep(intervalMs);
-        continue;
-      }
-
+    if (await checkBackendReady()) {
       // Give the watch-mode process a brief settle period before kicking off smoke tests.
       await sleep(1_000);
-      console.log(`[priage-dev] Backend is ready via ${readinessUrl}.`);
+      console.log(`[priage-dev] Backend is ready via ${backendReadinessUrl}.`);
       return;
-    } catch {
-      await sleep(intervalMs);
     }
+
+    await sleep(intervalMs);
   }
 
-  throw new Error(`Backend did not become ready via ${readinessUrl} within 90 seconds.`);
+  throw new Error(`Backend did not become ready via ${backendReadinessUrl} within 90 seconds.`);
 }
 
 async function waitForFrontendService(service, url, launchedServices = new Set()) {
@@ -714,22 +825,11 @@ async function waitForFrontendService(service, url, launchedServices = new Set()
 
   while (Date.now() < deadline) {
     ensureManagedServiceAlive(service, launchedServices);
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 1_500);
-      const response = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (response.ok) {
-        console.log(`[priage-dev] ${service.name} is ready via ${url}.`);
-        return;
-      }
-    } catch {
-      // Poll until timeout.
+    if (await checkFrontendReady(url)) {
+      console.log(`[priage-dev] ${service.name} is ready via ${url}.`);
+      return;
     }
+
     await sleep(intervalMs);
   }
 

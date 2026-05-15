@@ -136,7 +136,7 @@ export function PriagePage() {
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: 'calc(100vh - 64px)',
-    padding: '1rem 1rem 5.5rem',
+    padding: '1rem 1rem 2rem',
     background: heroBackdrop,
     fontFamily: patientTheme.fonts.body,
     color: patientTheme.colors.ink,

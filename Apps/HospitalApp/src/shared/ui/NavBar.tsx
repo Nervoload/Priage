@@ -2,8 +2,9 @@
 // Shared top navigation bar used across all views.
 
 import type { ReactNode } from 'react';
+import type { HospitalPageKey } from '../types/domain';
 
-export type View = 'admit' | 'triage' | 'waiting' | 'analytics' | 'settings';
+export type View = HospitalPageKey;
 
 interface NavTab {
   key: View;
@@ -16,6 +17,7 @@ interface NavBarProps {
   onNavigate: (view: View) => void;
   onLogout: () => void;
   user: { email: string; role: string } | null;
+  availableViews?: View[];
 }
 
 const tabs: NavTab[] = [
@@ -72,13 +74,22 @@ const tabs: NavTab[] = [
   },
 ];
 
-export function NavBar({ currentView, onNavigate, onLogout, user }: NavBarProps) {
+export function NavBar({ currentView, onNavigate, onLogout, user, availableViews }: NavBarProps) {
+  const visibleTabs = tabs
+    .filter((tab) => !availableViews || availableViews.includes(tab.key))
+    .map((tab) => (
+      tab.key === 'settings' && user?.role === 'ADMIN'
+        ? { ...tab, label: 'Admin Settings' }
+        : tab
+    ));
+  const homeView = visibleTabs.find((tab) => tab.key === 'waiting')?.key ?? visibleTabs[0]?.key ?? 'settings';
+
   return (
     <nav className="sticky top-0 z-50 overflow-visible border-b border-white/10 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg">
       <div className="relative h-16 px-6">
         <div className="absolute left-6 top-1/2 z-30 flex min-w-[220px] -translate-y-1/2 items-center justify-start">
           <button
-            onClick={() => onNavigate('waiting')}
+            onClick={() => onNavigate(homeView)}
             className="flex items-center gap-2 text-white transition-opacity hover:opacity-80"
           >
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-sm font-black text-white ring-1 ring-white/20">
@@ -90,16 +101,16 @@ export function NavBar({ currentView, onNavigate, onLogout, user }: NavBarProps)
           </button>
         </div>
 
-        <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex w-[min(780px,calc(100vw-30rem))] max-w-[calc(100vw-8rem)] min-w-[560px] -translate-x-1/2 -translate-y-1/2 items-center justify-center">
-          <div className="pointer-events-auto grid w-full grid-cols-5 items-end gap-3">
-            {tabs.map((tab) => {
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex w-[min(820px,calc(100vw-30rem))] max-w-[calc(100vw-8rem)] -translate-x-1/2 -translate-y-1/2 items-center justify-center">
+          <div className="pointer-events-auto flex w-full items-end justify-center gap-3">
+            {visibleTabs.map((tab) => {
               const isActive = currentView === tab.key;
               return (
                 <button
                   key={tab.key}
                   onClick={() => onNavigate(tab.key)}
                   className={`
-                    group relative flex min-h-[46px] items-center justify-center gap-2 whitespace-nowrap px-3 pb-3 pt-2 text-center
+                    group relative flex min-h-[46px] min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap px-3 pb-3 pt-2 text-center
                     font-hospital-display text-base font-semibold tracking-[-0.02em] transition-all duration-150 cursor-pointer
                     ${isActive ? 'text-white' : 'text-white/68 hover:text-white'}
                   `}

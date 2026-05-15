@@ -20,6 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { CreatePatientMessageDto } from './dto/create-patient-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages.query.dto';
+import { ListPatientMessagesQueryDto } from './dto/list-patient-messages.query.dto';
 
 const messageWithAssetsSelect = {
   id: true,
@@ -62,7 +63,8 @@ export class MessagingService {
   ): Promise<PaginatedResponse<any>> {
     const page = query?.page || 1;
     const limit = query?.limit || 20;
-    const skip = (page - 1) * limit;
+    const skip = query?.afterMessageId != null ? undefined : (page - 1) * limit;
+    const afterMessageId = query?.afterMessageId ?? null;
 
     this.loggingService.debug(
       'Listing messages',
@@ -76,19 +78,32 @@ export class MessagingService {
       {
         page,
         limit,
+        afterMessageId,
       },
     );
 
     try {
+      const where: Prisma.MessageWhereInput = {
+        encounterId,
+        hospitalId,
+        ...(afterMessageId != null
+          ? {
+              id: {
+                gt: afterMessageId,
+              },
+            }
+          : {}),
+      };
+
       const [messages, total] = await Promise.all([
         this.prisma.message.findMany({
-          where: { encounterId, hospitalId },
+          where,
           orderBy: { createdAt: 'asc' },
-          skip,
+          ...(skip != null ? { skip } : {}),
           take: limit,
           select: messageWithAssetsSelect,
         }),
-        this.prisma.message.count({ where: { encounterId, hospitalId } }),
+        this.prisma.message.count({ where }),
       ]);
 
       const totalPages = Math.ceil(total / limit);
@@ -414,6 +429,7 @@ export class MessagingService {
   async listMessagesForPatient(
     encounterId: number,
     patientId: number,
+    query?: ListPatientMessagesQueryDto,
     correlationId?: string,
   ) {
     this.loggingService.debug(
@@ -424,6 +440,10 @@ export class MessagingService {
         correlationId,
         encounterId,
         patientId,
+      },
+      {
+        afterMessageId: query?.afterMessageId ?? null,
+        limit: query?.limit ?? null,
       },
     );
 
@@ -444,8 +464,16 @@ export class MessagingService {
           encounterId,
           hospitalId: encounter.hospitalId,
           isInternal: false,
+          ...(query?.afterMessageId != null
+            ? {
+                id: {
+                  gt: query.afterMessageId,
+                },
+              }
+            : {}),
         },
         orderBy: { createdAt: 'asc' },
+        take: query?.limit ?? undefined,
         select: messageWithAssetsSelect,
       });
 

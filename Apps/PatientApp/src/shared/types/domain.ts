@@ -8,6 +8,18 @@ export type EncounterStatus =
   | 'CANCELLED';
 
 export type SenderType = 'PATIENT' | 'USER' | 'SYSTEM';
+export type HospitalIntakeResponseType = 'text' | 'textarea' | 'boolean' | 'number' | 'select';
+export type HospitalIntakeAppliesTo = 'admit' | 'triage' | 'both';
+
+export interface HospitalCustomIntakeQuestion {
+  id: string;
+  fieldKey: string;
+  label: string;
+  helpText: string;
+  required: boolean;
+  responseType: HospitalIntakeResponseType;
+  appliesTo: HospitalIntakeAppliesTo;
+}
 
 export interface AssetSummary {
   id: number;
@@ -32,6 +44,7 @@ export interface PatientProfile {
   allergies: string | null;
   conditions: string | null;
   preferredLanguage: string;
+  optionalHealthInfo?: Record<string, unknown> | null;
 }
 
 export interface AuthResponse {
@@ -65,6 +78,19 @@ export interface UpdateProfilePayload {
   allergies?: string;
   conditions?: string;
   preferredLanguage?: string;
+  currentPassword?: string;
+}
+
+export type PatientFeedbackType = 'feedback' | 'bug';
+
+export interface SubmitPatientFeedbackPayload {
+  type: PatientFeedbackType;
+  message: string;
+}
+
+export interface DeletePatientAccountPayload {
+  email: string;
+  password: string;
 }
 
 export interface UpgradeGuestPayload {
@@ -211,6 +237,7 @@ export interface UpdateIntakeDetailsPayload {
   age?: number;
   allergies?: string;
   conditions?: string;
+  customQuestionAnswers?: Record<string, string | number | boolean | null | undefined>;
 }
 
 export interface UpdateIntakeDetailsResponse {
@@ -306,6 +333,15 @@ export interface Hospital {
   id: number;
   name: string;
   slug: string;
+  address: string | null;
+  phone: string | null;
+  checkInInstructions: string | null;
+  parkingNotes: string | null;
+  coordinates: {
+    latitude: number;
+    longitude: number;
+  } | null;
+  customIntakeQuestions: HospitalCustomIntakeQuestion[];
 }
 
 export type EncounterWorkspaceTab = 'current' | 'chat' | 'profile';

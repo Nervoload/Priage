@@ -64,7 +64,7 @@ async function bootstrap(): Promise<void> {
     new ValidationPipe({
       whitelist: true,
       transform: true,
-      forbidNonWhitelisted: false, // Allow extra properties (more flexible for clients)
+      forbidNonWhitelisted: true,
       transformOptions: {
         enableImplicitConversion: true,
       },

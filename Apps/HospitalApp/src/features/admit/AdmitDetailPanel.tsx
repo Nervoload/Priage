@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { EncounterDetail } from '../../shared/types/domain';
+import type { EncounterDetail, HospitalCustomIntakeQuestion } from '../../shared/types/domain';
 import { patientName } from '../../shared/types/domain';
 import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
@@ -16,6 +16,7 @@ interface AdmitDetailPanelProps {
   onClose: () => void;
   onAdmit: (encounter: EncounterDetail) => void;
   onSendReminder?: (encounter: EncounterDetail, message: string) => Promise<void>;
+  customFormQuestions?: HospitalCustomIntakeQuestion[];
 }
 
 type DetailTab = 'overview' | 'form' | 'summary';
@@ -50,7 +51,34 @@ function formatHealthInfoValues(value: unknown): string[] {
   return [String(value)];
 }
 
-export function AdmitDetailPanel({ encounter, onClose, onAdmit, onSendReminder }: AdmitDetailPanelProps) {
+function formatActivityType(type: string): string {
+  return type
+    .toLowerCase()
+    .split('_')
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+}
+
+function formatActivityActor(
+  actorUserId: number | null | undefined,
+  actorPatientId: number | null | undefined,
+): string {
+  if (actorUserId != null) {
+    return `Staff #${actorUserId}`;
+  }
+  if (actorPatientId != null) {
+    return `Patient #${actorPatientId}`;
+  }
+  return 'System';
+}
+
+export function AdmitDetailPanel({
+  encounter,
+  onClose,
+  onAdmit,
+  onSendReminder,
+  customFormQuestions = [],
+}: AdmitDetailPanelProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>('overview');
   const [expanded, setExpanded] = useState(false);
@@ -83,7 +111,7 @@ export function AdmitDetailPanel({ encounter, onClose, onAdmit, onSendReminder }
   const initials = getDashboardInitials(name);
   const avatarTheme = getDashboardAvatarTheme(encounter.patientId);
   const patientSex = formatDashboardPatientSex(encounter.patient.gender);
-  const completeness = checkFormCompleteness(encounter);
+  const completeness = checkFormCompleteness(encounter, customFormQuestions);
   const actionLabel =
     encounter.status === 'EXPECTED'
       ? 'Confirm Arrival'
@@ -297,6 +325,7 @@ export function AdmitDetailPanel({ encounter, onClose, onAdmit, onSendReminder }
               reminderError={reminderError}
               sendingReminder={sendingReminder}
               healthInfoEntries={healthInfoEntries}
+              customFormQuestions={customFormQuestions}
               onSendReminder={onSendReminder ? handleSendReminder : undefined}
             />
           ) : (
@@ -330,6 +359,7 @@ function OverviewPage({
   encounter: EncounterDetail;
 }) {
   const patient = encounter.patient;
+  const recentActivity = encounter.activityLog ?? [];
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1.08fr,0.92fr]">
@@ -377,6 +407,31 @@ function OverviewPage({
           <TimelineItem label="Departed" time={encounter.departedAt} />
         </div>
       </SectionCard>
+
+      <SectionCard eyebrow="Audit" title="Recent Activity">
+        {recentActivity.length > 0 ? (
+          <div className="space-y-2">
+            {recentActivity.map((event) => (
+              <div
+                key={event.id}
+                className="rounded-[20px] border border-slate-200/80 bg-slate-50/88 px-4 py-3 shadow-[0_16px_32px_-30px_rgba(15,23,42,0.34)]"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-semibold text-slate-800">{formatActivityType(event.type)}</div>
+                  <div className="text-xs text-slate-500">{formatDateTime(event.createdAt)}</div>
+                </div>
+                <div className="mt-1 text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
+                  {formatActivityActor(event.actorUserId, event.actorPatientId)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-[18px] border border-slate-200/80 bg-slate-50/88 px-4 py-4 text-sm text-slate-500">
+            No activity has been logged for this encounter yet.
+          </div>
+        )}
+      </SectionCard>
     </div>
   );
 }
@@ -388,6 +443,7 @@ function FormDetailsPage({
   reminderError,
   sendingReminder,
   healthInfoEntries,
+  customFormQuestions,
   onSendReminder,
 }: {
   encounter: EncounterDetail;
@@ -396,6 +452,7 @@ function FormDetailsPage({
   reminderError: string | null;
   sendingReminder: boolean;
   healthInfoEntries: Array<[string, unknown]>;
+  customFormQuestions: HospitalCustomIntakeQuestion[];
   onSendReminder?: () => Promise<void>;
 }) {
   const patient = encounter.patient;
@@ -407,6 +464,11 @@ function FormDetailsPage({
         : 'bg-rose-500';
 
   const missingFields = new Set(completeness.issues.map((issue) => issue.field));
+  const healthInfo = encounter.patient.optionalHealthInfo as Record<string, unknown> | null;
+  const applicableCustomQuestions = customFormQuestions.filter((question) => question.appliesTo !== 'triage');
+  const customQuestionLabelMap = new Map(
+    applicableCustomQuestions.map((question) => [question.fieldKey, question.label]),
+  );
   const formFieldRows = [
     { field: 'firstName', label: 'First Name', value: patient.firstName ?? 'Missing' },
     { field: 'lastName', label: 'Last Name', value: patient.lastName ?? 'Missing' },
@@ -421,6 +483,14 @@ function FormDetailsPage({
       label: 'Pre-Triage Questionnaire',
       value: healthInfoEntries.length > 0 ? `${healthInfoEntries.length} field${healthInfoEntries.length === 1 ? '' : 's'} completed` : 'Not completed',
     },
+    ...applicableCustomQuestions.map((question) => {
+      const values = formatHealthInfoValues(healthInfo?.[question.fieldKey]);
+      return {
+        field: `custom:${question.fieldKey}`,
+        label: question.label,
+        value: values.length > 0 ? values.join(', ') : 'Missing',
+      };
+    }),
   ];
 
   const questionAnswers = encounter.priageSummary?.questionAnswers ?? [];
@@ -524,7 +594,11 @@ function FormDetailsPage({
         <SectionCard eyebrow="Questionnaire" title="Submitted Form Responses">
           <div className="grid gap-3 sm:grid-cols-2">
             {healthInfoEntries.map(([key, value]) => (
-              <MultiValueField key={key} label={formatHealthInfoLabel(key)} values={formatHealthInfoValues(value)} />
+              <MultiValueField
+                key={key}
+                label={customQuestionLabelMap.get(key) ?? formatHealthInfoLabel(key)}
+                values={formatHealthInfoValues(value)}
+              />
             ))}
           </div>
         </SectionCard>

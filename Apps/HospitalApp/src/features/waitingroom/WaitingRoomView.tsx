@@ -26,6 +26,9 @@ interface WaitingRoomViewProps {
   loading?: boolean;
   onRefresh?: () => void;
   user?: { email: string; role: string } | null;
+  availableViews?: View[];
+  realtimeActive?: boolean;
+  onEnterWaitingRoom?: () => void;
 }
 
 type FilterKey = 'all' | 'ctas12' | 'ctas3' | 'ctas45' | 'alerts';
@@ -66,6 +69,9 @@ export function WaitingRoomView({
   loading,
   onRefresh,
   user,
+  availableViews,
+  realtimeActive = false,
+  onEnterWaitingRoom,
 }: WaitingRoomViewProps) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -156,6 +162,7 @@ export function WaitingRoomView({
         onNavigate={(view) => onNavigate?.(view)}
         onLogout={() => onBack?.()}
         user={user ?? null}
+        availableViews={availableViews}
       />
 
       <div className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6">
@@ -209,6 +216,18 @@ export function WaitingRoomView({
                 "
               >
                 Refresh
+              </button>
+            )}
+
+            {!realtimeActive && onEnterWaitingRoom && (
+              <button
+                onClick={onEnterWaitingRoom}
+                className="
+                  rounded-[16px] border border-emerald-300 bg-emerald-600 px-4 py-3 text-sm font-semibold text-white
+                  transition-all hover:bg-emerald-700
+                "
+              >
+                Enter the Waiting Room
               </button>
             )}
 
@@ -276,6 +295,13 @@ export function WaitingRoomView({
                   );
                 })}
               </div>
+
+              {!realtimeActive && (
+                <div className="mt-5 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-900">
+                  Live patient-message monitoring is paused until a staff member enters the waiting room. Use the
+                  button above when you are ready to start hospital-wide waiting-room updates.
+                </div>
+              )}
 
               <div className="mt-5 rounded-[22px] border border-slate-200/80 bg-slate-50/90 px-3 py-3">
                 <div className="flex flex-wrap items-center gap-2">

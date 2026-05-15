@@ -12,6 +12,7 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader } = require('./lib/demo-gate');
+const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 // Initialize Prisma with pg-adapter (Prisma 7 approach)
 const pool = new Pool({
@@ -119,6 +120,41 @@ async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function looksLikeJwt(value) {
+  return typeof value === 'string' && value.split('.').length === 3;
+}
+
+function extractStaffSessionToken(headers) {
+  const rawCookies = Array.isArray(headers?.['set-cookie'])
+    ? headers['set-cookie']
+    : (headers?.['set-cookie']
+      ? [headers['set-cookie']]
+      : (typeof headers?.getSetCookie === 'function'
+        ? headers.getSetCookie()
+        : (headers?.get?.('set-cookie') ? [headers.get('set-cookie')] : [])));
+
+  for (const cookie of rawCookies) {
+    const match = String(cookie).match(new RegExp(`${STAFF_AUTH_COOKIE}=([^;]+)`));
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function buildStaffAuthHeaders(token) {
+  if (!token) {
+    return {};
+  }
+
+  if (looksLikeJwt(token)) {
+    return { Authorization: `Bearer ${token}` };
+  }
+
+  return { Cookie: `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}` };
+}
+
 // ============================================================================
 // HTTP Request Wrapper
 // ============================================================================
@@ -167,6 +203,9 @@ function makeRequest(options, body = null) {
 function buildRequestOptions(path, method = 'GET', includeAuth = false) {
   const url = new URL(CONFIG.baseUrl + path);
   const demoCookie = demoCookieHeader();
+  const authHeaders = includeAuth && testState.accessToken
+    ? buildStaffAuthHeaders(testState.accessToken)
+    : {};
   
   const options = {
     protocol: url.protocol,
@@ -176,12 +215,13 @@ function buildRequestOptions(path, method = 'GET', includeAuth = false) {
     method: method,
     headers: {
       'Content-Type': 'application/json',
-      ...(demoCookie ? { Cookie: demoCookie } : {}),
+      ...(authHeaders.Authorization ? { Authorization: authHeaders.Authorization } : {}),
     },
   };
-  
-  if (includeAuth && testState.accessToken) {
-    options.headers['Authorization'] = `Bearer ${testState.accessToken}`;
+  const cookieParts = [demoCookie, authHeaders.Cookie];
+  const cookieHeader = cookieParts.filter(Boolean).join('; ');
+  if (cookieHeader) {
+    options.headers.Cookie = cookieHeader;
   }
   
   return options;
@@ -430,7 +470,7 @@ async function testAuthenticationLogging() {
     testState.correlationId = correlationId;
     
     if (response.statusCode === 200 || response.statusCode === 201) {
-      testState.accessToken = response.data.access_token;
+      testState.accessToken = extractStaffSessionToken(response.headers) ?? response.data.access_token ?? null;
       testState.userId = response.data.user.id;
       testState.hospitalId = response.data.user.hospitalId;
       
@@ -450,17 +490,17 @@ async function testAuthenticationLogging() {
   
   await sleep(1000);
   
-  // Test 1C: JWT validation (accessing protected route)
-  logInfo('Test 1C: Testing JWT validation...');
+  // Test 1C: Staff session validation (accessing protected route)
+  logInfo('Test 1C: Testing staff session validation...');
   try {
     const options = buildRequestOptions('/auth/me', 'GET', true);
     const response = await makeRequest(options);
     
     if (response.statusCode === 200) {
-      logSuccess('Test 1C: JWT validation successful');
-      logInfo('Test 1C: JWT validation logs written (check DEBUG level)');
+      logSuccess('Test 1C: Staff session validation successful');
+      logInfo('Test 1C: Staff session validation logs written (check DEBUG level)');
     } else {
-      logError(`Test 1C: JWT validation failed with status ${response.statusCode}`);
+      logError(`Test 1C: Staff session validation failed with status ${response.statusCode}`);
     }
   } catch (error) {
     logError(`Test 1C: Failed - ${error.message}`);
@@ -505,7 +545,6 @@ async function testEncounterWorkflowLogging() {
     const options = buildRequestOptions('/encounters', 'POST', true);
     const response = await makeRequest(options, {
       patientId: testState.patientId,
-      hospitalId: testState.hospitalId,
       chiefComplaint: 'Test logging complaint',
       details: 'Testing comprehensive logging system',
     });
@@ -725,7 +764,7 @@ async function testErrorLogging() {
     
     if (response.statusCode === 401) {
       logSuccess('Test 4C: Authorization error triggered correctly');
-      logInfo('Test 4C: Auth errors logged by JWT guard');
+      logInfo('Test 4C: Auth errors logged by staff session guard');
     } else {
       logWarning(`Test 4C: Expected 401, got ${response.statusCode}`);
     }
@@ -957,8 +996,6 @@ async function testAdditionalServicesLogging() {
       true
     );
     const response = await makeRequest(options, {
-      senderType: 'USER',
-      createdByUserId: testState.userId,
       content: 'Test message for logging verification',
       isInternal: true,
     });
@@ -984,10 +1021,8 @@ async function testAdditionalServicesLogging() {
     const options = buildRequestOptions('/alerts', 'POST', true);
     const response = await makeRequest(options, {
       encounterId: testState.encounterId,
-      hospitalId: testState.hospitalId,
       type: 'TEST_ALERT',
       severity: 'LOW',
-      actorUserId: testState.userId,
     });
     
     const correlationId = response.headers['x-correlation-id'];
@@ -1011,10 +1046,8 @@ async function testAdditionalServicesLogging() {
     const options = buildRequestOptions('/triage/assessments', 'POST', true);
     const response = await makeRequest(options, {
       encounterId: testState.encounterId,
-      hospitalId: testState.hospitalId,
       ctasLevel: 3,
       note: 'Test triage for logging verification',
-      createdByUserId: testState.userId,
     });
     
     const correlationId = response.headers['x-correlation-id'];

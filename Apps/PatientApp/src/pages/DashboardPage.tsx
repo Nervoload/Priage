@@ -98,24 +98,6 @@ export function DashboardPage() {
       )}
 
       <section style={styles.section}>
-        <h2 style={styles.sectionTitle}>Quick Actions</h2>
-        <div style={styles.grid}>
-          <button style={styles.quickCard} onClick={() => navigate('/messages')}>
-            <strong>Messages</strong>
-            <span>Open all care-team conversations</span>
-          </button>
-          <button style={styles.quickCard} onClick={() => navigate('/settings')}>
-            <strong>Profile & Settings</strong>
-            <span>Update demographics and preferences</span>
-          </button>
-          <button style={styles.quickCard} onClick={() => navigate('/priage')}>
-            <strong>AI Assessment</strong>
-            <span>Describe symptoms for guided triage</span>
-          </button>
-        </div>
-      </section>
-
-      <section style={styles.section}>
         <h2 style={styles.sectionTitle}>Recent Visits</h2>
         {pastEncounters.length === 0 ? (
           <p style={styles.mutedText}>No past visits available yet.</p>
@@ -143,7 +125,7 @@ export function DashboardPage() {
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: 'calc(100vh - 64px)',
-    padding: '1rem 1rem 5.5rem',
+    padding: '1rem 1rem 2rem',
     background: heroBackdrop,
     fontFamily: patientTheme.fonts.body,
     color: patientTheme.colors.ink,
@@ -262,23 +244,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.7rem',
     fontWeight: 700,
     whiteSpace: 'nowrap',
-  },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: '0.55rem',
-  },
-  quickCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fffdf8',
-    boxShadow: patientTheme.shadows.card,
-    padding: '0.72rem 0.75rem',
-    textAlign: 'left',
-    display: 'grid',
-    gap: '0.2rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
   },
   mutedText: {
     margin: 0,

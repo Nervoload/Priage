@@ -17,13 +17,73 @@ const BASE_URL_SOCKET = process.env.BASE_URL_SOCKET || BASE_URL_API;
 const EMAIL = process.env.REALTIME_TEST_EMAIL || process.env.PRIAGE_DEV_ADMIN_EMAIL || '';
 const PASSWORD = process.env.REALTIME_TEST_PASSWORD || process.env.PRIAGE_DEV_ADMIN_PASSWORD || process.env.DEMO_STAFF_PASSWORD || '';
 const FIXTURE_PASSWORD = 'TestPassword123!';
+const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 let fixtureContext = null;
+
+function looksLikeJwt(value) {
+  return typeof value === 'string' && value.split('.').length === 3;
+}
+
+function extractStaffSessionToken(headers) {
+  const setCookies = typeof headers?.getSetCookie === 'function'
+    ? headers.getSetCookie()
+    : [];
+  const rawCookies = setCookies.length > 0
+    ? setCookies
+    : (headers?.get?.('set-cookie') ? [headers.get('set-cookie')] : []);
+
+  for (const cookie of rawCookies) {
+    const match = String(cookie).match(new RegExp(`${STAFF_AUTH_COOKIE}=([^;]+)`));
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function buildStaffAuthHeaders(token) {
+  if (!token) {
+    return {};
+  }
+
+  if (looksLikeJwt(token)) {
+    return { Authorization: `Bearer ${token}` };
+  }
+
+  return { Cookie: `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}` };
+}
+
+function buildSocketAuth(token) {
+  if (!token) {
+    return { auth: {}, extraHeaders: demoSocketHeaders() };
+  }
+
+  if (looksLikeJwt(token)) {
+    return {
+      auth: { token },
+      extraHeaders: demoSocketHeaders(),
+    };
+  }
+
+  const demoCookie = demoCookieHeader();
+  const staffCookie = `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}`;
+  return {
+    auth: {},
+    extraHeaders: {
+      ...(demoCookie ? { cookie: [demoCookie, staffCookie].filter(Boolean).join('; ') } : { cookie: staffCookie }),
+    },
+  };
+}
 
 async function api(path, options = {}) {
   const demoCookie = demoCookieHeader();
   if (demoCookie) {
-    options.headers = { ...(options.headers || {}), Cookie: demoCookie };
+    options.headers = {
+      ...(options.headers || {}),
+      Cookie: [demoCookie, options.headers?.Cookie].filter(Boolean).join('; '),
+    };
   }
   const res = await fetch(`${BASE_URL_API}${path}`, options);
   const text = await res.text();
@@ -35,7 +95,7 @@ async function api(path, options = {}) {
     json = null;
   }
 
-  return { res, text, json };
+  return { res, text, json, headers: res.headers };
 }
 
 async function login(email = EMAIL, password = PASSWORD) {
@@ -43,17 +103,22 @@ async function login(email = EMAIL, password = PASSWORD) {
     throw new Error('REALTIME_TEST_PASSWORD or PRIAGE_DEV_ADMIN_PASSWORD must be set to log into an existing user');
   }
 
-  const { res, json, text } = await api('/auth/login', {
+  const { res, json, text, headers } = await api('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
 
-  if (!res.ok || !json?.access_token || !json?.user?.hospital?.slug) {
+  const sessionToken = extractStaffSessionToken(headers);
+  if (!res.ok || (!sessionToken && !json?.access_token) || !json?.user?.hospital?.slug) {
     throw new Error(`Login failed: ${res.status} ${text}`);
   }
 
-  return json;
+  return {
+    sessionToken: sessionToken ?? null,
+    bearerToken: json?.access_token ?? null,
+    user: json.user,
+  };
 }
 
 async function getFixtureContext() {
@@ -227,10 +292,7 @@ async function createEncounter(hospitalSlug) {
 async function createAlert(encounterId, token) {
   const { res, json, text } = await api('/alerts', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
+    headers: { 'Content-Type': 'application/json', ...buildStaffAuthHeaders(token) },
     body: JSON.stringify({
       encounterId,
       type: 'REALTIME_SMOKE',
@@ -249,7 +311,7 @@ async function createAlert(encounterId, token) {
 async function acknowledgeAlert(alertId, token) {
   const { res, json, text } = await api(`/alerts/${alertId}/acknowledge`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: buildStaffAuthHeaders(token),
   });
   if (!res.ok || !json?.id) {
     throw new Error(`Failed to acknowledge alert: ${res.status} ${text}`);
@@ -261,7 +323,7 @@ async function acknowledgeAlert(alertId, token) {
 async function resolveAlert(alertId, token) {
   const { res, json, text } = await api(`/alerts/${alertId}/resolve`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: buildStaffAuthHeaders(token),
   });
   if (!res.ok || !json?.id) {
     throw new Error(`Failed to resolve alert: ${res.status} ${text}`);
@@ -271,9 +333,10 @@ async function resolveAlert(alertId, token) {
 }
 
 function openSocket(token) {
+  const socketAuth = buildSocketAuth(token);
   return io(BASE_URL_SOCKET, {
-    auth: token ? { token } : {},
-    extraHeaders: demoSocketHeaders(),
+    auth: socketAuth.auth,
+    extraHeaders: socketAuth.extraHeaders,
     transports: ['websocket'],
     autoConnect: false,
     reconnection: false,
@@ -416,14 +479,14 @@ async function main() {
   console.log(`Socket base: ${BASE_URL_SOCKET}`);
 
   const auth = await loginWithFallback();
-  const token = auth.access_token;
+  const token = auth.sessionToken || auth.bearerToken;
   const hospitalSlug = auth.user.hospital.slug;
 
   await expectRejectedSocket('', 'missing token');
-  await expectRejectedSocket('invalid.token.value', 'invalid token');
+  await expectRejectedSocket('invalid-session-token', 'invalid token');
 
   const socket = await connectAuthorizedSocket(token);
-  console.log('Verified websocket connection with valid token');
+  console.log('Verified websocket connection with valid staff session');
 
   let encounterEventPromise = null;
   try {

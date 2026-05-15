@@ -9,10 +9,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { ContextSourceType, EncounterStatus, ReviewState, TrustTier, VisibilityScope } from '@prisma/client';
+import { ContextSourceType, EncounterStatus, Prisma, ReviewState, TrustTier, VisibilityScope } from '@prisma/client';
 import Redis from 'ioredis';
 
 import { PATIENT_SESSION_TTL_MS } from '../../common/http/auth-cookie.util';
+import { normalizeHospitalConfig, type HospitalIntakeResponseType } from '../hospitals/hospital-config';
 import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
 import { buildGuestPlaceholderPasswordHash } from '../patient-auth/patient-password.util';
@@ -26,6 +27,11 @@ import { LocationPingDto } from './dto/location-ping.dto';
 import { UpdateIntakeDetailsDto } from './dto/update-intake-details.dto';
 
 const LOCATION_TTL_SECONDS = 600; // 10 minutes
+const TERMINAL_SESSION_ENCOUNTER_STATUSES = new Set<EncounterStatus>([
+  EncounterStatus.COMPLETE,
+  EncounterStatus.CANCELLED,
+  EncounterStatus.UNRESOLVED,
+]);
 
 export type LocationEntry = {
   latitude: number;
@@ -232,8 +238,11 @@ export class IntakeService {
       hasDetails: !!dto.details,
       hasAllergies: !!dto.allergies,
       hasConditions: !!dto.conditions,
+      hasCustomQuestionAnswers: !!dto.customQuestionAnswers,
       encounterCreated: !!session.encounterId,
     });
+
+    const optionalHealthInfo = await this.buildOptionalHealthInfoUpdate(session, dto.customQuestionAnswers);
 
     await this.intakeSessions.appendContextItemByAuthSession(
       session.id,
@@ -249,6 +258,7 @@ export class IntakeService {
           age: dto.age,
           allergies: dto.allergies,
           conditions: dto.conditions,
+          customQuestionAnswers: optionalHealthInfo ?? undefined,
         },
         sourceType: ContextSourceType.PATIENT,
         trustTier: TrustTier.UNTRUSTED,
@@ -265,6 +275,18 @@ export class IntakeService {
         data: {
           chiefComplaint: dto.chiefComplaint !== undefined ? dto.chiefComplaint : undefined,
           details: dto.details !== undefined ? dto.details : undefined,
+        },
+      });
+    }
+
+    if (optionalHealthInfo !== undefined) {
+      await this.prisma.patientProfile.update({
+        where: { id: session.patientId },
+        data: {
+          optionalHealthInfo:
+            Object.keys(optionalHealthInfo).length > 0
+              ? (optionalHealthInfo as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
         },
       });
     }
@@ -350,7 +372,7 @@ export class IntakeService {
 
     this.ensureSessionIsActive(session);
 
-    return session;
+    return this.normalizeSession(session);
   }
 
   private async getSessionById(sessionId: number, correlationId?: string) {
@@ -377,27 +399,30 @@ export class IntakeService {
 
     this.ensureSessionIsActive(session);
 
-    return session;
+    return this.normalizeSession(session);
   }
 
   private ensureSessionIsActive(session: {
     expiresAt: Date | null;
-    encounter: { status: EncounterStatus } | null;
   }) {
     if (session.expiresAt && session.expiresAt < new Date()) {
       throw new UnauthorizedException('Patient session has expired');
     }
+  }
 
-    if (
-      session.encounter &&
-      (
-        session.encounter.status === EncounterStatus.COMPLETE ||
-        session.encounter.status === EncounterStatus.CANCELLED ||
-        session.encounter.status === EncounterStatus.UNRESOLVED
-      )
-    ) {
-      throw new UnauthorizedException('Patient session is no longer active');
+  private normalizeSession<T extends {
+    encounterId: number | null;
+    encounter: { hospitalId: number; status: EncounterStatus } | null;
+  }>(session: T): T {
+    if (!session.encounter || !TERMINAL_SESSION_ENCOUNTER_STATUSES.has(session.encounter.status)) {
+      return session;
     }
+
+    return {
+      ...session,
+      encounterId: null,
+      encounter: null,
+    };
   }
 
   private getLocationCacheKey(session: { id: number; encounterId: number | null }) {
@@ -429,5 +454,121 @@ export class IntakeService {
     }
 
     throw new BadRequestException('hospitalId or hospitalSlug is required');
+  }
+
+  private async buildOptionalHealthInfoUpdate(
+    session: { patientId: number; encounterId: number | null },
+    rawAnswers: Record<string, unknown> | undefined,
+  ): Promise<Record<string, string | number | boolean> | undefined> {
+    if (!rawAnswers || typeof rawAnswers !== 'object' || Array.isArray(rawAnswers) || !session.encounterId) {
+      return undefined;
+    }
+
+    const encounter = await this.prisma.encounter.findUnique({
+      where: { id: session.encounterId },
+      select: {
+        hospital: {
+          select: {
+            config: {
+              select: {
+                config: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!encounter) {
+      return undefined;
+    }
+
+    const applicableQuestions = normalizeHospitalConfig(encounter.hospital.config?.config)
+      .customIntakeQuestions
+      .filter((question) => question.appliesTo !== 'triage');
+    if (applicableQuestions.length === 0) {
+      return undefined;
+    }
+
+    const patient = await this.prisma.patientProfile.findUnique({
+      where: { id: session.patientId },
+      select: { optionalHealthInfo: true },
+    });
+    const nextHealthInfo = this.toSimpleRecord(patient?.optionalHealthInfo);
+
+    for (const question of applicableQuestions) {
+      if (!(question.fieldKey in rawAnswers)) {
+        continue;
+      }
+
+      const normalized = this.normalizeCustomQuestionAnswer(
+        rawAnswers[question.fieldKey],
+        question.responseType,
+      );
+
+      if (normalized === undefined) {
+        delete nextHealthInfo[question.fieldKey];
+        continue;
+      }
+
+      nextHealthInfo[question.fieldKey] = normalized;
+    }
+
+    return nextHealthInfo;
+  }
+
+  private normalizeCustomQuestionAnswer(
+    value: unknown,
+    responseType: HospitalIntakeResponseType,
+  ): string | number | boolean | undefined {
+    if (value == null) {
+      return undefined;
+    }
+
+    switch (responseType) {
+      case 'boolean':
+        if (typeof value === 'boolean') {
+          return value;
+        }
+        if (typeof value === 'string') {
+          const normalized = value.trim().toLowerCase();
+          if (normalized === 'true' || normalized === 'yes') return true;
+          if (normalized === 'false' || normalized === 'no') return false;
+        }
+        return undefined;
+      case 'number': {
+        const numeric = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(numeric) ? numeric : undefined;
+      }
+      case 'textarea':
+      case 'text':
+      case 'select':
+      default: {
+        if (typeof value !== 'string') {
+          return undefined;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      }
+    }
+  }
+
+  private toSimpleRecord(value: unknown): Record<string, string | number | boolean> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+
+    return Object.entries(value as Record<string, unknown>).reduce<Record<string, string | number | boolean>>(
+      (accumulator, [key, entry]) => {
+        if (
+          typeof entry === 'string'
+          || typeof entry === 'number'
+          || typeof entry === 'boolean'
+        ) {
+          accumulator[key] = entry;
+        }
+        return accumulator;
+      },
+      {},
+    );
   }
 }

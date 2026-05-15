@@ -29,6 +29,13 @@ const DEFAULT_HOSPITAL_CONFIG = {
     messaging: true,
     alerts: true,
   },
+  patientExperience: {
+    address: null,
+    phone: null,
+    checkInInstructions: null,
+    parkingNotes: null,
+    coordinates: null,
+  },
 };
 
 const ROLE_OPTIONS = [Role.ADMIN, Role.NURSE, Role.DOCTOR, Role.STAFF];

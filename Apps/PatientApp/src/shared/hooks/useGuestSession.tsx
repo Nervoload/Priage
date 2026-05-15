@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { clearAllPatientSessions, loadGuestSession, saveGuestSession } from '../session';
+import { PATIENT_SESSION_EXPIRED_EVENT } from '../api/client';
+import { clearGuestSessionStorage, loadGuestSession, saveGuestSession } from '../session';
 import type { GuestIntakeSession } from '../types/domain';
 
 interface GuestSessionContextValue {
@@ -17,11 +18,11 @@ export function GuestSessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     function handleExpired() {
       setSessionState(null);
-      clearAllPatientSessions();
+      clearGuestSessionStorage();
     }
 
-    window.addEventListener('patient-session-expired', handleExpired);
-    return () => window.removeEventListener('patient-session-expired', handleExpired);
+    window.addEventListener(PATIENT_SESSION_EXPIRED_EVENT, handleExpired);
+    return () => window.removeEventListener(PATIENT_SESSION_EXPIRED_EVENT, handleExpired);
   }, []);
 
   const setSession = useCallback((nextSession: GuestIntakeSession | null) => {

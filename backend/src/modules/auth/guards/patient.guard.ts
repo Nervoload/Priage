@@ -17,6 +17,12 @@ export interface PatientContext {
   hospitalId: number | null;
 }
 
+const TERMINAL_SESSION_ENCOUNTER_STATUSES = new Set<EncounterStatus>([
+  EncounterStatus.COMPLETE,
+  EncounterStatus.CANCELLED,
+  EncounterStatus.UNRESOLVED,
+]);
+
 @Injectable()
 export class PatientGuard implements CanActivate {
   constructor(private readonly prisma: PrismaService) {}
@@ -56,22 +62,21 @@ export class PatientGuard implements CanActivate {
       throw new UnauthorizedException('Patient session has expired');
     }
 
-    if (
-      session.encounter &&
-      (
-        session.encounter.status === EncounterStatus.COMPLETE ||
-        session.encounter.status === EncounterStatus.CANCELLED ||
-        session.encounter.status === EncounterStatus.UNRESOLVED
-      )
-    ) {
-      throw new UnauthorizedException('Patient session is no longer active');
-    }
+    // Patient account sessions remain valid after a visit ends. We only surface
+    // encounter-scoped context while the linked encounter is still active.
+    const hasActiveEncounter =
+      session.encounterId !== null
+      && session.encounter !== null
+      && !TERMINAL_SESSION_ENCOUNTER_STATUSES.has(session.encounter.status);
+    const activeEncounterHospitalId = hasActiveEncounter && session.encounter
+      ? session.encounter.hospitalId
+      : null;
 
     const patientUser: PatientContext = {
       patientId: session.patientId,
       sessionId: session.id,
-      encounterId: session.encounterId,
-      hospitalId: session.encounter?.hospitalId ?? null,
+      encounterId: hasActiveEncounter ? session.encounterId : null,
+      hospitalId: activeEncounterHospitalId,
     };
 
     request.patientUser = patientUser;

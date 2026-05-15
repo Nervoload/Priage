@@ -18,14 +18,17 @@ import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
+import { CreateAdmittanceEncounterDto } from './dto/create-admittance-encounter.dto';
 import {
   EncounterListResponseDto,
+  EncounterDetailDto,
   PatientEncounterDto,
   PriagePreviewDto,
   PriageSummaryDto,
   PriageSummaryQuestionAnswerDto,
 } from './dto/encounter-response.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
+import { hashPatientPassword } from '../patient-auth/patient-password.util';
 
 export type EncounterActor = {
   actorUserId?: number;
@@ -76,6 +79,15 @@ const priageProjectionSelect = {
   createdAt: true,
   content: true,
 } satisfies Prisma.SummaryProjectionSelect;
+
+const encounterActivitySelect = {
+  id: true,
+  createdAt: true,
+  type: true,
+  actorUserId: true,
+  actorPatientId: true,
+  metadata: true,
+} satisfies Prisma.EncounterEventSelect;
 
 // TRANSTIONS --> changing Encounter.status throughout the lifecycle
 
@@ -221,6 +233,147 @@ export class EncountersService {
           correlationId,
           hospitalId,
           patientId: dto.patientId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          actorUserId: actor?.actorUserId,
+          actorPatientId: actor?.actorPatientId,
+        },
+      );
+      throw error;
+    }
+  }
+
+  async createAdmittanceEncounter(
+    hospitalId: number,
+    dto: CreateAdmittanceEncounterDto,
+    actor?: EncounterActor,
+    correlationId?: string,
+  ): Promise<EncounterDetailDto> {
+    this.loggingService.info(
+      'Creating admittance encounter with a new patient account',
+      {
+        service: 'EncountersService',
+        operation: 'createAdmittanceEncounter',
+        correlationId,
+        hospitalId,
+        email: dto.email,
+      },
+      {
+        actorUserId: actor?.actorUserId,
+        actorPatientId: actor?.actorPatientId,
+      },
+    );
+
+    try {
+      const { encounter, event } = await this.prisma.$transaction(async (tx) => {
+        const email = dto.email.trim().toLowerCase();
+        const existingPatient = await tx.patientProfile.findUnique({
+          where: { email },
+          select: { id: true },
+        });
+
+        if (existingPatient) {
+          throw new ConflictException('An account with this email already exists');
+        }
+
+        const password = await hashPatientPassword('00000');
+        const patient = await tx.patientProfile.create({
+          data: {
+            email,
+            password,
+            firstName: dto.firstName?.trim() || null,
+            lastName: dto.lastName?.trim() || null,
+            phone: dto.phone?.trim() || null,
+            age: dto.age ?? null,
+            gender: dto.gender?.trim() || null,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        const created = await tx.encounter.create({
+          data: {
+            publicId: `enc_${randomUUID()}`,
+            status: EncounterStatus.EXPECTED,
+            hospitalId,
+            patientId: patient.id,
+            chiefComplaint: dto.chiefComplaint.trim(),
+            details: dto.details?.trim() || null,
+          },
+          include: {
+            patient: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                phone: true,
+                age: true,
+                gender: true,
+                preferredLanguage: true,
+                heightCm: true,
+                weightKg: true,
+                allergies: true,
+                conditions: true,
+                optionalHealthInfo: true,
+              },
+            },
+            summaryProjections: {
+              where: {
+                active: true,
+                kind: SummaryProjectionKind.AI_DERIVED,
+              },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+              select: priageProjectionSelect,
+            },
+          },
+        });
+
+        const createdEvent = await this.events.emitEncounterEventTx(tx, {
+          encounterId: created.id,
+          hospitalId: created.hospitalId,
+          type: EventType.ENCOUNTER_CREATED,
+          metadata: {
+            status: created.status,
+            createdFrom: 'hospital_admittance',
+          },
+          actor,
+        });
+
+        return { encounter: created, event: createdEvent };
+      });
+
+      this.loggingService.info(
+        'Admittance encounter created successfully',
+        {
+          service: 'EncountersService',
+          operation: 'createAdmittanceEncounter',
+          correlationId,
+          hospitalId,
+          encounterId: encounter.id,
+        },
+        {
+          status: encounter.status,
+          eventId: event.id,
+          actorUserId: actor?.actorUserId,
+          actorPatientId: actor?.actorPatientId,
+        },
+      );
+
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
+
+      return this.getEncounter(hospitalId, encounter.id, correlationId);
+    } catch (error) {
+      await this.loggingService.error(
+        'Failed to create admittance encounter',
+        {
+          service: 'EncountersService',
+          operation: 'createAdmittanceEncounter',
+          correlationId,
+          hospitalId,
+          email: dto.email,
         },
         error instanceof Error ? error : new Error(String(error)),
         {
@@ -387,6 +540,11 @@ export class EncountersService {
             select: priageProjectionSelect,
           },
           triageAssessments: { orderBy: { createdAt: 'asc' } },
+          events: {
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: 12,
+            select: encounterActivitySelect,
+          },
           messages: {
             orderBy: { createdAt: 'asc' },
             select: encounterMessageSelect,
@@ -437,6 +595,7 @@ export class EncountersService {
         ...encounterWithoutAssets,
         priagePreview: this.toPriagePreview(summaryProjections[0] ?? null),
         priageSummary: this.toPriageSummary(summaryProjections[0] ?? null),
+        activityLog: encounter.events,
         messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
           ...message,
           attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
@@ -657,6 +816,17 @@ export class EncountersService {
           actor,
         });
 
+        if (TERMINAL_STATUSES.has(updated.status)) {
+          await tx.patientSession.updateMany({
+            where: {
+              encounterId: updated.id,
+            },
+            data: {
+              encounterId: null,
+            },
+          });
+        }
+
         return { encounter: updated, event: createdEvent };
       });
 
@@ -758,6 +928,15 @@ export class EncountersService {
               orderBy: { createdAt: 'asc' },
               select: encounterMessageSelect,
             },
+            summaryProjections: {
+              where: {
+                active: true,
+                kind: SummaryProjectionKind.AI_DERIVED,
+              },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+              select: priageProjectionSelect,
+            },
             assets: {
               where: {
                 status: AssetStatus.READY,
@@ -775,6 +954,15 @@ export class EncountersService {
               where: { isInternal: false },
               orderBy: { createdAt: 'asc' },
               select: encounterMessageSelect,
+            },
+            summaryProjections: {
+              where: {
+                active: true,
+                kind: SummaryProjectionKind.AI_DERIVED,
+              },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+              select: priageProjectionSelect,
             },
             assets: {
               where: {
@@ -804,7 +992,7 @@ export class EncountersService {
       hospitalId: encounter.hospitalId,
       expectedAt: encounter.expectedAt,
       arrivedAt: encounter.arrivedAt,
-      priageSummary: null,
+      priageSummary: this.toPriageSummary(encounter.summaryProjections[0] ?? null),
       messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
         ...message,
         attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'patient')),

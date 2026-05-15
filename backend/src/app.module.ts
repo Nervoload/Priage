@@ -22,6 +22,7 @@ import { HospitalsModule } from './modules/hospitals/hospitals.module';
 import { IntakeModule } from './modules/intake/intake.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { LoggingModule } from './modules/logging/logging.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
@@ -53,6 +54,7 @@ import { UsersModule } from './modules/users/users.module';
     UsersModule,
     HospitalsModule,
     RealtimeModule,
+    AnalyticsModule,
     EncountersModule,
     MessagingModule,
     AlertsModule,

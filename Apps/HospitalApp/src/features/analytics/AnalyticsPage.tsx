@@ -1,14 +1,15 @@
 // HospitalApp/src/features/analytics/AnalyticsPage.tsx
 // Department Analytics dashboard — real-time overview for the triage team.
-// Computes all metrics from real encounter data passed as props.
+// Computes all metrics from lightweight analytics data fetched on demand.
 
-import { useState, useEffect, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
 import { NavBar, type View } from '../../shared/ui/NavBar';
 import { DonutChart } from './charts/DonutChart';
 import { BarChart } from './charts/BarChart';
 import { LineChart } from './charts/LineChart';
 import { MiniBar } from './charts/MiniBar';
-import type { Encounter, ChatMessage } from '../../shared/types/domain';
+import { getHospitalAnalytics } from '../../shared/api/analytics';
+import type { AnalyticsEncounterRow, AnalyticsRange } from '../../shared/types/analytics';
 import { DASHBOARD_PAGE_CLASS } from '../../shared/ui/dashboardTheme';
 import {
   computeKpis,
@@ -27,8 +28,8 @@ interface AnalyticsPageProps {
   onNavigate: (view: View) => void;
   onLogout: () => void;
   user: { email: string; role: string } | null;
-  encounters: Encounter[];
-  chatMessages: Record<number, ChatMessage[]>;
+  hospitalId: number;
+  availableViews?: View[];
 }
 
 // ─── KPI Card sub-component ─────────────────────────────────────────────────
@@ -253,52 +254,140 @@ function AnalyticsIcon({ kind }: { kind: string }) {
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
-export function AnalyticsPage({ onNavigate, onLogout, user, encounters, chatMessages }: AnalyticsPageProps) {
-  // Auto-refresh: recompute every 30 seconds to keep metrics current
+export function AnalyticsPage({
+  onNavigate,
+  onLogout,
+  user,
+  hospitalId,
+  availableViews,
+}: AnalyticsPageProps) {
+  const [range, setRange] = useState<AnalyticsRange>('week');
+  const [analyticsRows, setAnalyticsRows] = useState<AnalyticsEncounterRow[]>([]);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+
+  const isAdmin = user?.role === 'ADMIN';
+
+  const rangeLabels: Record<AnalyticsRange, string> = {
+    day: 'Past Day',
+    week: 'Past Week',
+    month: 'Past Month',
+    year: 'Past Year',
+    all: 'All Time',
+  };
+
+  const loadAnalytics = useCallback(async (selectedRange: AnalyticsRange) => {
+    setLoadingAnalytics(true);
+    setAnalyticsError(null);
+    try {
+      const response = await getHospitalAnalytics(hospitalId, selectedRange);
+      setAnalyticsRows(response.data);
+      setGeneratedAt(response.generatedAt);
+    } catch (error) {
+      console.error('[AnalyticsPage] Failed to load analytics:', error);
+      setAnalyticsRows([]);
+      setGeneratedAt(null);
+      setAnalyticsError('Unable to load analytics for the selected range.');
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  }, [hospitalId]);
+
+  useEffect(() => {
+    void loadAnalytics(range);
+    const interval = window.setInterval(() => {
+      void loadAnalytics(range);
+    }, 60_000);
+    return () => window.clearInterval(interval);
+  }, [loadAnalytics, range]);
+
+  // Auto-refresh: recompute local time-sensitive metrics every 30 seconds.
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const interval = setInterval(() => setTick(t => t + 1), 30_000);
     return () => clearInterval(interval);
   }, []);
 
-  // Compute all analytics from real encounter data
-  const kpis = useMemo(() => computeKpis(encounters, chatMessages), [encounters, chatMessages, tick]);
-  const ctasDist = useMemo(() => computeCtasDistribution(encounters), [encounters, tick]);
-  const hourly = useMemo(() => computeHourlyArrivals(encounters), [encounters, tick]);
-  const waitTrends = useMemo(() => computeWaitTimeTrends(encounters), [encounters, tick]);
-  const complaints = useMemo(() => computeChiefComplaints(encounters), [encounters, tick]);
-  const efficiency = useMemo(() => computeTriageEfficiency(encounters), [encounters, tick]);
-  const chatbot = useMemo(() => computeChatbotAnalytics(encounters, chatMessages), [encounters, chatMessages, tick]);
-  const alerts = useMemo(() => computeAlertMetrics(encounters), [encounters, tick]);
-  const staffing = useMemo(() => computeStaffing(encounters), [encounters, tick]);
-  const disposition = useMemo(() => computeDisposition(encounters), [encounters, tick]);
+  const kpis = useMemo(() => computeKpis(analyticsRows), [analyticsRows, tick]);
+  const ctasDist = useMemo(() => computeCtasDistribution(analyticsRows), [analyticsRows, tick]);
+  const hourly = useMemo(() => computeHourlyArrivals(analyticsRows), [analyticsRows, tick]);
+  const waitTrends = useMemo(() => computeWaitTimeTrends(analyticsRows), [analyticsRows, tick]);
+  const complaints = useMemo(() => computeChiefComplaints(analyticsRows), [analyticsRows, tick]);
+  const efficiency = useMemo(() => computeTriageEfficiency(analyticsRows), [analyticsRows, tick]);
+  const chatbot = useMemo(() => computeChatbotAnalytics(analyticsRows), [analyticsRows, tick]);
+  const alerts = useMemo(() => computeAlertMetrics(analyticsRows), [analyticsRows, tick]);
+  const staffing = useMemo(() => computeStaffing(analyticsRows), [analyticsRows, tick]);
+  const disposition = useMemo(() => computeDisposition(analyticsRows), [analyticsRows, tick]);
 
-  const hasEncounters = encounters.length > 0;
+  const hasEncounters = analyticsRows.length > 0;
   const totalCtas = ctasDist.reduce((s, d) => s + d.count, 0);
   const totalDisposition = disposition.reduce((s, d) => s + d.count, 0);
   const hasComplaints = complaints.length > 0;
   const hasHourly = hourly.some(h => h.count > 0);
+  const lastUpdatedLabel = generatedAt ? new Date(generatedAt).toLocaleString() : null;
 
   return (
     <div className={DASHBOARD_PAGE_CLASS}>
-      <NavBar currentView="analytics" onNavigate={onNavigate} onLogout={onLogout} user={user} />
+      <NavBar
+        currentView="analytics"
+        onNavigate={onNavigate}
+        onLogout={onLogout}
+        user={user}
+        availableViews={availableViews}
+      />
 
       <div className="p-6 max-w-[1400px] mx-auto space-y-5">
         {/* ── Header ────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Department Analytics</h1>
             <p className="mt-0.5 text-[1.05rem] text-gray-500">
               Emergency Department — Real-time overview
             </p>
+            <p className="mt-1 text-sm text-gray-400">
+              Showing {rangeLabels[range].toLowerCase()} analytics
+              {lastUpdatedLabel ? ` · Updated ${lastUpdatedLabel}` : ''}
+            </p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse-dot" />
-            <span className="text-sm text-gray-400">
-              Live — {encounters.length} encounter{encounters.length !== 1 ? 's' : ''} loaded
-            </span>
+          <div className="flex flex-col items-start gap-3 lg:items-end">
+            {isAdmin && (
+              <div className="inline-flex flex-wrap gap-2 rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+                {(Object.keys(rangeLabels) as AnalyticsRange[]).map((option) => {
+                  const active = option === range;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setRange(option)}
+                      className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                        active
+                          ? 'bg-slate-900 text-white shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {rangeLabels[option]}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${loadingAnalytics ? 'bg-amber-400 animate-pulse-dot' : 'bg-green-400 animate-pulse-dot'}`} />
+              <span className="text-sm text-gray-400">
+                {loadingAnalytics
+                  ? 'Refreshing analytics…'
+                  : `${analyticsRows.length} encounter${analyticsRows.length !== 1 ? 's' : ''} loaded`}
+              </span>
+            </div>
           </div>
         </div>
+
+        {analyticsError && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {analyticsError}
+          </div>
+        )}
 
         {/* ── 1. KPI Cards ───────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
@@ -495,8 +584,8 @@ export function AnalyticsPage({ onNavigate, onLogout, user, encounters, chatMess
         {/* Footer note */}
         <div className="pt-2 pb-4 text-center text-sm text-gray-400">
           {hasEncounters
-            ? 'All metrics computed from live encounter data. Refreshes automatically.'
-            : 'No encounter data available. Metrics will populate as patients are admitted.'}
+            ? 'All metrics computed from lightweight analytics data. Refreshes automatically.'
+            : 'No analytics data available for the selected range.'}
         </div>
       </div>
     </div>

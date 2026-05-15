@@ -98,6 +98,15 @@ export interface EncounterDetailDto extends EncounterSummaryDto {
     createdByUserId: number;
   }>;
 
+  activityLog: Array<{
+    id: number;
+    createdAt: Date;
+    type: string;
+    actorUserId: number | null;
+    actorPatientId: number | null;
+    metadata: unknown;
+  }>;
+
   messages: Array<{
     id: number;
     createdAt: Date;

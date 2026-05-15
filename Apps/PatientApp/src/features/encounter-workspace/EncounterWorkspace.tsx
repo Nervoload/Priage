@@ -1,21 +1,22 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from 'react';
-import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 
-import { getMyEncounter, getQueueInfo, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
-import { updateIntakeDetails } from '../../shared/api/intake';
+import { cancelMyEncounter, getMyEncounter, getQueueInfo, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
 import { getMe, updateProfile } from '../../shared/api/auth';
-import { ENCOUNTER_STATUS_META, isInHospitalEncounter, isTerminalEncounter } from '../../shared/encounters';
+import { sendLocationPing, updateIntakeDetails } from '../../shared/api/intake';
+import { ENCOUNTER_STATUS_META, isTerminalEncounter } from '../../shared/encounters';
+import {
+  formatHospitalDistance,
+  getAppleMapsDirectionsUrl,
+  getGoogleMapsDirectionsUrl,
+  getHospitalDistanceKm,
+  type PatientCoordinates,
+} from '../../shared/hospitalDirectory';
 import { useAuth } from '../../shared/hooks/useAuth';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
-import type { Encounter, EncounterWorkspaceTab, Message, PatientProfile, QueueInfo } from '../../shared/types/domain';
+import { useHospitalDirectory } from '../../shared/hooks/useHospitalDirectory';
+import { appendUniqueMessages, getLastMessageId } from '../../shared/messages';
+import type { Encounter, Hospital, Message, PatientProfile, QueueInfo } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
 import { UpgradeAccountCard } from './UpgradeAccountCard';
@@ -24,53 +25,15 @@ const ENCOUNTER_POLL_MS = 10_000;
 const MESSAGE_POLL_MS = 5_000;
 const QUEUE_POLL_MS = 30_000;
 
-const terminalStates = new Set(['COMPLETE', 'UNRESOLVED', 'CANCELLED']);
-
 function formatHospitalName(slug: string | null | undefined): string {
   if (!slug) {
     return 'Priage General Hospital';
   }
+
   return slug
     .split('-')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
-}
-
-function resolveActiveTab(pathname: string): EncounterWorkspaceTab {
-  if (pathname.endsWith('/chat')) return 'chat';
-  if (pathname.endsWith('/profile')) return 'profile';
-  return 'current';
-}
-
-function labelFromStatus(status: Encounter['status']) {
-  return ENCOUNTER_STATUS_META[status] ?? ENCOUNTER_STATUS_META.EXPECTED;
-}
-
-function formatTime(timestamp: string | null): string {
-  if (!timestamp) return 'Not yet';
-  return new Date(timestamp).toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function formatDateTime(timestamp: string | null): string {
-  if (!timestamp) return 'Pending';
-  return new Date(timestamp).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function getLatestCareInstruction(messages: Message[]): string {
-  const reversed = [...messages].reverse();
-  const latest = reversed.find((message) => message.senderType === 'USER');
-  if (!latest) {
-    return 'Your care team will send updates here as your visit progresses.';
-  }
-  return latest.content;
 }
 
 function toGuestProfileState(profile: PatientProfile) {
@@ -83,53 +46,70 @@ function toGuestProfileState(profile: PatientProfile) {
     allergies: profile.allergies ?? '',
     conditions: profile.conditions ?? '',
     preferredLanguage: profile.preferredLanguage ?? '',
+    details: '',
   };
 }
 
-function TerminalBanner({ status }: { status: Encounter['status'] }) {
-  const content: Record<Encounter['status'], string> = {
-    EXPECTED: '',
-    ADMITTED: '',
-    TRIAGE: '',
-    WAITING: '',
-    COMPLETE: 'This visit has been marked complete. You can still review details and messages below.',
-    UNRESOLVED: 'This visit ended without full resolution. Review follow-up instructions in your profile tab.',
-    CANCELLED: 'This visit was cancelled. You can start a new visit whenever needed.',
-  };
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return 'Pending';
+  }
 
-  if (!terminalStates.has(status)) return null;
+  return new Date(value).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
-  return (
-    <div style={styles.terminalBanner}>
-      <strong style={styles.terminalTitle}>Visit update:</strong> {content[status]}
-    </div>
-  );
+function formatShortTime(value: string): string {
+  return new Date(value).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getLatestCareInstruction(messages: Message[]): string {
+  const latest = [...messages].reverse().find((message) => message.senderType === 'USER');
+  if (!latest) {
+    return 'Your care team will send updates here as your visit progresses.';
+  }
+
+  return latest.content;
 }
 
 export function EncounterWorkspace() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const location = useLocation();
+  const navigate = useNavigate();
   const { showToast } = useToast();
-  const { session: authSession, patient, refreshProfile, logout } = useAuth();
+  const { session: authSession, patient } = useAuth();
   const { session: guestSession, clearSession } = useGuestSession();
+  const { findHospitalById, findHospitalBySlug } = useHospitalDirectory();
 
   const encounterId = Number(id);
+  const isGuest = !authSession && !!guestSession;
+  const legacyRedirectTarget =
+    encounterId && !Number.isNaN(encounterId)
+      ? location.pathname.endsWith('/chat')
+        ? `/messages?encounter=${encounterId}`
+        : location.pathname.endsWith('/profile')
+          ? '/settings'
+          : !location.pathname.endsWith('/current')
+            ? `/encounters/${encounterId}/current`
+            : null
+      : null;
+
   const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sendingMessage, setSendingMessage] = useState(false);
-  const [messageInput, setMessageInput] = useState('');
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [localProfile, setLocalProfile] = useState({
-    firstName: '',
-    lastName: '',
-    phone: '',
-    allergies: '',
-    conditions: '',
-    preferredLanguage: '',
-  });
+  const [locationSharing, setLocationSharing] = useState(false);
+  const [arrivalSubmitting, setArrivalSubmitting] = useState(false);
+  const [savingGuestInfo, setSavingGuestInfo] = useState(false);
+  const [guestInfoError, setGuestInfoError] = useState<string | null>(null);
+  const [transportNote, setTransportNote] = useState('');
   const [guestProfile, setGuestProfile] = useState({
     firstName: '',
     lastName: '',
@@ -141,74 +121,47 @@ export function EncounterWorkspace() {
     preferredLanguage: '',
     details: '',
   });
-  const [guestProfileError, setGuestProfileError] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const loadedGuestEncounterId = useRef<number | null>(null);
+  const [currentLocation, setCurrentLocation] = useState<PatientCoordinates | null>(null);
+  const loadedEncounterId = useRef<number | null>(null);
+  const messageCursorRef = useRef<number | null>(null);
+  const locationWatchRef = useRef<number | null>(null);
 
-  const isGuest = !authSession && !!guestSession;
-  const activeTab = resolveActiveTab(location.pathname);
-  const statusMeta = labelFromStatus(encounter?.status ?? 'EXPECTED');
+  const selectedHospital =
+    findHospitalBySlug(guestSession?.hospitalSlug)
+    ?? findHospitalById(encounter?.hospitalId ?? null);
+
   const hospitalName = useMemo(() => {
+    if (selectedHospital?.name) {
+      return selectedHospital.name;
+    }
     if (guestSession?.hospitalSlug) {
       return formatHospitalName(guestSession.hospitalSlug);
     }
     return 'Priage General Hospital';
-  }, [guestSession?.hospitalSlug]);
+  }, [guestSession?.hospitalSlug, selectedHospital?.name]);
 
-  useEffect(() => {
-    if (!patient) {
-      return;
-    }
-    setLocalProfile({
-      firstName: patient.firstName ?? '',
-      lastName: patient.lastName ?? '',
-      phone: patient.phone ?? '',
-      allergies: patient.allergies ?? '',
-      conditions: patient.conditions ?? '',
-      preferredLanguage: patient.preferredLanguage ?? '',
-    });
-  }, [patient]);
+  const statusMeta = ENCOUNTER_STATUS_META[encounter?.status ?? 'EXPECTED'];
+  const isTerminal = encounter ? isTerminalEncounter(encounter.status) : false;
+  const latestInstruction = useMemo(() => getLatestCareInstruction(messages), [messages]);
+  const recentStaffMessages = useMemo(
+    () => messages.filter((message) => message.senderType === 'USER').slice(-3).reverse(),
+    [messages],
+  );
 
-  useEffect(() => {
-    if (!isGuest) {
-      return;
+  const accountSummary = useMemo(() => {
+    const source = patient ?? authSession?.patient ?? null;
+    if (!source) {
+      return [];
     }
 
-    let cancelled = false;
-
-    async function loadGuestProfile() {
-      try {
-        const profile = await getMe();
-        if (cancelled) return;
-        setGuestProfile((prev) => ({
-          ...prev,
-          ...toGuestProfileState(profile),
-        }));
-        setGuestProfileError(null);
-      } catch {
-        if (!cancelled) {
-          setGuestProfileError('Could not load your saved guest information.');
-        }
-      }
-    }
-
-    void loadGuestProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [isGuest]);
-
-  useEffect(() => {
-    if (!isGuest || !encounter || loadedGuestEncounterId.current === encounter.id) {
-      return;
-    }
-
-    loadedGuestEncounterId.current = encounter.id;
-    setGuestProfile((prev) => ({
-      ...prev,
-      details: encounter.details ?? '',
-    }));
-  }, [encounter, isGuest]);
+    return [
+      { label: 'Name', value: [source.firstName, source.lastName].filter(Boolean).join(' ') || 'Not provided' },
+      { label: 'Phone', value: source.phone || 'Not provided' },
+      { label: 'Allergies', value: source.allergies || 'Not provided' },
+      { label: 'Conditions', value: source.conditions || 'Not provided' },
+      { label: 'Preferred language', value: source.preferredLanguage || 'Not provided' },
+    ];
+  }, [authSession?.patient, patient]);
 
   const handleSessionExpired = useCallback(() => {
     if (isGuest) {
@@ -216,6 +169,7 @@ export function EncounterWorkspace() {
       navigate('/welcome', { replace: true });
       return;
     }
+
     navigate('/auth/login', { replace: true });
   }, [clearSession, isGuest, navigate]);
 
@@ -227,29 +181,80 @@ export function EncounterWorkspace() {
     try {
       const detail = await getMyEncounter(encounterId);
       setEncounter(detail);
-
-      if (isGuest && detail.status === 'EXPECTED') {
-        navigate(`/guest/enroute/${encounterId}`, { replace: true });
-      }
     } catch {
       if (showFailureToast) {
-        showToast('Could not load this visit anymore. Returning to start.');
+        showToast('Could not load this encounter anymore.');
       }
       handleSessionExpired();
     } finally {
       setLoading(false);
     }
-  }, [encounterId, handleSessionExpired, isGuest, navigate, showToast]);
+  }, [encounterId, handleSessionExpired, showToast]);
 
-  const refreshMessages = useCallback(async () => {
-    if (!encounterId || Number.isNaN(encounterId)) return;
+  const refreshMessages = useCallback(async (mode: 'replace' | 'append' = 'replace') => {
+    if (!encounterId || Number.isNaN(encounterId)) {
+      return;
+    }
+
     try {
-      const nextMessages = await listMyMessages(encounterId);
-      setMessages(nextMessages);
+      const nextMessages = await listMyMessages(
+        encounterId,
+        mode === 'append' && messageCursorRef.current != null
+          ? { afterMessageId: messageCursorRef.current }
+          : {},
+      );
+
+      if (mode === 'replace') {
+        setMessages(nextMessages);
+        messageCursorRef.current = getLastMessageId(nextMessages);
+        return;
+      }
+
+      if (nextMessages.length === 0) {
+        return;
+      }
+
+      setMessages((previous) => {
+        const merged = appendUniqueMessages(previous, nextMessages);
+        messageCursorRef.current = getLastMessageId(merged);
+        return merged;
+      });
     } catch {
-      // Keep background polling silent to avoid toast spam.
+      // Background polling should stay quiet.
     }
   }, [encounterId]);
+
+  useEffect(() => {
+    if (!isGuest) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadGuestProfile() {
+      try {
+        const profile = await getMe();
+        if (cancelled) {
+          return;
+        }
+
+        setGuestProfile((current) => ({
+          ...current,
+          ...toGuestProfileState(profile),
+        }));
+        setGuestInfoError(null);
+      } catch {
+        if (!cancelled) {
+          setGuestInfoError('Could not load your saved guest information.');
+        }
+      }
+    }
+
+    void loadGuestProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuest]);
 
   useEffect(() => {
     if (!encounterId || Number.isNaN(encounterId)) {
@@ -257,19 +262,21 @@ export function EncounterWorkspace() {
       return;
     }
 
+    messageCursorRef.current = null;
+    setMessages([]);
     void refreshEncounter(true);
-    void refreshMessages();
+    void refreshMessages('replace');
 
-    const encounterInterval = setInterval(() => {
+    const encounterTimer = window.setInterval(() => {
       void refreshEncounter();
     }, ENCOUNTER_POLL_MS);
-    const messageInterval = setInterval(() => {
-      void refreshMessages();
+    const messageTimer = window.setInterval(() => {
+      void refreshMessages('append');
     }, MESSAGE_POLL_MS);
 
     return () => {
-      clearInterval(encounterInterval);
-      clearInterval(messageInterval);
+      window.clearInterval(encounterTimer);
+      window.clearInterval(messageTimer);
     };
   }, [encounterId, refreshEncounter, refreshMessages]);
 
@@ -284,27 +291,47 @@ export function EncounterWorkspace() {
 
     async function loadQueue() {
       try {
-        const queue = await getQueueInfo(activeEncounterId);
-        if (!cancelled) setQueueInfo(queue);
+        const nextQueue = await getQueueInfo(activeEncounterId);
+        if (!cancelled) {
+          setQueueInfo(nextQueue);
+        }
       } catch {
-        if (!cancelled) setQueueInfo(null);
+        if (!cancelled) {
+          setQueueInfo(null);
+        }
       }
     }
 
     void loadQueue();
-    const interval = setInterval(() => {
+    const queueTimer = window.setInterval(() => {
       void loadQueue();
     }, QUEUE_POLL_MS);
 
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      window.clearInterval(queueTimer);
     };
   }, [encounter]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, activeTab]);
+    if (!isGuest || !encounter || loadedEncounterId.current === encounter.id) {
+      return;
+    }
+
+    loadedEncounterId.current = encounter.id;
+    setGuestProfile((current) => ({
+      ...current,
+      details: encounter.details ?? '',
+    }));
+  }, [encounter, isGuest]);
+
+  useEffect(() => {
+    return () => {
+      if (locationWatchRef.current != null) {
+        navigator.geolocation.clearWatch(locationWatchRef.current);
+      }
+    };
+  }, []);
 
   if (!authSession && !guestSession) {
     return <Navigate to="/welcome" replace />;
@@ -318,745 +345,726 @@ export function EncounterWorkspace() {
     return <Navigate to={`/encounters/${guestSession.encounterId}/current`} replace />;
   }
 
+  if (legacyRedirectTarget) {
+    return <Navigate to={legacyRedirectTarget} replace />;
+  }
+
+  async function handleSaveGuestInfo() {
+    const trimmedFirstName = guestProfile.firstName.trim();
+    const trimmedPhone = guestProfile.phone.trim();
+
+    if (!trimmedFirstName) {
+      setGuestInfoError('First name is required.');
+      return;
+    }
+
+    if (!trimmedPhone) {
+      setGuestInfoError('Phone number is required.');
+      return;
+    }
+
+    setSavingGuestInfo(true);
+    try {
+      const updatedProfile = await updateProfile({
+        firstName: trimmedFirstName,
+        lastName: guestProfile.lastName.trim() || undefined,
+        phone: trimmedPhone,
+        age: guestProfile.age ? Number(guestProfile.age) : undefined,
+        gender: guestProfile.gender.trim() || undefined,
+        allergies: guestProfile.allergies.trim() || undefined,
+        conditions: guestProfile.conditions.trim() || undefined,
+        preferredLanguage: guestProfile.preferredLanguage.trim() || undefined,
+      });
+
+      const updatedEncounter = await updateIntakeDetails({
+        details: guestProfile.details.trim() || undefined,
+      });
+
+      if (updatedEncounter && typeof updatedEncounter === 'object' && 'id' in updatedEncounter) {
+        setEncounter(updatedEncounter as Encounter);
+      }
+
+      setGuestProfile({
+        ...toGuestProfileState(updatedProfile),
+        details: guestProfile.details,
+      });
+      setGuestInfoError(null);
+      showToast('Guest details saved.', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save guest information.';
+      setGuestInfoError(message);
+      showToast(message);
+    } finally {
+      setSavingGuestInfo(false);
+    }
+  }
+
+  async function handleCancelVisit() {
+    if (!encounter || isTerminal) {
+      return;
+    }
+
+    try {
+      await cancelMyEncounter(encounter.id);
+      if (isGuest) {
+        clearSession();
+        navigate('/welcome', { replace: true });
+      } else {
+        navigate('/', { replace: true });
+      }
+    } catch {
+      showToast('Could not cancel this visit.');
+    }
+  }
+
+  async function handleSendArrivalNote() {
+    if (!encounter || arrivalSubmitting || isTerminal) {
+      return;
+    }
+
+    setArrivalSubmitting(true);
+    try {
+      const note = transportNote.trim()
+        ? `I have arrived at the hospital entrance. Note: ${transportNote.trim()}`
+        : 'I have arrived at the hospital entrance and am heading inside now.';
+      const sentMessage = await sendPatientMessage(encounter.id, note, false);
+      setMessages((previous) => {
+        const merged = appendUniqueMessages(previous, [sentMessage]);
+        messageCursorRef.current = getLastMessageId(merged);
+        return merged;
+      });
+      showToast('Arrival update sent to staff.', 'success');
+    } catch {
+      showToast('Could not send arrival update.');
+    } finally {
+      setArrivalSubmitting(false);
+    }
+  }
+
+  function handleToggleLocationSharing() {
+    if (locationSharing) {
+      if (locationWatchRef.current != null) {
+        navigator.geolocation.clearWatch(locationWatchRef.current);
+        locationWatchRef.current = null;
+      }
+      setLocationSharing(false);
+      showToast('Location sharing stopped.', 'info');
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      showToast('Location sharing is not supported in this browser.');
+      return;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      async (position) => {
+        try {
+          setCurrentLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+          await sendLocationPing({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+        } catch {
+          // Keep background location failures quiet.
+        }
+      },
+      () => {
+        setLocationSharing(false);
+        showToast('Could not access your location. Enable location permissions to share ETA.');
+      },
+      { enableHighAccuracy: true, maximumAge: 30_000, timeout: 15_000 },
+    );
+
+    locationWatchRef.current = watchId;
+    setLocationSharing(true);
+    showToast('Sharing your location with the hospital.', 'success');
+  }
+
   if (loading || !encounter) {
     return (
       <div style={styles.loadingShell}>
         <div style={styles.spinner} />
-        <p style={styles.loadingLabel}>Preparing your visit workspace...</p>
+        <p style={styles.loadingText}>Loading your encounter dashboard...</p>
       </div>
     );
   }
 
-  const currentEncounter = encounter;
-  const isTerminal = isTerminalEncounter(encounter.status);
-  const inHospital = isInHospitalEncounter(encounter.status);
-  const showGuestUpgradePrompt = isGuest && currentEncounter.status === 'WAITING';
-  const primaryDescription = inHospital
-    ? 'Your care team has your details and this workspace updates as your visit progresses.'
-    : 'You are checked in and on the way. Keep this page open for live updates.';
-
-  async function handleSendMessage(content: string, isWorsening = false) {
-    const trimmed = content.trim();
-    if (!trimmed || sendingMessage || isTerminal) return;
-
-    setSendingMessage(true);
-    try {
-      await sendPatientMessage(currentEncounter.id, trimmed, isWorsening);
-      setMessageInput('');
-      await refreshMessages();
-      if (isWorsening) {
-        showToast('Worsening alert sent to your care team.', 'success');
-      }
-    } catch {
-      showToast('Failed to send message.');
-    } finally {
-      setSendingMessage(false);
-    }
-  }
-
-  async function handleSaveProfile() {
-    if (!authSession) {
-      const trimmedFirstName = guestProfile.firstName.trim();
-      const trimmedPhone = guestProfile.phone.trim();
-
-      if (!trimmedFirstName) {
-        setGuestProfileError('First name is required.');
-        return;
-      }
-
-      if (!trimmedPhone) {
-        setGuestProfileError('Phone number is required.');
-        return;
-      }
-
-      setSavingProfile(true);
-      try {
-        const updatedProfile = await updateProfile({
-          firstName: trimmedFirstName,
-          lastName: guestProfile.lastName.trim() || undefined,
-          phone: trimmedPhone,
-          age: guestProfile.age ? Number(guestProfile.age) : undefined,
-          gender: guestProfile.gender.trim() || undefined,
-          allergies: guestProfile.allergies.trim() || undefined,
-          conditions: guestProfile.conditions.trim() || undefined,
-          preferredLanguage: guestProfile.preferredLanguage.trim() || undefined,
-        });
-
-        const result = await updateIntakeDetails({
-          details: guestProfile.details.trim() || undefined,
-        });
-
-        if (result && typeof result === 'object' && 'id' in result) {
-          setEncounter(result as Encounter);
-        }
-
-        setGuestProfile({
-          ...toGuestProfileState(updatedProfile),
-          details: guestProfile.details,
-        });
-        setGuestProfileError(null);
-        showToast('Guest information saved.', 'success');
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Could not save guest information.';
-        setGuestProfileError(message);
-        showToast(message);
-      } finally {
-        setSavingProfile(false);
-      }
-      return;
-    }
-
-    setSavingProfile(true);
-    try {
-      await updateProfile({
-        firstName: localProfile.firstName || undefined,
-        lastName: localProfile.lastName || undefined,
-        phone: localProfile.phone || undefined,
-        allergies: localProfile.allergies || undefined,
-        conditions: localProfile.conditions || undefined,
-        preferredLanguage: localProfile.preferredLanguage || undefined,
-      });
-      await refreshProfile();
-      showToast('Profile updated.', 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not save profile.');
-    } finally {
-      setSavingProfile(false);
-    }
-  }
-
-  const latestInstruction = getLatestCareInstruction(messages);
-
   return (
-    <div style={styles.shell}>
-      <header style={styles.header}>
-        <div style={styles.headerTop}>
-          <div style={styles.hospitalPill}>{hospitalName}</div>
-          <div style={styles.headerControls}>
-            <span style={{ ...styles.statusPill, color: statusMeta.color, background: statusMeta.bg, borderColor: statusMeta.border }}>
-              {statusMeta.shortLabel}
-            </span>
-          </div>
+    <main style={styles.page}>
+      <section style={styles.heroCard}>
+        <div style={styles.heroTop}>
+          <span style={styles.badge}>Current Encounter</span>
+          {!isTerminal ? (
+            <button type="button" style={styles.secondaryButton} onClick={() => void handleCancelVisit()}>
+              Cancel visit
+            </button>
+          ) : null}
         </div>
-        <h1 style={styles.headerTitle}>{currentEncounter.chiefComplaint ?? 'Emergency Visit'}</h1>
-        <p style={styles.headerSubtitle}>{primaryDescription}</p>
-      </header>
+        <h1 style={styles.title}>{hospitalName}</h1>
+        <p style={styles.subtitle}>
+          {encounter.status === 'EXPECTED'
+            ? 'This is the shared visit dashboard for both guests and account holders while the clinic prepares for your arrival.'
+            : 'This encounter dashboard stays aligned for guests and signed-in patients, with only account-specific actions changing.'}
+        </p>
 
-      <TerminalBanner status={currentEncounter.status} />
+        <div style={styles.statusRow}>
+          <span style={{ ...styles.statusPill, color: statusMeta.color, background: statusMeta.bg, borderColor: statusMeta.border }}>
+            {statusMeta.label}
+          </span>
+          <span style={styles.timestamp}>Opened {formatDateTime(encounter.createdAt)}</span>
+        </div>
+      </section>
 
-      <nav style={styles.topTabs}>
-        <TabLink encounterId={currentEncounter.id} tab="current" active={activeTab === 'current'} label="Current Visit" />
-        <TabLink encounterId={currentEncounter.id} tab="chat" active={activeTab === 'chat'} label="Messages" />
-        <TabLink encounterId={currentEncounter.id} tab="profile" active={activeTab === 'profile'} label="Profile" />
-      </nav>
+      <section style={styles.grid}>
+        <SupportCard hospital={selectedHospital} fallbackHospitalName={hospitalName} patientLocation={currentLocation} />
 
-      <div style={styles.tabBody}>
-        <Routes>
-          <Route
-            path="current"
-            element={(
-              <section style={styles.contentStack}>
-                <Card title="Visit Snapshot" subtitle="Live encounter status from the hospital">
-                  <div style={styles.snapshotGrid}>
-                    <SnapshotItem label="Status" value={statusMeta.label} />
-                    <SnapshotItem label="Registered" value={formatDateTime(currentEncounter.expectedAt)} />
-                    <SnapshotItem label="Arrived" value={formatDateTime(currentEncounter.arrivedAt)} />
-                    <SnapshotItem
-                      label="Estimated Wait"
-                      value={queueInfo ? `${queueInfo.estimatedMinutes} min` : 'Will appear when queued'}
-                    />
+        <article style={styles.card}>
+          <h2 style={styles.cardTitle}>Encounter Summary</h2>
+          <div style={styles.summaryGrid}>
+            <SummaryItem label="Chief complaint" value={encounter.chiefComplaint || 'Not captured'} />
+            <SummaryItem label="Expected arrival" value={formatDateTime(encounter.expectedAt)} />
+            <SummaryItem label="Arrived" value={formatDateTime(encounter.arrivedAt)} />
+            <SummaryItem
+              label="Queue estimate"
+              value={queueInfo ? `${queueInfo.estimatedMinutes} min (${queueInfo.position} ahead)` : 'Will appear when the clinic queues this encounter'}
+            />
+          </div>
+
+          {encounter.priageSummary ? (
+            <div style={styles.summaryBlock}>
+              <div style={styles.blockEyebrow}>AI briefing</div>
+              <p style={styles.bodyText}>{encounter.priageSummary.briefing}</p>
+              {encounter.priageSummary.recommendedAction ? (
+                <p style={styles.mutedText}>
+                  <strong>Recommended next step:</strong> {encounter.priageSummary.recommendedAction}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <p style={styles.bodyText}>{encounter.details || 'No extra encounter details have been added yet.'}</p>
+          )}
+
+          <div style={styles.summaryBlock}>
+            <div style={styles.blockEyebrow}>Latest care-team instruction</div>
+            <p style={styles.bodyText}>{latestInstruction}</p>
+          </div>
+        </article>
+
+        {isGuest ? (
+          <article style={styles.card}>
+            <h2 style={styles.cardTitle}>Guest Visit Details</h2>
+            <p style={styles.mutedText}>
+              This is the same encounter page account holders see, but guests can still complete or correct the details captured during intake.
+            </p>
+            <div style={styles.formGrid}>
+              <Field label="First name *" value={guestProfile.firstName} onChange={(value) => setGuestProfile((current) => ({ ...current, firstName: value }))} />
+              <Field label="Last name" value={guestProfile.lastName} onChange={(value) => setGuestProfile((current) => ({ ...current, lastName: value }))} />
+              <Field label="Phone number *" value={guestProfile.phone} onChange={(value) => setGuestProfile((current) => ({ ...current, phone: value }))} />
+              <Field label="Age" value={guestProfile.age} onChange={(value) => setGuestProfile((current) => ({ ...current, age: value }))} />
+              <Field label="Gender" value={guestProfile.gender} onChange={(value) => setGuestProfile((current) => ({ ...current, gender: value }))} />
+              <Field label="Preferred language" value={guestProfile.preferredLanguage} onChange={(value) => setGuestProfile((current) => ({ ...current, preferredLanguage: value }))} />
+              <Field label="Allergies" value={guestProfile.allergies} onChange={(value) => setGuestProfile((current) => ({ ...current, allergies: value }))} />
+              <Field label="Conditions" value={guestProfile.conditions} onChange={(value) => setGuestProfile((current) => ({ ...current, conditions: value }))} />
+            </div>
+            <Field
+              label="Additional details for triage"
+              value={guestProfile.details}
+              onChange={(value) => setGuestProfile((current) => ({ ...current, details: value }))}
+              multiline
+              rows={4}
+            />
+            {guestInfoError ? <p style={styles.errorText}>{guestInfoError}</p> : null}
+            <button type="button" style={styles.primaryButton} onClick={() => void handleSaveGuestInfo()} disabled={savingGuestInfo}>
+              {savingGuestInfo ? 'Saving...' : 'Save guest details'}
+            </button>
+          </article>
+        ) : (
+          <article style={styles.card}>
+            <h2 style={styles.cardTitle}>Account Details on File</h2>
+            <p style={styles.mutedText}>
+              Signed-in patients see the same encounter dashboard, with account editing kept in the dedicated settings page.
+            </p>
+            <div style={styles.detailStack}>
+              {accountSummary.map((item) => (
+                <div key={item.label} style={styles.detailRow}>
+                  <span style={styles.detailLabel}>{item.label}</span>
+                  <span style={styles.detailValue}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+            <button type="button" style={styles.secondaryButton} onClick={() => navigate('/settings')}>
+              Open Settings
+            </button>
+          </article>
+        )}
+
+        <article style={styles.card}>
+          <h2 style={styles.cardTitle}>Messages</h2>
+          {recentStaffMessages.length === 0 ? (
+            <p style={styles.mutedText}>No staff messages yet. Updates will appear here as the encounter progresses.</p>
+          ) : (
+            <div style={styles.messageStack}>
+              {recentStaffMessages.map((message) => (
+                <div key={message.id} style={styles.messageRow}>
+                  <div style={styles.messageMeta}>
+                    <strong>Care team</strong>
+                    <span>{formatShortTime(message.createdAt)}</span>
                   </div>
-                </Card>
+                  <p style={styles.messageBody}>{message.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          <button type="button" style={styles.primaryButton} onClick={() => navigate(`/messages?encounter=${encounter.id}`)}>
+            Open full message thread
+          </button>
+        </article>
 
-                <Card title="Latest Care-Team Instruction" subtitle="From your current message thread">
-                  <p style={styles.bodyText}>{latestInstruction}</p>
-                </Card>
+        {!isTerminal ? (
+          <article style={styles.card}>
+            <h2 style={styles.cardTitle}>Location and Arrival</h2>
+            <p style={styles.mutedText}>
+              Share your ETA with the hospital, or send a quick note when you arrive.
+            </p>
+            <div style={styles.buttonStack}>
+              <button
+                type="button"
+                style={{ ...styles.primaryButton, background: locationSharing ? '#9f1239' : patientTheme.colors.accent }}
+                onClick={handleToggleLocationSharing}
+              >
+                {locationSharing ? 'Stop sharing location' : 'Share live location'}
+              </button>
+              <button type="button" style={styles.secondaryButton} onClick={() => void handleSendArrivalNote()} disabled={arrivalSubmitting}>
+                {arrivalSubmitting ? 'Sending...' : "I'm here now"}
+              </button>
+            </div>
 
-                {showGuestUpgradePrompt && <UpgradeAccountCard returnTo={`/encounters/${currentEncounter.id}/current`} />}
-              </section>
-            )}
-          />
-          <Route
-            path="chat"
-            element={(
-              <section style={styles.contentStack}>
-                <Card title="Care-Team Conversation" subtitle="Live message thread from your encounter">
-                  <div style={styles.messageList}>
-                    {messages.length === 0 && (
-                      <p style={styles.mutedText}>No messages yet. Use quick replies or type below.</p>
-                    )}
-                    {messages.map((message) => {
-                      const isPatientMessage = message.senderType === 'PATIENT';
-                      return (
-                        <div
-                          key={message.id}
-                          style={{
-                            ...styles.messageBubble,
-                            alignSelf: isPatientMessage ? 'flex-end' : 'flex-start',
-                            background: isPatientMessage ? '#1949b8' : '#f3efe5',
-                            color: isPatientMessage ? '#fff' : patientTheme.colors.ink,
-                          }}
-                        >
-                          <div style={styles.messageMeta}>
-                            {isPatientMessage ? (
-                              <span>You</span>
-                            ) : (
-                              <span>Care Team</span>
-                            )}
-                            <time>{formatTime(message.createdAt)}</time>
-                          </div>
-                          <p style={styles.messageText}>{message.content}</p>
-                        </div>
-                      );
-                    })}
-                    <div ref={bottomRef} />
-                  </div>
-                  {isTerminal ? (
-                    <p style={styles.closedNotice}>This visit has ended. Messaging is read-only now.</p>
-                  ) : (
-                    <div style={styles.inputRow}>
-                      <input
-                        value={messageInput}
-                        onChange={(event) => setMessageInput(event.target.value)}
-                        placeholder="Type a message to your care team"
-                        style={styles.input}
-                        disabled={sendingMessage}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' && !event.shiftKey) {
-                            event.preventDefault();
-                            void handleSendMessage(messageInput);
-                          }
-                        }}
-                      />
-                      <button
-                        style={styles.primaryButton}
-                        onClick={() => {
-                          void handleSendMessage(messageInput);
-                        }}
-                        disabled={!messageInput.trim() || sendingMessage}
-                      >
-                        Send
-                      </button>
-                    </div>
-                  )}
-                </Card>
-              </section>
-            )}
-          />
-          <Route
-            path="profile"
-            element={(
-              <section style={styles.contentStack}>
-                <Card title="Patient Information" subtitle={authSession ? 'Account-backed profile details' : 'Guest visit profile'}>
-                  {authSession ? (
-                    <div style={styles.fieldStack}>
-                      <TwoColField
-                        leftLabel="First name"
-                        leftValue={localProfile.firstName}
-                        onLeftChange={(value) => setLocalProfile((prev) => ({ ...prev, firstName: value }))}
-                        rightLabel="Last name"
-                        rightValue={localProfile.lastName}
-                        onRightChange={(value) => setLocalProfile((prev) => ({ ...prev, lastName: value }))}
-                      />
-                      <label style={styles.fieldLabel}>
-                        Phone
-                        <input
-                          value={localProfile.phone}
-                          onChange={(event) => setLocalProfile((prev) => ({ ...prev, phone: event.target.value }))}
-                          style={styles.input}
-                        />
-                      </label>
-                      <label style={styles.fieldLabel}>
-                        Allergies
-                        <input
-                          value={localProfile.allergies}
-                          onChange={(event) => setLocalProfile((prev) => ({ ...prev, allergies: event.target.value }))}
-                          style={styles.input}
-                        />
-                      </label>
-                      <label style={styles.fieldLabel}>
-                        Conditions
-                        <input
-                          value={localProfile.conditions}
-                          onChange={(event) => setLocalProfile((prev) => ({ ...prev, conditions: event.target.value }))}
-                          style={styles.input}
-                        />
-                      </label>
-                      <label style={styles.fieldLabel}>
-                        Preferred language
-                        <input
-                          value={localProfile.preferredLanguage}
-                          onChange={(event) => setLocalProfile((prev) => ({ ...prev, preferredLanguage: event.target.value }))}
-                          style={styles.input}
-                        />
-                      </label>
-                    </div>
-                  ) : (
-                    <div style={styles.fieldStack}>
-                      <TwoColField
-                        leftLabel="First name"
-                        leftValue={guestProfile.firstName}
-                        onLeftChange={(value) => setGuestProfile((prev) => ({ ...prev, firstName: value }))}
-                        rightLabel="Last name"
-                        rightValue={guestProfile.lastName}
-                        onRightChange={(value) => setGuestProfile((prev) => ({ ...prev, lastName: value }))}
-                      />
-                      <label style={styles.fieldLabel}>
-                        Phone
-                        <input
-                          value={guestProfile.phone}
-                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, phone: event.target.value }))}
-                          style={styles.input}
-                          inputMode="tel"
-                        />
-                      </label>
-                      <TwoColField
-                        leftLabel="Age"
-                        leftValue={guestProfile.age}
-                        onLeftChange={(value) => setGuestProfile((prev) => ({ ...prev, age: value }))}
-                        rightLabel="Gender"
-                        rightValue={guestProfile.gender}
-                        onRightChange={(value) => setGuestProfile((prev) => ({ ...prev, gender: value }))}
-                      />
-                      <label style={styles.fieldLabel}>
-                        Allergies
-                        <input
-                          value={guestProfile.allergies}
-                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, allergies: event.target.value }))}
-                          style={styles.input}
-                        />
-                      </label>
-                      <label style={styles.fieldLabel}>
-                        Conditions
-                        <input
-                          value={guestProfile.conditions}
-                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, conditions: event.target.value }))}
-                          style={styles.input}
-                        />
-                      </label>
-                      <label style={styles.fieldLabel}>
-                        Preferred language
-                        <input
-                          value={guestProfile.preferredLanguage}
-                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, preferredLanguage: event.target.value }))}
-                          style={styles.input}
-                        />
-                      </label>
-                      <label style={styles.fieldLabel}>
-                        Additional details for the triage team
-                        <textarea
-                          value={guestProfile.details}
-                          onChange={(event) => setGuestProfile((prev) => ({ ...prev, details: event.target.value }))}
-                          style={styles.textArea}
-                        />
-                      </label>
-                    </div>
-                  )}
-                  {!authSession && guestProfileError && (
-                    <p style={styles.errorText}>{guestProfileError}</p>
-                  )}
-                  <div style={styles.buttonRow}>
-                    <button style={styles.primaryButton} onClick={handleSaveProfile} disabled={savingProfile}>
-                      {savingProfile ? 'Saving...' : authSession ? 'Save profile changes' : 'Save guest details'}
-                    </button>
-                  </div>
-                </Card>
+            <Field
+              label="Transport or arrival note"
+              value={transportNote}
+              onChange={setTransportNote}
+              multiline
+              rows={3}
+            />
+          </article>
+        ) : null}
 
-                {authSession && (
-                  <Card title="Account Actions" subtitle="Quick actions for your account">
-                    <div style={styles.buttonRow}>
-                      <button style={styles.secondaryButton} onClick={() => navigate('/priage')}>
-                        Start new visit
-                      </button>
-                      <button
-                        style={{ ...styles.secondaryButton, borderColor: '#fecaca', color: '#b93b35' }}
-                        onClick={async () => {
-                          await logout().catch(() => undefined);
-                        }}
-                      >
-                        Log out
-                      </button>
-                    </div>
-                  </Card>
-                )}
-              </section>
-            )}
-          />
-          <Route path="*" element={<Navigate to={`/encounters/${currentEncounter.id}/current`} replace />} />
-        </Routes>
-      </div>
-    </div>
+        {isGuest ? <UpgradeAccountCard returnTo={`/encounters/${encounter.id}/current`} /> : null}
+      </section>
+
+      <section style={styles.timelineCard}>
+        <h2 style={styles.cardTitle}>What Happens Next</h2>
+        <ol style={styles.timelineList}>
+          <li>Arrival confirmation and registration review.</li>
+          <li>Triage or nurse assessment when the team is ready.</li>
+          <li>Updates continue here and in the main Messages page for this encounter.</li>
+        </ol>
+      </section>
+    </main>
   );
 }
 
-function TabLink({
-  encounterId,
-  tab,
-  active,
-  label,
+function SupportCard({
+  hospital,
+  fallbackHospitalName,
+  patientLocation,
 }: {
-  encounterId: number;
-  tab: EncounterWorkspaceTab;
-  active: boolean;
-  label: string;
+  hospital: Hospital | null;
+  fallbackHospitalName: string;
+  patientLocation: PatientCoordinates | null;
 }) {
-  return (
-    <Link
-      to={`/encounters/${encounterId}/${tab}`}
-      style={{
-        ...styles.tabLink,
-        color: active ? patientTheme.colors.accentStrong : patientTheme.colors.inkMuted,
-        borderBottomColor: active ? patientTheme.colors.accent : 'transparent',
-      }}
-    >
-      {label}
-    </Link>
-  );
-}
+  if (!hospital) {
+    return (
+      <article style={styles.card}>
+        <h2 style={styles.cardTitle}>Hospital Support</h2>
+        <p style={styles.bodyText}>{fallbackHospitalName}</p>
+        <p style={styles.mutedText}>Arrival directions and contact details will appear here when the hospital profile is configured.</p>
+      </article>
+    );
+  }
 
-function Card({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  children: ReactNode;
-}) {
+  const distanceLabel = formatHospitalDistance(getHospitalDistanceKm(hospital, patientLocation));
+
   return (
     <article style={styles.card}>
-      <header style={styles.cardHeader}>
-        <h3 style={styles.cardTitle}>{title}</h3>
-        <p style={styles.cardSubtitle}>{subtitle}</p>
-      </header>
-      {children}
+      <h2 style={styles.cardTitle}>Hospital Support</h2>
+      <p style={styles.bodyText}>{hospital.address || hospital.name}</p>
+      {distanceLabel ? <p style={styles.mutedText}>{distanceLabel}</p> : null}
+      {hospital.checkInInstructions ? (
+        <p style={styles.mutedText}>
+          <strong>Check-in:</strong> {hospital.checkInInstructions}
+        </p>
+      ) : null}
+      {hospital.parkingNotes ? (
+        <p style={styles.mutedText}>
+          <strong>Arrival notes:</strong> {hospital.parkingNotes}
+        </p>
+      ) : null}
+      <div style={styles.buttonStack}>
+        <a href={getGoogleMapsDirectionsUrl(hospital, patientLocation)} target="_blank" rel="noreferrer" style={styles.linkButton}>
+          Google Maps
+        </a>
+        <a href={getAppleMapsDirectionsUrl(hospital, patientLocation)} target="_blank" rel="noreferrer" style={styles.linkButton}>
+          Apple Maps
+        </a>
+        {hospital.phone ? (
+          <a href={`tel:${hospital.phone}`} style={styles.linkButton}>
+            Call Hospital
+          </a>
+        ) : null}
+      </div>
     </article>
   );
 }
 
-function SnapshotItem({ label, value }: { label: string; value: string }) {
+function SummaryItem({ label, value }: { label: string; value: string }) {
   return (
-    <div style={styles.snapshotItem}>
-      <span style={styles.snapshotLabel}>{label}</span>
-      <strong style={styles.snapshotValue}>{value}</strong>
+    <div style={styles.summaryItem}>
+      <span style={styles.summaryLabel}>{label}</span>
+      <span style={styles.summaryValue}>{value}</span>
     </div>
   );
 }
 
-function TwoColField({
-  leftLabel,
-  leftValue,
-  onLeftChange,
-  rightLabel,
-  rightValue,
-  onRightChange,
+function Field({
+  label,
+  value,
+  onChange,
+  multiline = false,
+  rows = 3,
 }: {
-  leftLabel: string;
-  leftValue: string;
-  onLeftChange: (value: string) => void;
-  rightLabel: string;
-  rightValue: string;
-  onRightChange: (value: string) => void;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  multiline?: boolean;
+  rows?: number;
 }) {
   return (
-    <div style={styles.twoCol}>
-      <label style={styles.fieldLabel}>
-        {leftLabel}
-        <input value={leftValue} onChange={(event) => onLeftChange(event.target.value)} style={styles.input} />
-      </label>
-      <label style={styles.fieldLabel}>
-        {rightLabel}
-        <input value={rightValue} onChange={(event) => onRightChange(event.target.value)} style={styles.input} />
-      </label>
-    </div>
+    <label style={styles.fieldLabel}>
+      {label}
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          rows={rows}
+          style={styles.textArea}
+        />
+      ) : (
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          style={styles.input}
+        />
+      )}
+    </label>
   );
 }
 
-const sharedInput: CSSProperties = {
-  width: '100%',
-  border: panelBorder,
-  borderRadius: patientTheme.radius.sm,
-  background: '#fff',
-  color: patientTheme.colors.ink,
-  fontSize: '0.94rem',
-  padding: '0.68rem 0.74rem',
-  fontFamily: patientTheme.fonts.body,
-  boxSizing: 'border-box',
-};
-
-const styles: Record<string, CSSProperties> = {
-  shell: {
+const styles: Record<string, React.CSSProperties> = {
+  page: {
     minHeight: '100vh',
+    padding: '1rem 1rem 2rem',
     background: heroBackdrop,
     fontFamily: patientTheme.fonts.body,
     color: patientTheme.colors.ink,
-    paddingBottom: '1.5rem',
   },
   loadingShell: {
     minHeight: '100vh',
     display: 'flex',
     flexDirection: 'column',
-    gap: '0.85rem',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: '0.8rem',
     background: heroBackdrop,
     fontFamily: patientTheme.fonts.body,
   },
   spinner: {
-    width: '42px',
-    height: '42px',
+    width: '38px',
+    height: '38px',
     borderRadius: '50%',
     border: '4px solid #dbe3f3',
     borderTopColor: patientTheme.colors.accent,
     animation: 'spin 0.9s linear infinite',
   },
-  loadingLabel: {
+  loadingText: {
     margin: 0,
     color: patientTheme.colors.inkMuted,
   },
-  header: {
-    maxWidth: '920px',
-    margin: '0 auto',
-    padding: '1.3rem 1rem 1rem',
+  heroCard: {
+    maxWidth: '1100px',
+    margin: '0 auto 1rem',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.lg,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.panel,
+    padding: '1rem',
+    display: 'grid',
+    gap: '0.7rem',
   },
-  headerTop: {
+  heroTop: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: '0.75rem',
     flexWrap: 'wrap',
   },
-  hospitalPill: {
+  badge: {
     display: 'inline-flex',
     alignItems: 'center',
-    border: panelBorder,
+    padding: '0.3rem 0.72rem',
     borderRadius: '999px',
-    background: '#fff8eb',
-    padding: '0.32rem 0.8rem',
-    fontSize: '0.78rem',
+    border: panelBorder,
+    background: '#e9f1ff',
+    color: patientTheme.colors.accentStrong,
+    fontSize: '0.74rem',
     fontWeight: 700,
-    color: '#7a4d14',
   },
-  headerControls: {
+  title: {
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '1.6rem',
+  },
+  subtitle: {
+    margin: 0,
+    color: patientTheme.colors.inkMuted,
+    lineHeight: 1.55,
+  },
+  statusRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: '0.45rem',
+    gap: '0.75rem',
     flexWrap: 'wrap',
-    justifyContent: 'flex-end',
   },
   statusPill: {
     display: 'inline-flex',
     alignItems: 'center',
     border: '1px solid',
     borderRadius: '999px',
-    padding: '0.32rem 0.8rem',
-    fontSize: '0.75rem',
+    padding: '0.24rem 0.62rem',
+    fontSize: '0.72rem',
     fontWeight: 700,
+    whiteSpace: 'nowrap',
   },
-
-  headerTitle: {
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.35rem',
-    margin: '0.75rem 0 0',
-    letterSpacing: '-0.01em',
-  },
-  headerSubtitle: {
-    margin: '0.35rem 0 0',
+  timestamp: {
     color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-    maxWidth: '58ch',
+    fontSize: '0.86rem',
   },
-  terminalBanner: {
-    maxWidth: '920px',
-    margin: '0 auto 0.8rem',
-    padding: '0.75rem 1rem',
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff1ef',
-    border: '1px solid #fecaca',
-    color: '#9f1239',
-    fontSize: '0.9rem',
-  },
-  terminalTitle: {
-    marginRight: '0.35rem',
-  },
-  topTabs: {
-    maxWidth: '920px',
+  grid: {
+    maxWidth: '1100px',
     margin: '0 auto',
-    display: 'flex',
-    gap: '0.35rem',
-    padding: '0 1rem',
-    borderBottom: panelBorder,
-    position: 'sticky',
-    top: 0,
-    backdropFilter: 'blur(4px)',
-    background: 'rgba(247, 243, 234, 0.82)',
-    zIndex: 10,
-  },
-  tabLink: {
-    textDecoration: 'none',
-    padding: '0.86rem 0.68rem',
-    fontSize: '0.9rem',
-    fontWeight: 700,
-    borderBottom: '2px solid transparent',
-  },
-  tabBody: {
-    maxWidth: '920px',
-    margin: '0 auto',
-    padding: '1rem',
-  },
-  contentStack: {
     display: 'grid',
-    gap: '0.85rem',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    gap: '1rem',
+    alignItems: 'start',
   },
   card: {
-    background: 'rgba(255, 253, 248, 0.98)',
     border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    padding: '0.95rem',
+    borderRadius: patientTheme.radius.lg,
+    background: '#fffdf8',
     boxShadow: patientTheme.shadows.card,
-  },
-  cardHeader: {
-    marginBottom: '0.75rem',
+    padding: '1rem',
+    display: 'grid',
+    gap: '0.75rem',
   },
   cardTitle: {
     margin: 0,
     fontFamily: patientTheme.fonts.heading,
-    fontSize: '1rem',
+    fontSize: '1.02rem',
   },
-  cardSubtitle: {
-    margin: '0.2rem 0 0',
+  bodyText: {
+    margin: 0,
+    lineHeight: 1.55,
+    color: patientTheme.colors.ink,
+  },
+  mutedText: {
+    margin: 0,
+    lineHeight: 1.55,
     color: patientTheme.colors.inkMuted,
-    fontSize: '0.86rem',
-    lineHeight: 1.4,
   },
-  snapshotGrid: {
+  summaryGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
     gap: '0.6rem',
   },
-  snapshotItem: {
+  summaryItem: {
     border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
+    borderRadius: patientTheme.radius.md,
     background: '#fff',
-    padding: '0.65rem',
+    padding: '0.8rem',
     display: 'grid',
-    gap: '0.15rem',
+    gap: '0.2rem',
   },
-  snapshotLabel: {
-    fontSize: '0.74rem',
+  summaryLabel: {
+    fontSize: '0.75rem',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
     textTransform: 'uppercase',
-    letterSpacing: '0.05em',
     color: patientTheme.colors.inkMuted,
   },
-  snapshotValue: {
-    fontSize: '0.86rem',
-    lineHeight: 1.3,
+  summaryValue: {
+    fontSize: '0.92rem',
+    color: patientTheme.colors.ink,
+    lineHeight: 1.45,
   },
-  bodyText: {
-    margin: 0,
-    lineHeight: 1.5,
-    fontSize: '0.93rem',
+  summaryBlock: {
+    borderTop: panelBorder,
+    paddingTop: '0.75rem',
+    display: 'grid',
+    gap: '0.4rem',
   },
-  textArea: {
-    ...sharedInput,
-    minHeight: '88px',
-    resize: 'vertical',
+  blockEyebrow: {
+    fontSize: '0.76rem',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: patientTheme.colors.accentStrong,
   },
-  input: sharedInput,
-
+  formGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '0.65rem',
+  },
   fieldLabel: {
     display: 'grid',
-    gap: '0.35rem',
-    fontSize: '0.82rem',
+    gap: '0.34rem',
+    fontSize: '0.8rem',
     fontWeight: 700,
     color: patientTheme.colors.ink,
   },
-  fieldStack: {
+  input: {
+    width: '100%',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.72rem 0.78rem',
+    fontSize: '0.94rem',
+    fontFamily: patientTheme.fonts.body,
+    boxSizing: 'border-box',
+  },
+  textArea: {
+    width: '100%',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.78rem',
+    fontSize: '0.94rem',
+    fontFamily: patientTheme.fonts.body,
+    lineHeight: 1.5,
+    boxSizing: 'border-box',
+    resize: 'vertical',
+  },
+  detailStack: {
     display: 'grid',
-    gap: '0.65rem',
+    gap: '0.6rem',
   },
-  errorText: {
+  detailRow: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fff',
+    padding: '0.78rem 0.82rem',
+    display: 'grid',
+    gap: '0.2rem',
+  },
+  detailLabel: {
+    fontSize: '0.75rem',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: patientTheme.colors.inkMuted,
+  },
+  detailValue: {
+    fontSize: '0.93rem',
+    color: patientTheme.colors.ink,
+  },
+  messageStack: {
+    display: 'grid',
+    gap: '0.55rem',
+  },
+  messageRow: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fff',
+    padding: '0.78rem 0.82rem',
+    display: 'grid',
+    gap: '0.35rem',
+  },
+  messageMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.6rem',
+    fontSize: '0.78rem',
+    color: patientTheme.colors.inkMuted,
+  },
+  messageBody: {
     margin: 0,
-    color: patientTheme.colors.danger,
-    fontSize: '0.82rem',
+    color: patientTheme.colors.ink,
+    lineHeight: 1.5,
   },
-  buttonRow: {
+  buttonStack: {
     display: 'flex',
     flexWrap: 'wrap',
-    gap: '0.55rem',
-    marginTop: '0.65rem',
+    gap: '0.6rem',
   },
   primaryButton: {
     border: 'none',
     borderRadius: patientTheme.radius.sm,
-    padding: '0.65rem 0.95rem',
     background: patientTheme.colors.accent,
     color: '#fff',
+    padding: '0.78rem 1rem',
     fontWeight: 700,
-    fontFamily: patientTheme.fonts.body,
     cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
   },
   secondaryButton: {
     border: panelBorder,
     borderRadius: patientTheme.radius.sm,
-    padding: '0.65rem 0.95rem',
     background: '#fff',
     color: patientTheme.colors.ink,
+    padding: '0.78rem 1rem',
     fontWeight: 700,
-    fontFamily: patientTheme.fonts.body,
     cursor: 'pointer',
+    fontFamily: patientTheme.fonts.body,
   },
-
-  mutedText: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.4,
-    fontSize: '0.88rem',
-  },
-
-  messageList: {
-    display: 'grid',
-    gap: '0.55rem',
-    maxHeight: '340px',
-    overflowY: 'auto',
-    padding: '0.3rem 0.1rem',
-  },
-  messageBubble: {
+  linkButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: panelBorder,
     borderRadius: patientTheme.radius.sm,
-    padding: '0.62rem 0.72rem',
-    maxWidth: '85%',
-    display: 'grid',
-    gap: '0.2rem',
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.78rem 1rem',
+    fontWeight: 700,
+    textDecoration: 'none',
+    fontFamily: patientTheme.fonts.body,
   },
-  messageMeta: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '0.5rem',
-    fontSize: '0.69rem',
-    opacity: 0.85,
-  },
-  messageText: {
+  errorText: {
     margin: 0,
-    lineHeight: 1.4,
-    fontSize: '0.88rem',
+    color: '#b91c1c',
+    fontSize: '0.84rem',
   },
-  closedNotice: {
-    margin: '0.7rem 0 0',
-    fontSize: '0.83rem',
-    color: patientTheme.colors.inkMuted,
-  },
-  inputRow: {
-    marginTop: '0.65rem',
+  timelineCard: {
+    maxWidth: '1100px',
+    margin: '1rem auto 0',
+    border: panelBorder,
+    borderRadius: patientTheme.radius.lg,
+    background: '#fffdf8',
+    boxShadow: patientTheme.shadows.card,
+    padding: '1rem',
     display: 'grid',
-    gridTemplateColumns: '1fr auto',
-    gap: '0.5rem',
-    alignItems: 'center',
+    gap: '0.65rem',
   },
-  twoCol: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '0.55rem',
+  timelineList: {
+    margin: 0,
+    paddingLeft: '1.2rem',
+    color: patientTheme.colors.ink,
+    lineHeight: 1.7,
   },
-
 };

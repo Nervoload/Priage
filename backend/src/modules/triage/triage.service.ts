@@ -1,7 +1,7 @@
 // backend/src/modules/triage/triage.service.ts
 // Triage assessments service.
 
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EncounterStatus, EventType, Prisma } from '@prisma/client';
 
 import { EventsService } from '../events/events.service';
@@ -46,11 +46,10 @@ export class TriageService {
     try {
       const priorityScore = this.computePriorityScore(dto.ctasLevel, dto.painLevel);
 
-const { assessment, event } = await this.prisma.$transaction(async (tx) => {
+      const { assessment, createdEvent, completedEvent } = await this.prisma.$transaction(async (tx) => {
         const allowedStatuses = new Set<EncounterStatus>([
           EncounterStatus.ADMITTED,
           EncounterStatus.TRIAGE,
-          EncounterStatus.WAITING,
         ]);
 
         const encounter = await tx.encounter.findUnique({
@@ -97,22 +96,28 @@ const { assessment, event } = await this.prisma.$transaction(async (tx) => {
           },
         });
 
-        await tx.encounter.update({
+        const updatedEncounter = await tx.encounter.updateMany({
           where: {
-            id_hospitalId: {
-              id: dto.encounterId,
-              hospitalId,
-            },
+            id: dto.encounterId,
+            hospitalId,
+            status: encounter.status,
           },
           data: {
             currentTriageId: created.id,
             currentCtasLevel: created.ctasLevel,
             currentPriorityScore: created.priorityScore,
             triagedAt: new Date(),
+            waitingAt: new Date(),
+            status: EncounterStatus.WAITING,
           },
         });
+        if (updatedEncounter.count !== 1) {
+          throw new ConflictException(
+            `Encounter ${dto.encounterId} changed during triage completion. Refresh and retry.`,
+          );
+        }
 
-        const createdEvent = await this.events.emitEncounterEventTx(tx, {
+        const triageCreatedEvent = await this.events.emitEncounterEventTx(tx, {
           encounterId: dto.encounterId,
           hospitalId,
           type: EventType.TRIAGE_CREATED,
@@ -124,7 +129,25 @@ const { assessment, event } = await this.prisma.$transaction(async (tx) => {
           actor: { actorUserId: createdByUserId },
         });
 
-        return { assessment: created, event: createdEvent };
+        const triageCompletedEvent = await this.events.emitEncounterEventTx(tx, {
+          encounterId: dto.encounterId,
+          hospitalId,
+          type: EventType.TRIAGE_COMPLETED,
+          metadata: {
+            triageId: created.id,
+            fromStatus: encounter.status,
+            toStatus: EncounterStatus.WAITING,
+            ctasLevel: created.ctasLevel,
+            priorityScore: created.priorityScore,
+          },
+          actor: { actorUserId: createdByUserId },
+        });
+
+        return {
+          assessment: created,
+          createdEvent: triageCreatedEvent,
+          completedEvent: triageCompletedEvent,
+        };
       });
 
       this.loggingService.info(
@@ -140,11 +163,13 @@ const { assessment, event } = await this.prisma.$transaction(async (tx) => {
         {
           triageId: assessment.id,
           priorityScore: assessment.priorityScore,
-          eventId: event.id,
+          createdEventId: createdEvent.id,
+          completedEventId: completedEvent.id,
         },
       );
 
-      void this.events.dispatchEncounterEventAndMarkProcessed(event);
+      void this.events.dispatchEncounterEventAndMarkProcessed(createdEvent);
+      void this.events.dispatchEncounterEventAndMarkProcessed(completedEvent);
 
       return assessment;
     } catch (error) {

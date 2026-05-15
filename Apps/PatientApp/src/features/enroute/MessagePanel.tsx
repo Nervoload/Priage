@@ -1,11 +1,12 @@
 // PatientApp/src/features/enroute/MessagePanel.tsx
 // Patient-side chat panel — messages between patient and ER staff.
 
-import { useState, useEffect, useRef } from 'react';
-import type { ChatMessage } from '../../shared/types/domain';
-import { messageToChatMessage } from '../../shared/types/domain';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { listMyMessages } from '../../shared/api/encounters';
 import { parseSMSCommand, routeSMSCommand } from '../../app/SMSInterface';
+import { appendUniqueMessages, getLastMessageId } from '../../shared/messages';
+import type { Message } from '../../shared/types/domain';
+import { messageToChatMessage } from '../../shared/types/domain';
 import { useToast } from '../../shared/ui/ToastContext';
 
 interface MessagePanelProps {
@@ -14,35 +15,65 @@ interface MessagePanelProps {
 
 export function MessagePanel({ encounterId }: MessagePanelProps) {
   const { showToast } = useToast();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const messageCursorRef = useRef<number | null>(null);
+
+  const loadMessages = useCallback(async (mode: 'replace' | 'append' = 'replace') => {
+    try {
+      const next = await listMyMessages(
+        encounterId,
+        mode === 'append' ? { afterMessageId: messageCursorRef.current ?? 0 } : {},
+      );
+
+      if (mode === 'replace') {
+        setMessages(next);
+        messageCursorRef.current = getLastMessageId(next);
+        return;
+      }
+
+      if (next.length === 0) {
+        return;
+      }
+
+      setMessages((prev) => {
+        const merged = appendUniqueMessages(prev, next);
+        messageCursorRef.current = getLastMessageId(merged);
+        return merged;
+      });
+    } catch {
+      // Silently fail — will retry on next poll.
+    }
+  }, [encounterId]);
 
   // Fetch messages on mount + poll every 5s
   useEffect(() => {
     let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
 
     async function fetchMessages() {
-      try {
-        const msgs = await listMyMessages(encounterId);
-        if (!cancelled) {
-          setMessages(msgs.map(messageToChatMessage));
-        }
-      } catch {
-        // Silently fail — will retry on next poll
+      if (cancelled) return;
+      await loadMessages('replace');
+      if (!cancelled) {
+        intervalId = setInterval(() => {
+          void loadMessages('append');
+        }, 5000);
       }
     }
 
-    fetchMessages();
-    pollRef.current = setInterval(fetchMessages, 5000);
+    messageCursorRef.current = null;
+    setMessages([]);
+    void fetchMessages();
 
     return () => {
       cancelled = true;
-      clearInterval(pollRef.current);
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
     };
-  }, [encounterId]);
+  }, [encounterId, loadMessages]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -64,16 +95,7 @@ export function MessagePanel({ encounterId }: MessagePanelProps) {
         if (result.response) {
           showToast(result.response, 'info');
         }
-        // Optimistically add the message
-        setMessages(prev => [
-          ...prev,
-          {
-            id: `local-${Date.now()}`,
-            sender: 'patient',
-            text: cmd.type === 'worsening' ? cmd.content : raw,
-            timestamp: new Date().toISOString(),
-          },
-        ]);
+        await loadMessages('append');
       } else if (cmd.type === 'checkin') {
         showToast('Check-in noted. A nurse will be with you shortly.', 'info');
       } else {
@@ -108,26 +130,30 @@ export function MessagePanel({ encounterId }: MessagePanelProps) {
           </div>
         )}
 
-        {messages.map(msg => (
+        {messages.map((msg) => {
+          const chatMessage = messageToChatMessage(msg);
+
+          return (
           <div
-            key={msg.id}
+            key={chatMessage.id}
             style={{
               ...styles.bubble,
-              ...(msg.sender === 'patient' ? styles.bubblePatient : styles.bubbleStaff),
+              ...(chatMessage.sender === 'patient' ? styles.bubblePatient : styles.bubbleStaff),
             }}
           >
             <div style={styles.bubbleSender}>
-              {msg.sender === 'patient' ? 'You' : 'ER Staff'}
+              {chatMessage.sender === 'patient' ? 'You' : 'ER Staff'}
             </div>
-            <div style={styles.bubbleText}>{msg.text}</div>
+            <div style={styles.bubbleText}>{chatMessage.text}</div>
             <div style={styles.bubbleTime}>
-              {new Date(msg.timestamp).toLocaleTimeString([], {
+              {new Date(chatMessage.timestamp).toLocaleTimeString([], {
                 hour: '2-digit',
                 minute: '2-digit',
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
         <div ref={bottomRef} />
       </div>
 

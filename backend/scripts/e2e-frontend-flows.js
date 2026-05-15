@@ -45,6 +45,7 @@ let failed = 0;
 let token = null;
 let socket = null;
 let fixtureContext = null;
+const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 if (!SEED && (!testEmail || !testPassword)) {
   throw new Error('E2E_TEST_EMAIL/E2E_TEST_PASSWORD or PRIAGE_DEV_ADMIN_EMAIL/PRIAGE_DEV_ADMIN_PASSWORD must be set when not using --seed');
@@ -52,6 +53,40 @@ if (!SEED && (!testEmail || !testPassword)) {
 
 function patientHeaders(sessionToken) {
   return { 'x-patient-token': sessionToken };
+}
+
+function looksLikeJwt(value) {
+  return typeof value === 'string' && value.split('.').length === 3;
+}
+
+function extractStaffSessionToken(headers) {
+  const setCookies = typeof headers?.getSetCookie === 'function'
+    ? headers.getSetCookie()
+    : [];
+  const rawCookies = setCookies.length > 0
+    ? setCookies
+    : (headers?.get?.('set-cookie') ? [headers.get('set-cookie')] : []);
+
+  for (const cookie of rawCookies) {
+    const match = String(cookie).match(new RegExp(`${STAFF_AUTH_COOKIE}=([^;]+)`));
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function buildStaffAuthHeaders(staffToken) {
+  if (!staffToken) {
+    return {};
+  }
+
+  if (looksLikeJwt(staffToken)) {
+    return { Authorization: `Bearer ${staffToken}` };
+  }
+
+  return { Cookie: `${STAFF_AUTH_COOKIE}=${encodeURIComponent(staffToken)}` };
 }
 
 function deriveCriticalComplaint(encounter) {
@@ -68,8 +103,20 @@ function deriveCriticalComplaint(encounter) {
 
 async function api(method, path, body, auth = true, extraHeaders = {}) {
   const demoCookie = demoCookieHeader();
-  const headers = { 'Content-Type': 'application/json', ...(demoCookie ? { Cookie: demoCookie } : {}), ...extraHeaders };
-  if (auth && token && !extraHeaders['x-patient-token']) headers['Authorization'] = `Bearer ${token}`;
+  const headers = { 'Content-Type': 'application/json', ...extraHeaders };
+  const cookieParts = [demoCookie, extraHeaders.Cookie];
+  if (auth && token && !extraHeaders['x-patient-token']) {
+    const staffAuthHeaders = buildStaffAuthHeaders(token);
+    if (staffAuthHeaders.Cookie) {
+      cookieParts.push(staffAuthHeaders.Cookie);
+    } else if (staffAuthHeaders.Authorization) {
+      headers.Authorization = staffAuthHeaders.Authorization;
+    }
+  }
+  const cookieHeader = cookieParts.filter(Boolean).join('; ');
+  if (cookieHeader) {
+    headers.Cookie = cookieHeader;
+  }
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
 
@@ -83,7 +130,7 @@ async function api(method, path, body, auth = true, extraHeaders = {}) {
     if (json) console.log(`  ${C.dim}${JSON.stringify(json).slice(0, 200)}${C.reset}`);
   }
 
-  return { status: res.status, json, text };
+  return { status: res.status, json, text, headers: res.headers };
 }
 
 function assert(label, condition) {
@@ -158,9 +205,20 @@ async function connectSocket() {
     return socket;
   }
 
+  const socketAuth = looksLikeJwt(token) ? { token } : {};
+  const demoSocketCookie = demoSocketHeaders().cookie;
+  const socketHeaders = {
+    ...(looksLikeJwt(token)
+      ? demoSocketHeaders()
+      : {
+          cookie: [demoSocketCookie, token ? `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}` : null]
+            .filter(Boolean)
+            .join('; '),
+        }),
+  };
   socket = io(BASE, {
-    auth: { token },
-    extraHeaders: demoSocketHeaders(),
+    auth: socketAuth,
+    extraHeaders: socketHeaders,
     transports: ['websocket'],
     autoConnect: false,
   });
@@ -234,23 +292,23 @@ async function seedTestUser() {
 async function flowLogin() {
   section('1. Login (POST /auth/login)');
   console.log(`  ${C.dim}Using: ${testEmail}${C.reset}`);
-  const { status, json } = await api('POST', '/auth/login', {
+  const { status, json, headers } = await api('POST', '/auth/login', {
     email: testEmail,
     password: testPassword,
   }, false);
 
   assert('Returns 201/200', status === 201 || status === 200);
-  assert('Has access_token', !!json?.access_token);
+  assert('Returns staff session cookie or bearer token', !!extractStaffSessionToken(headers) || !!json?.access_token);
   assert('Has user.id', typeof json?.user?.id === 'number');
   assert('Has user.hospitalId', typeof json?.user?.hospitalId === 'number');
   assert('Has user.hospital.name', typeof json?.user?.hospital?.name === 'string');
 
-  token = json?.access_token;
+  token = extractStaffSessionToken(headers) ?? json?.access_token ?? null;
   return json?.user;
 }
 
 async function flowGetMe() {
-  section('2. Token rehydration (GET /auth/me)');
+  section('2. Staff session rehydration (GET /auth/me)');
   const { status, json } = await api('GET', '/auth/me');
   assert('Returns 200', status === 200);
   assert('Has userId', typeof json?.userId === 'number');
@@ -318,7 +376,7 @@ async function flowPatientEncounterApis(encounterId, patientToken) {
   assert('Patient encounter detail returns 200', detailStatus === 200);
   assert('Patient encounter detail matches encounter id', encounter?.id === encounterId);
   assert('Patient encounter detail includes non-internal messages array', Array.isArray(encounter?.messages));
-  assert('Patient encounter detail does not expose clinical AI summary', encounter?.priageSummary == null);
+  assert('Patient encounter detail exposes clinical AI summary', encounter?.priageSummary != null);
 
   const { status: queueStatus, json: queue } = await api('GET', `/patient/encounters/${encounterId}/queue`, null, false, headers);
   assert('Patient queue returns 200', queueStatus === 200);
@@ -518,12 +576,11 @@ async function flowDischarge(encounterId) {
 }
 
 async function flowTokenExpired() {
-  section('17. Token expiration handling (GET /auth/me with bad token)');
-  const savedToken = token;
-  token = 'expired.invalid.token';
-  const { status } = await api('GET', '/auth/me');
+  section('17. Invalid staff session handling (GET /auth/me with bad cookie)');
+  const { status } = await api('GET', '/auth/me', null, false, {
+    Cookie: `${STAFF_AUTH_COOKIE}=expired.invalid.token`,
+  });
   assert('Returns 401', status === 401);
-  token = savedToken;
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import { io, Socket } from 'socket.io-client';
 import {
   API_BASE_URL,
   isDemoAccessRequiredResponse,
+  notifyAuthExpired,
   notifyDemoAccessRequired,
 } from '../api/client';
 import type { Message } from '../types/domain';
@@ -57,6 +58,10 @@ async function probeDemoAccessGate(): Promise<void> {
         credentials: 'include',
       });
       const body = response.ok ? '' : await response.text().catch(() => '');
+      if (response.status === 401) {
+        notifyAuthExpired();
+        return;
+      }
       if (isDemoAccessRequiredResponse(response.status, body)) {
         notifyDemoAccessRequired();
       }

@@ -249,9 +249,31 @@ model User {
   resolvedAlerts     Alert[] @relation("alert_resolve_by")
   readCursors        EncounterReadCursor[]
   assets             Asset[]
+  staffSessions      StaffSession[]
 
   @@unique([hospitalId, email])
   @@index([hospitalId, role])
+}
+
+model StaffSession {
+  id        Int      @id @default(autoincrement())
+  tokenHash String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime?
+  lastSeenAt DateTime?
+  revokedAt DateTime?
+  revokedReason String?
+  createdIp String?
+  createdUserAgent String?
+  lastSeenIp String?
+  lastSeenUserAgent String?
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@index([revokedAt])
 }
 
 model Hospital {

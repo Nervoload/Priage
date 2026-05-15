@@ -3,7 +3,13 @@
 // Uses the authenticated fetch wrapper from client.ts.
 
 import { client } from './client';
-import type { EncounterDetail, EncounterListItem, EncounterListResponse, EncounterStatus } from '../types/domain';
+import type {
+  CreateAdmittanceEncounterPayload,
+  EncounterDetail,
+  EncounterListItem,
+  EncounterListResponse,
+  EncounterStatus,
+} from '../types/domain';
 
 // ─── List encounters (with optional status filter) ─────────────────────────
 
@@ -45,6 +51,15 @@ export async function createEncounter(
   payload: CreateEncounterPayload,
 ): Promise<EncounterListItem> {
   return client<EncounterListItem>('/encounters', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createAdmittanceEncounter(
+  payload: CreateAdmittanceEncounterPayload,
+): Promise<EncounterDetail> {
+  return client<EncounterDetail>('/encounters/admit', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

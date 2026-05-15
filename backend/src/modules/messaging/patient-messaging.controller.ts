@@ -2,12 +2,13 @@
 // Patient-facing messaging endpoints.
 // Protected by PatientGuard — patients can only message on their own encounters.
 
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 
 import { CurrentPatient } from '../auth/decorators/current-patient.decorator';
 import { PatientContext, PatientGuard } from '../auth/guards/patient.guard';
 import { CreatePatientMessageDto } from './dto/create-patient-message.dto';
+import { ListPatientMessagesQueryDto } from './dto/list-patient-messages.query.dto';
 import { MessagingService } from './messaging.service';
 
 @Controller('patient/encounters')
@@ -22,12 +23,14 @@ export class PatientMessagingController {
   @Get(':encounterId/messages')
   async listMessages(
     @Param('encounterId', ParseIntPipe) encounterId: number,
+    @Query() query: ListPatientMessagesQueryDto,
     @CurrentPatient() patient: PatientContext,
     @Req() req: Request,
   ) {
     return this.messagingService.listMessagesForPatient(
       encounterId,
       patient.patientId,
+      query,
       req.correlationId,
     );
   }

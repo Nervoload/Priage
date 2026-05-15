@@ -19,6 +19,84 @@ export type SenderType = 'PATIENT' | 'USER' | 'SYSTEM';
 
 export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
+export const HOSPITAL_PAGE_KEYS = ['admit', 'triage', 'waiting', 'analytics', 'settings'] as const;
+export type HospitalPageKey = typeof HOSPITAL_PAGE_KEYS[number];
+
+export type HospitalIntakeResponseType = 'text' | 'textarea' | 'boolean' | 'number' | 'select';
+export type HospitalIntakeAppliesTo = 'admit' | 'triage' | 'both';
+export type HospitalSurveyResponseType = 'scale' | 'text' | 'boolean';
+
+export interface HospitalCustomIntakeQuestion {
+  id: string;
+  fieldKey: string;
+  label: string;
+  helpText: string;
+  required: boolean;
+  responseType: HospitalIntakeResponseType;
+  appliesTo: HospitalIntakeAppliesTo;
+}
+
+export interface HospitalFeedbackSurveyQuestion {
+  id: string;
+  prompt: string;
+  description: string;
+  required: boolean;
+  responseType: HospitalSurveyResponseType;
+}
+
+export interface HospitalOperationalConfig {
+  version: 1;
+  pageAccess: Record<Role, HospitalPageKey[]>;
+  customIntakeQuestions: HospitalCustomIntakeQuestion[];
+  admittanceFeedbackSurvey: HospitalFeedbackSurveyQuestion[];
+}
+
+export interface HospitalConfigEnvelope {
+  hospitalId: number;
+  updatedAt: string | null;
+  config: HospitalOperationalConfig;
+}
+
+export interface HospitalFeedbackSubmission {
+  id: string;
+  createdAt: string;
+  submittedBy: {
+    userId: number;
+    email: string;
+    role: Role;
+  };
+  responses: Array<{
+    questionId: string;
+    prompt: string;
+    answer: string | number | boolean;
+  }>;
+  bugReport?: string | null;
+}
+
+export interface HospitalSummary {
+  id: number;
+  name: string;
+  slug: string;
+  _count: {
+    encounters: number;
+    users: number;
+  };
+}
+
+export interface UpdateHospitalDetailsPayload {
+  name: string;
+  slug: string;
+  currentPassword: string;
+}
+
+export interface HospitalStaffListItem {
+  id: number;
+  email: string;
+  role: Role;
+  createdAt: string;
+  hospitalId: number;
+}
+
 // ─── Patient ────────────────────────────────────────────────────────────────
 
 export interface PatientSummary {
@@ -34,6 +112,17 @@ export interface PatientSummary {
   allergies?: string | null;
   conditions?: string | null;
   optionalHealthInfo?: Record<string, unknown> | null;
+}
+
+export interface CreateAdmittanceEncounterPayload {
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  chiefComplaint: string;
+  details?: string | null;
 }
 
 // ─── Patient helpers ────────────────────────────────────────────────────────
@@ -78,6 +167,15 @@ export interface AssetSummary {
   sizeBytes: number;
   uploadedAt: string;
   url: string;
+}
+
+export interface EncounterActivityLogItem {
+  id: number;
+  createdAt: string;
+  type: string;
+  actorUserId: number | null;
+  actorPatientId: number | null;
+  metadata: unknown;
 }
 
 export interface PriagePreview {
@@ -133,6 +231,7 @@ interface EncounterBase {
 
   patient: PatientSummary;
   triageAssessments?: TriageAssessment[];
+  activityLog?: EncounterActivityLogItem[];
   messages?: Message[];
   alerts?: Alert[];
   intakeImages?: AssetSummary[];
@@ -221,7 +320,11 @@ export interface Alert {
 // ─── Auth ───────────────────────────────────────────────────────────────────
 
 export interface LoginResponse {
-  access_token: string;
+  session: {
+    id: number;
+    createdAt: string;
+    expiresAt: string | null;
+  };
   user: {
     id: number;
     email: string;
@@ -245,6 +348,12 @@ export interface AuthUser {
     name: string;
     slug: string;
   };
+}
+
+export interface UpdateStaffProfilePayload {
+  email?: string;
+  currentPassword?: string;
+  newPassword?: string;
 }
 
 // ─── Chat (frontend-specific, maps to Message) ─────────────────────────────

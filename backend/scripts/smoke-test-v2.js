@@ -16,9 +16,9 @@ const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
-const jwt = require('jsonwebtoken');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader } = require('./lib/demo-gate');
+const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 // ============================================================================
 // CONFIGURATION
@@ -176,6 +176,28 @@ function logSubSection(message) {
   log(`─── ${message} ───`, CONFIG.colors.cyan);
 }
 
+function looksLikeJwt(value) {
+  return typeof value === 'string' && value.split('.').length === 3;
+}
+
+function extractStaffSessionToken(headers) {
+  const setCookies = typeof headers?.getSetCookie === 'function'
+    ? headers.getSetCookie()
+    : [];
+  const rawCookies = setCookies.length > 0
+    ? setCookies
+    : (headers?.get?.('set-cookie') ? [headers.get('set-cookie')] : []);
+
+  for (const cookie of rawCookies) {
+    const match = String(cookie).match(new RegExp(`${STAFF_AUTH_COOKIE}=([^;]+)`));
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+
+  return null;
+}
+
 function generateCorrelationId() {
   return `smoke-test-${randomUUID()}`;
 }
@@ -189,12 +211,24 @@ async function makeRequest(method, path, opts = {}) {
   testState.correlationId = correlationId;
   
   const demoCookie = demoCookieHeader();
+  const staffHeaders = opts.headers || {};
   const headers = {
     'Content-Type': 'application/json',
     'X-Correlation-ID': correlationId,
-    ...(demoCookie ? { Cookie: demoCookie } : {}),
-    ...(opts.headers || {}),
+    ...(staffHeaders && staffHeaders.Authorization ? { Authorization: staffHeaders.Authorization } : {}),
+    ...(staffHeaders && staffHeaders['x-patient-token'] ? { 'x-patient-token': staffHeaders['x-patient-token'] } : {}),
   };
+  const cookieParts = [demoCookie, staffHeaders.Cookie];
+  const cookieHeader = cookieParts.filter(Boolean).join('; ');
+  if (cookieHeader) {
+    headers.Cookie = cookieHeader;
+  }
+  for (const [key, value] of Object.entries(staffHeaders)) {
+    if (key === 'Cookie' || key === 'Authorization' || key === 'x-patient-token') {
+      continue;
+    }
+    headers[key] = value;
+  }
   
   logVerbose(`${method} ${path}`);
   
@@ -217,12 +251,25 @@ async function makeRequest(method, path, opts = {}) {
   }
   
   logVerbose(`  → ${response.status} ${response.statusText}`);
-  return data;
+  if (data && typeof data === 'object') {
+    data._headers = response.headers;
+    return data;
+  }
+
+  return { data, _headers: response.headers };
 }
 
 /** Helper: staff auth header */
 function staffAuth(token) {
-  return { Authorization: `Bearer ${token}` };
+  if (!token) {
+    return {};
+  }
+
+  if (looksLikeJwt(token)) {
+    return { Authorization: `Bearer ${token}` };
+  }
+
+  return { Cookie: `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}` };
 }
 
 /** Helper: patient auth header */
@@ -248,23 +295,6 @@ function buildIntentPayload(overrides = {}) {
     preferredLanguage: 'en',
     ...overrides,
   };
-}
-
-function createExpiredJwt(user) {
-  if (!process.env.JWT_SECRET) {
-    throw new Error('JWT_SECRET environment variable is not set');
-  }
-
-  return jwt.sign(
-    {
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      hospitalId: user.hospitalId,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: -10 },
-  );
 }
 
 async function expectRequestFailure(requestFactory, expectedFragments, unexpectedSuccessMessage) {
@@ -566,17 +596,18 @@ async function testAuthentication() {
     const staffLogin = await makeRequest('POST', '/auth/login', {
       body: { email: testState.staffUser.email, password: CONFIG.testPassword },
     });
-    if (!staffLogin.access_token) throw new Error('No access token returned');
-    testState.staffToken = staffLogin.access_token;
+    const staffSessionToken = extractStaffSessionToken(staffLogin._headers) ?? staffLogin.access_token ?? null;
+    if (!staffSessionToken) throw new Error('No staff session returned');
+    testState.staffToken = staffSessionToken;
     logSuccess('Staff user authenticated');
-    logVerbose(`  Token: ${staffLogin.access_token.substring(0, 30)}...`);
+    logVerbose(`  Session token: ${String(staffSessionToken).substring(0, 30)}...`);
     
     // 1B: Nurse login
     logSubSection('1B: Nurse User Login');
     const nurseLogin = await makeRequest('POST', '/auth/login', {
       body: { email: testState.nurseUser.email, password: CONFIG.testPassword },
     });
-    testState.nurseToken = nurseLogin.access_token;
+    testState.nurseToken = extractStaffSessionToken(nurseLogin._headers) ?? nurseLogin.access_token ?? null;
     logSuccess('Nurse user authenticated');
     
     // 1C: Doctor login
@@ -584,7 +615,7 @@ async function testAuthentication() {
     const doctorLogin = await makeRequest('POST', '/auth/login', {
       body: { email: testState.doctorUser.email, password: CONFIG.testPassword },
     });
-    testState.doctorToken = doctorLogin.access_token;
+    testState.doctorToken = extractStaffSessionToken(doctorLogin._headers) ?? doctorLogin.access_token ?? null;
     logSuccess('Doctor user authenticated');
     
     // 1D: Protected route
@@ -615,16 +646,16 @@ async function testAuthentication() {
     );
     logSuccess('Unauthenticated request correctly rejected');
 
-    logSubSection('1G: Expired JWT Request (Expected 401)');
-    const expiredToken = createExpiredJwt(testState.staffUser);
+    logSubSection('1G: Invalid Staff Session Request (Expected 401)');
+    const invalidToken = 'expired.invalid.token';
     await expectRequestFailure(
       () => makeRequest('GET', '/encounters', {
-        headers: staffAuth(expiredToken),
+        headers: staffAuth(invalidToken),
       }),
-      ['401', 'Unauthorized', 'jwt expired'],
-      'Expired JWT unexpectedly succeeded',
+      ['401', 'Unauthorized', 'Invalid staff session'],
+      'Invalid staff session unexpectedly succeeded',
     );
-    logSuccess('Expired JWT correctly rejected');
+    logSuccess('Invalid staff session correctly rejected');
     
   } catch (error) {
     logError('Authentication test failed', error);
@@ -795,8 +826,8 @@ async function testPatientIntake() {
     if (patientEncounterDetail.details !== 'Pain started 2 hours ago, radiating to left arm. No previous heart issues.') {
       throw new Error('Patient encounter detail did not reflect updated details');
     }
-    if (patientEncounterDetail.priageSummary != null) {
-      throw new Error('Patient encounter detail exposed a clinical-only AI summary');
+    if (!patientEncounterDetail.priageSummary) {
+      throw new Error('Patient encounter detail is missing the AI priage summary');
     }
     logSuccess('Patient encounter detail matches the confirmed visit');
 

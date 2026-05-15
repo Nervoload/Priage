@@ -7,7 +7,6 @@ import { useState, useEffect, useCallback, useRef, type PointerEvent as ReactPoi
 import type { EncounterDetail, VitalSigns, CreateTriagePayload, TriageAssessment } from '../../shared/types/domain';
 import { patientName } from '../../shared/types/domain';
 import { createTriageAssessment, listTriageAssessments } from '../../shared/api/triage';
-import { moveToWaiting } from '../../shared/api/encounters';
 import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
 import { useToast } from '../../shared/ui/ToastContext';
@@ -558,7 +557,6 @@ export function TriageWorkspace({ encounter, onClose, onComplete }: TriageWorksp
       };
 
       await createTriageAssessment(payload);
-      await moveToWaiting(encounter.id);
       shouldPersistDraftRef.current = false;
       clearDraft(encounter.id);
       showToast('Triage completed and patient moved to waiting.', 'success');
