@@ -18,22 +18,22 @@ export class PatientsController {
   constructor(private readonly patientsService: PatientsService) {}
 
   @Get()
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async findAll(
     @Req() req: Request,
     @Query() query: ListPatientsQueryDto,
     @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
-    return this.patientsService.listPatients(user.hospitalId, query, req.correlationId);
+    return this.patientsService.listPatients(user.hospitalId, query, req.correlationId, user.userId);
   }
 
   @Get(':id')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async getPatient(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
-    return this.patientsService.getPatient(id, user.hospitalId, req.correlationId);
+    return this.patientsService.getPatient(id, user.hospitalId, req.correlationId, user.userId);
   }
 }

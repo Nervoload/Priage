@@ -17,6 +17,7 @@ import { normalizeHospitalConfig, type HospitalIntakeResponseType } from '../hos
 import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
 import { buildGuestPlaceholderPasswordHash } from '../patient-auth/patient-password.util';
+import { generatePatientSessionToken, hashPatientSessionToken } from '../patient-auth/patient-session-token.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { ConfirmIntentDto } from './dto/confirm-intent.dto';
@@ -75,7 +76,7 @@ export class IntakeService {
       hasDetails: !!dto.details,
     });
 
-    const token = randomUUID();
+    const token = generatePatientSessionToken();
     const placeholderPasswordHash = await buildGuestPlaceholderPasswordHash();
 
     const patient = await this.prisma.patientProfile.create({
@@ -93,7 +94,7 @@ export class IntakeService {
 
     const authSession = await this.prisma.patientSession.create({
       data: {
-        token,
+        token: hashPatientSessionToken(token),
         patientId: patient.id,
         expiresAt: new Date(Date.now() + PATIENT_SESSION_TTL_MS),
       },
@@ -349,8 +350,7 @@ export class IntakeService {
   }
 
   private async getSession(sessionToken: string, correlationId?: string) {
-    const session = await this.prisma.patientSession.findUnique({
-      where: { token: sessionToken },
+    const session = await this.findSessionByToken(sessionToken, {
       include: {
         encounter: {
           select: {
@@ -373,6 +373,38 @@ export class IntakeService {
     this.ensureSessionIsActive(session);
 
     return this.normalizeSession(session);
+  }
+
+  private async findSessionByToken<T extends Prisma.PatientSessionInclude>(
+    sessionToken: string,
+    args: { include: T },
+  ) {
+    const tokenHash = hashPatientSessionToken(sessionToken);
+    const hashedSession = await this.prisma.patientSession.findUnique({
+      where: { token: tokenHash },
+      include: args.include,
+    });
+
+    if (hashedSession) {
+      return hashedSession;
+    }
+
+    const legacySession = await this.prisma.patientSession.findUnique({
+      where: { token: sessionToken },
+      include: args.include,
+    });
+
+    if (legacySession) {
+      await this.prisma.patientSession.update({
+        where: { id: legacySession.id },
+        data: { token: tokenHash },
+      }).catch(() => {
+        // If a parallel request already migrated the session token, the next
+        // request will resolve by hash.
+      });
+    }
+
+    return legacySession;
   }
 
   private async getSessionById(sessionId: number, correlationId?: string) {

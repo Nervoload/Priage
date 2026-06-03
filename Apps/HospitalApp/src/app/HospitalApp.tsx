@@ -92,11 +92,14 @@ export function HospitalApp() {
   const messageCursorByEncounter = useRef<Map<number, number | null>>(new Map());
   const loadingMessageEncounters = useRef<Set<number>>(new Set());
   const messageRetryAt = useRef<Map<number, number>>(new Map());
+  const encounterRefreshTimer = useRef<number | null>(null);
   const effectiveConfig = hospitalConfig ?? DEFAULT_HOSPITAL_CONFIG;
   const availableViews = useMemo<View[]>(
     () => (user ? effectiveConfig.pageAccess[user.role] : []),
     [effectiveConfig, user],
   );
+  const clinicalMessagingEnabled =
+    user?.role === 'ADMIN' || user?.role === 'NURSE' || user?.role === 'DOCTOR';
 
   const visibleEncounterStatuses = useMemo<EncounterStatus[]>(() => {
     const statuses = new Set<EncounterStatus>();
@@ -172,6 +175,10 @@ export function HospitalApp() {
       messageCursorByEncounter.current.clear();
       loadingMessageEncounters.current.clear();
       messageRetryAt.current.clear();
+      if (encounterRefreshTimer.current !== null) {
+        window.clearTimeout(encounterRefreshTimer.current);
+        encounterRefreshTimer.current = null;
+      }
       disconnectSocket();
     }
   }, [user]);
@@ -197,6 +204,17 @@ export function HospitalApp() {
     }
   }, [availableViews, loadingConfig, showToast, user, visibleEncounterStatuses]);
 
+  const scheduleFetchEncounters = useCallback((delayMs = 750) => {
+    if (encounterRefreshTimer.current !== null) {
+      window.clearTimeout(encounterRefreshTimer.current);
+    }
+
+    encounterRefreshTimer.current = window.setTimeout(() => {
+      encounterRefreshTimer.current = null;
+      void fetchEncounters();
+    }, delayMs);
+  }, [fetchEncounters]);
+
   const upsertChatMessage = useCallback((message: Message) => {
     const nextMessage = messageToChatMessage(message);
     setChatMessages((prev) => {
@@ -221,6 +239,10 @@ export function HospitalApp() {
   }, []);
 
   const loadMessagesForEncounter = useCallback(async (encounterId: number, mode: 'replace' | 'append' = 'replace') => {
+    if (!clinicalMessagingEnabled) {
+      return;
+    }
+
     const now = Date.now();
     const retryAt = messageRetryAt.current.get(encounterId) ?? 0;
     if (loadingMessageEncounters.current.has(encounterId) || now < retryAt) {
@@ -278,7 +300,7 @@ export function HospitalApp() {
     } finally {
       loadingMessageEncounters.current.delete(encounterId);
     }
-  }, [showToast]);
+  }, [clinicalMessagingEnabled, showToast]);
 
   // Fetch on login and only subscribe to staff-wide waiting-room realtime
   // after the user explicitly joins that workspace.
@@ -297,13 +319,13 @@ export function HospitalApp() {
 
     const socket = getSocket();
     const handleConnect = () => {
-      void fetchEncounters();
+      scheduleFetchEncounters(0);
       for (const encounterId of loadedMessageEncounters.current) {
         void loadMessagesForEncounter(encounterId, 'append');
       }
     };
     const handleEncounterUpdate = () => {
-      void fetchEncounters();
+      scheduleFetchEncounters();
     };
     const handleMessageCreated = (payload: { encounterId: number }) => {
       void loadMessagesForEncounter(payload.encounterId, 'append');
@@ -319,10 +341,19 @@ export function HospitalApp() {
       socket.off('connect', handleConnect);
       socket.off(RealtimeEvents.EncounterUpdated, handleEncounterUpdate);
       socket.off(RealtimeEvents.MessageCreated, handleMessageCreated);
+      if (encounterRefreshTimer.current !== null) {
+        window.clearTimeout(encounterRefreshTimer.current);
+        encounterRefreshTimer.current = null;
+      }
     };
-  }, [user, loadingConfig, fetchEncounters, loadMessagesForEncounter, waitingRoomRealtimeEnabled]);
+  }, [user, loadingConfig, fetchEncounters, loadMessagesForEncounter, scheduleFetchEncounters, waitingRoomRealtimeEnabled]);
 
   const handleSendMessage = useCallback(async (encounterId: number, text: string) => {
+    if (!clinicalMessagingEnabled) {
+      showToast('Clinical messaging is available to nurses, doctors, and admins.', 'info');
+      throw new Error('Clinical messaging is not available for this role');
+    }
+
     if (!waitingRoomRealtimeEnabled) {
       showToast('Enter the Waiting Room to start live messaging.', 'info');
       throw new Error('Waiting room realtime is not active');
@@ -336,7 +367,7 @@ export function HospitalApp() {
       showToast('Failed to send message. Please try again.', 'error');
       throw err;
     }
-  }, [showToast, upsertChatMessage, waitingRoomRealtimeEnabled]);
+  }, [clinicalMessagingEnabled, showToast, upsertChatMessage, waitingRoomRealtimeEnabled]);
 
   // Admittance shows EXPECTED and ADMITTED patients
   const admitEncounters = useMemo(
@@ -357,13 +388,13 @@ export function HospitalApp() {
   );
 
   useEffect(() => {
-    if (!waitingRoomRealtimeEnabled || currentView !== 'waiting' || !availableViews.includes('waiting')) return;
+    if (!clinicalMessagingEnabled || !waitingRoomRealtimeEnabled || currentView !== 'waiting' || !availableViews.includes('waiting')) return;
     for (const encounter of waitingEncounters) {
       if (!loadedMessageEncounters.current.has(encounter.id)) {
         void loadMessagesForEncounter(encounter.id, 'replace');
       }
     }
-  }, [availableViews, currentView, loadMessagesForEncounter, waitingEncounters, waitingRoomRealtimeEnabled]);
+  }, [availableViews, clinicalMessagingEnabled, currentView, loadMessagesForEncounter, waitingEncounters, waitingRoomRealtimeEnabled]);
 
   // ─── Show loading spinner while checking stored token ───────────────────
 

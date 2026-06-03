@@ -11,6 +11,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 
 import { GLOBAL_THROTTLE, shouldSkipThrottleForLoopback } from './common/http/throttle.util';
+import { OriginCsrfGuard } from './common/http/origin-csrf.guard';
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { DemoAccessModule } from './modules/demo-access/demo-access.module';
 import { DemoAccessGuard } from './modules/demo-access/demo-access.guard';
@@ -23,6 +24,7 @@ import { IntakeModule } from './modules/intake/intake.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { LoggingModule } from './modules/logging/logging.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { SensitiveReadAuditModule } from './modules/audit/sensitive-read-audit.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
@@ -50,6 +52,7 @@ import { UsersModule } from './modules/users/users.module';
     PrismaModule,
     RedisModule,   // Global Redis client for caching (location, sessions)
     LoggingModule, // Global logging with correlation support
+    SensitiveReadAuditModule, // Dedicated clinical read ledger
     AuthModule,
     UsersModule,
     HospitalsModule,
@@ -73,6 +76,10 @@ import { UsersModule } from './modules/users/users.module';
     {
       provide: APP_GUARD,
       useClass: DemoAccessGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: OriginCsrfGuard,
     },
     {
       provide: APP_GUARD,

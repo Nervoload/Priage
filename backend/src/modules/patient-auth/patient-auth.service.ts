@@ -25,6 +25,7 @@ import { UpgradeGuestDto } from './dto/upgrade-guest.dto';
 import { SubmitPatientFeedbackDto } from './dto/submit-feedback.dto';
 import { DeletePatientAccountDto } from './dto/delete-account.dto';
 import { hashPatientPassword } from './patient-password.util';
+import { generatePatientSessionToken, hashPatientSessionToken } from './patient-session-token.util';
 
 const ACTIVE_SESSION_ENCOUNTER_STATUSES: EncounterStatus[] = [
   EncounterStatus.EXPECTED,
@@ -60,7 +61,7 @@ export class PatientAuthService {
     }
 
     const hashedPassword = await hashPatientPassword(dto.password);
-    const token = randomUUID();
+    const token = generatePatientSessionToken();
 
     const patient = await this.prisma.patientProfile.create({
       data: {
@@ -76,7 +77,7 @@ export class PatientAuthService {
 
     await this.prisma.patientSession.create({
       data: {
-        token,
+        token: hashPatientSessionToken(token),
         patientId: patient.id,
         expiresAt: this.buildSessionExpiry(),
       },
@@ -119,7 +120,7 @@ export class PatientAuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    const token = randomUUID();
+    const token = generatePatientSessionToken();
 
     // Only carry over an encounter when it is still active. Historical visits
     // must not block the patient from signing back in or starting a new visit.
@@ -145,7 +146,7 @@ export class PatientAuthService {
 
     await this.prisma.patientSession.create({
       data: {
-        token,
+        token: hashPatientSessionToken(token),
         patientId: patient.id,
         encounterId: latestSession?.encounterId ?? null,
         expiresAt: this.buildSessionExpiry(),
@@ -397,7 +398,7 @@ export class PatientAuthService {
     });
 
     // Create a fresh session token for the upgraded account
-    const token = randomUUID();
+    const token = generatePatientSessionToken();
 
     // Carry over encounterId from the current session
     const currentSession = await this.prisma.patientSession.findUnique({
@@ -421,7 +422,7 @@ export class PatientAuthService {
 
     await this.prisma.patientSession.create({
       data: {
-        token,
+        token: hashPatientSessionToken(token),
         patientId: patient.id,
         encounterId: reusableEncounterId,
         expiresAt: this.buildSessionExpiry(),

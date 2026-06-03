@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 
-import { cancelMyEncounter, getMyEncounter, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
+import { cancelMyEncounter, getMyEncounter, listMyMessages } from '../../shared/api/encounters';
 import { getMe, updateProfile } from '../../shared/api/auth';
 import { appendUniqueMessages, getLastMessageId } from '../../shared/messages';
+import {
+  isOutboxQueuedError,
+  sendPatientMessageReliable,
+} from '../../shared/patientOutbox';
 import { sendLocationPing, updateIntakeDetails } from '../../shared/api/intake';
 import { ENCOUNTER_STATUS_META } from '../../shared/encounters';
 import {
@@ -355,15 +359,20 @@ export function Enroute() {
       const note = transportNote.trim()
         ? `I have arrived at the hospital entrance. Note: ${transportNote.trim()}`
         : 'I have arrived at the hospital entrance and am heading inside now.';
-      const sentMessage = await sendPatientMessage(encounter.id, note, false);
+      const sentMessage = await sendPatientMessageReliable(encounter.id, note, false);
       setMessages((prev) => {
         const merged = appendUniqueMessages(prev, [sentMessage]);
         messageCursorRef.current = getLastMessageId(merged);
         return merged;
       });
       showToast('Arrival update sent to staff.', 'success');
-    } catch {
-      showToast('Could not send arrival update.');
+    } catch (error) {
+      showToast(
+        isOutboxQueuedError(error)
+          ? 'Arrival update saved. We will retry when the connection recovers.'
+          : 'Could not send arrival update.',
+        isOutboxQueuedError(error) ? 'info' : 'error',
+      );
     } finally {
       setArrivalSubmitting(false);
     }

@@ -6,11 +6,13 @@ import {
 } from '@nestjs/common';
 import { Readable } from 'stream';
 import {
+  AssetAccessMode,
   AssetContext,
   AssetStatus,
   Prisma,
 } from '@prisma/client';
 
+import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -30,11 +32,19 @@ type UploadedImageFile = {
   originalname: string;
 };
 
-type StaffAssetStream = {
-  stream: Readable;
-  mimeType: string;
-  etag: string;
-};
+export type AssetContentAccess =
+  | {
+      kind: 'stream';
+      stream: Readable;
+      mimeType: string;
+      etag: string;
+    }
+  | {
+      kind: 'redirect';
+      url: string;
+      mimeType: string;
+      etag: string;
+    };
 
 type AssetActorContext =
   | { actorUserId: number; actorPatientId?: never }
@@ -47,6 +57,7 @@ export class AssetsService {
     private readonly intakeSessions: IntakeSessionsService,
     private readonly storage: AssetStorageService,
     private readonly loggingService: LoggingService,
+    private readonly sensitiveReadAudit: SensitiveReadAuditService,
   ) {}
 
   async uploadIntakeImagesForSession(
@@ -380,6 +391,7 @@ export class AssetsService {
       where: { id: assetId },
       data: {
         status: AssetStatus.DELETED,
+        deletedAt: new Date(),
       },
     });
 
@@ -388,15 +400,26 @@ export class AssetsService {
     return { ok: true };
   }
 
-  async streamAssetForStaff(assetId: number, hospitalId: number): Promise<StaffAssetStream> {
+  async streamAssetForStaff(
+    assetId: number,
+    hospitalId: number,
+    actorUserId?: number,
+    correlationId?: string,
+  ): Promise<AssetContentAccess> {
     const asset = await this.prisma.asset.findUnique({
       where: { id: assetId },
       select: {
         id: true,
+        encounterId: true,
+        createdByPatientId: true,
+        encounter: {
+          select: { patientId: true },
+        },
         mimeType: true,
         sha256: true,
         updatedAt: true,
         storageKey: true,
+        accessMode: true,
         status: true,
         hospitalId: true,
       },
@@ -406,14 +429,25 @@ export class AssetsService {
       throw new NotFoundException(`Asset ${assetId} not found`);
     }
 
-    return {
-      stream: this.storage.openReadStream(asset.storageKey),
-      mimeType: asset.mimeType,
-      etag: this.buildEtag(asset.id, asset.updatedAt, asset.sha256),
-    };
+    if (actorUserId) {
+      await this.sensitiveReadAudit.record({
+        resource: 'ASSET_CONTENT',
+        actorUserId,
+        hospitalId,
+        encounterId: asset.encounterId,
+        patientId: asset.encounter?.patientId ?? asset.createdByPatientId,
+        assetId: asset.id,
+        correlationId,
+        metadata: {
+          accessMode: asset.accessMode,
+        },
+      });
+    }
+
+    return this.buildContentAccess(asset);
   }
 
-  async streamAssetForPatient(assetId: number, patientId: number): Promise<StaffAssetStream> {
+  async streamAssetForPatient(assetId: number, patientId: number): Promise<AssetContentAccess> {
     const asset = await this.prisma.asset.findUnique({
       where: { id: assetId },
       select: {
@@ -424,6 +458,7 @@ export class AssetsService {
         sha256: true,
         updatedAt: true,
         storageKey: true,
+        accessMode: true,
         status: true,
         createdByPatientId: true,
         message: {
@@ -458,11 +493,7 @@ export class AssetsService {
       throw new NotFoundException(`Asset ${assetId} not found`);
     }
 
-    return {
-      stream: this.storage.openReadStream(asset.storageKey),
-      mimeType: asset.mimeType,
-      etag: this.buildEtag(asset.id, asset.updatedAt, asset.sha256),
-    };
+    return this.buildContentAccess(asset);
   }
 
   private async persistUploadedImages(
@@ -485,7 +516,7 @@ export class AssetsService {
 
     for (const file of files) {
       const { width, height } = readImageMetadata(file.buffer, file.mimetype);
-      const { storageKey, sha256 } = await this.storage.saveImage(file.buffer, {
+      const stored = await this.storage.saveImage(file.buffer, {
         bucket: context.context === AssetContext.INTAKE_IMAGE ? 'intake' : 'messages',
         mimeType: file.mimetype,
       });
@@ -494,13 +525,21 @@ export class AssetsService {
         const asset = await this.prisma.asset.create({
           data: {
             context: context.context,
-            storageKey,
+            storageKey: stored.storageKey,
+            storageProvider: stored.storageProvider,
+            storageBucket: stored.storageBucket,
+            storageRegion: stored.storageRegion,
+            storageEndpoint: stored.storageEndpoint,
+            accessMode: stored.accessMode,
+            retainedUntil: stored.retainedUntil,
+            scanStatus: 'NOT_SCANNED',
+            encryption: stored.encryption,
             originalFilename: file.originalname || 'upload',
             mimeType: file.mimetype,
             sizeBytes: file.size,
             width,
             height,
-            sha256,
+            sha256: stored.sha256,
             patientSessionId: context.patientSessionId ?? null,
             intakeSessionId: context.intakeSessionId ?? null,
             encounterId: context.encounterId ?? null,
@@ -513,7 +552,7 @@ export class AssetsService {
 
         createdAssets.push(mapAssetSummary(asset, audience));
       } catch (error) {
-        await this.storage.delete(storageKey);
+        await this.storage.delete(stored.storageKey);
         throw error;
       }
     }
@@ -565,5 +604,35 @@ export class AssetsService {
   private buildEtag(assetId: number, updatedAt: Date, sha256?: string | null): string {
     const fingerprint = sha256 ?? `${assetId}-${updatedAt.getTime()}`;
     return `"${fingerprint}"`;
+  }
+
+  private async buildContentAccess(asset: {
+    id: number;
+    updatedAt: Date;
+    sha256: string | null;
+    storageKey: string;
+    accessMode: AssetAccessMode;
+    mimeType: string;
+  }): Promise<AssetContentAccess> {
+    const etag = this.buildEtag(asset.id, asset.updatedAt, asset.sha256);
+
+    if (asset.accessMode === 'SIGNED_URL') {
+      const url = await this.storage.createSignedReadUrl(asset.storageKey);
+      if (url) {
+        return {
+          kind: 'redirect',
+          url,
+          mimeType: asset.mimeType,
+          etag,
+        };
+      }
+    }
+
+    return {
+      kind: 'stream',
+      stream: await this.storage.openReadStream(asset.storageKey),
+      mimeType: asset.mimeType,
+      etag,
+    };
   }
 }

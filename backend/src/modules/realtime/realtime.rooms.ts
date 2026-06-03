@@ -11,6 +11,14 @@ export function hospitalRoomKey(hospitalId: number): string {
   return `hospital:${hospitalId}`;
 }
 
+export function clinicalHospitalRoomKey(hospitalId: number): string {
+  return `hospital:${hospitalId}:clinical`;
+}
+
 export function encounterRoomKey(encounterId: number): string {
   return `encounter:${encounterId}`;
+}
+
+export function clinicalEncounterRoomKey(encounterId: number): string {
+  return `encounter:${encounterId}:clinical`;
 }

@@ -63,9 +63,11 @@ export async function sendPatientMessage(
   encounterId: number,
   content: string,
   isWorsening = false,
+  idempotencyKey?: string,
 ): Promise<Message> {
   return client<Message>(`/patient/encounters/${encounterId}/messages`, {
     method: 'POST',
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
     body: JSON.stringify({ content, isWorsening }),
   });
 }

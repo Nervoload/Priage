@@ -28,23 +28,28 @@ export class TriageController {
   }
 
   @Get('assessments/:id')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async getAssessment(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
     @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
-    return this.triageService.getAssessment(id, user.hospitalId, req.correlationId);
+    return this.triageService.getAssessment(id, user.hospitalId, req.correlationId, user.userId);
   }
 
   @Get('encounters/:encounterId/assessments')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async listAssessments(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Req() req: Request,
     @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
-    return this.triageService.listAssessments(encounterId, user.hospitalId, req.correlationId);
+    return this.triageService.listAssessments(
+      encounterId,
+      user.hospitalId,
+      req.correlationId,
+      user.userId,
+    );
   }
 
   // Phase 6.5: Add an AI triage suggestion endpoint here:

@@ -23,6 +23,7 @@ import {
   PATIENT_REGISTER_THROTTLE,
 } from '../../common/http/throttle.util';
 import { CurrentPatient } from '../auth/decorators/current-patient.decorator';
+import { PatientRateLimitGuard } from '../auth/guards/patient-rate-limit.guard';
 import { PatientContext, PatientGuard } from '../auth/guards/patient.guard';
 import { PatientAuthService } from './patient-auth.service';
 import { RegisterPatientDto } from './dto/register-patient.dto';
@@ -61,7 +62,7 @@ export class PatientAuthController {
   }
 
   @Get('me')
-  @UseGuards(PatientGuard)
+  @UseGuards(PatientGuard, PatientRateLimitGuard)
   async getMe(
     @CurrentPatient() patient: PatientContext,
     @Req() req: Request,
@@ -70,7 +71,7 @@ export class PatientAuthController {
   }
 
   @Patch('profile')
-  @UseGuards(PatientGuard)
+  @UseGuards(PatientGuard, PatientRateLimitGuard)
   async updateProfile(
     @Body() dto: UpdatePatientProfileDto,
     @CurrentPatient() patient: PatientContext,
@@ -80,7 +81,7 @@ export class PatientAuthController {
   }
 
   @Post('upgrade')
-  @UseGuards(PatientGuard)
+  @UseGuards(PatientGuard, PatientRateLimitGuard)
   async upgradeGuest(
     @Body() dto: UpgradeGuestDto,
     @CurrentPatient() patient: PatientContext,
@@ -98,7 +99,7 @@ export class PatientAuthController {
   }
 
   @Post('feedback')
-  @UseGuards(PatientGuard)
+  @UseGuards(PatientGuard, PatientRateLimitGuard)
   async submitFeedback(
     @Body() dto: SubmitPatientFeedbackDto,
     @CurrentPatient() patient: PatientContext,
@@ -108,7 +109,7 @@ export class PatientAuthController {
   }
 
   @Delete('account')
-  @UseGuards(PatientGuard)
+  @UseGuards(PatientGuard, PatientRateLimitGuard)
   async deleteAccount(
     @Body() dto: DeletePatientAccountDto,
     @CurrentPatient() patient: PatientContext,
@@ -121,7 +122,7 @@ export class PatientAuthController {
   }
 
   @Delete('logout')
-  @UseGuards(PatientGuard)
+  @UseGuards(PatientGuard, PatientRateLimitGuard)
   async logout(
     @CurrentPatient() patient: PatientContext,
     @Req() req: Request,

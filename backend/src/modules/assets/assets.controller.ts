@@ -4,14 +4,14 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Req,
   Res,
-  StreamableFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { FilesInterceptor } from '@nestjs/platform-express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -48,7 +48,7 @@ export class AssetsController {
   }
 
   @Get('encounters/:encounterId')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async listForEncounter(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @CurrentUser() user: { hospitalId: number },
@@ -57,18 +57,29 @@ export class AssetsController {
   }
 
   @Get(':assetId/content')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async streamStaffAsset(
     @Param('assetId', ParseIntPipe) assetId: number,
-    @CurrentUser() user: { hospitalId: number },
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<StreamableFile> {
-    const file = await this.assetsService.streamAssetForStaff(assetId, user.hospitalId);
+    @CurrentUser() user: { userId: number; hospitalId: number },
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const file = await this.assetsService.streamAssetForStaff(
+      assetId,
+      user.hospitalId,
+      user.userId,
+      req.correlationId,
+    );
 
     res.setHeader('Content-Type', file.mimeType);
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.setHeader('ETag', file.etag);
 
-    return new StreamableFile(file.stream);
+    if (file.kind === 'redirect') {
+      res.redirect(302, file.url);
+      return;
+    }
+
+    file.stream.pipe(res);
   }
 }

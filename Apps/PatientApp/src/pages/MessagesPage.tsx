@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
-import { listMyEncounters, listMyMessages, sendPatientMessage } from '../shared/api/encounters';
+import { listMyEncounters, listMyMessages } from '../shared/api/encounters';
 import { ENCOUNTER_STATUS_META, isActiveEncounter } from '../shared/encounters';
 import { appendUniqueMessages, getLastMessageId } from '../shared/messages';
+import {
+  flushPatientMessageOutbox,
+  isOutboxQueuedError,
+  sendPatientMessageReliable,
+} from '../shared/patientOutbox';
 import type { EncounterSummary, Message } from '../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
-const ACTIVE_THREAD_POLL_MS = 5000;
+const ACTIVE_THREAD_POLL_MS = 30_000;
 
 export function MessagesPage() {
   const navigate = useNavigate();
@@ -167,7 +172,7 @@ export function MessagesPage() {
 
     setSending(true);
     try {
-      const sentMessage = await sendPatientMessage(activeEncounter.id, trimmed, markWorsening);
+      const sentMessage = await sendPatientMessageReliable(activeEncounter.id, trimmed, markWorsening);
       setDraftMessage('');
       setMarkWorsening(false);
       setMessages((prev) => {
@@ -176,8 +181,14 @@ export function MessagesPage() {
         return merged;
       });
       showToast(markWorsening ? 'Worsening update sent to your care team.' : 'Message sent.', 'success');
-    } catch {
-      showToast('Could not send your message.');
+    } catch (error) {
+      if (isOutboxQueuedError(error)) {
+        setDraftMessage('');
+        setMarkWorsening(false);
+        showToast('Message saved. We will retry when the connection recovers.', 'info');
+      } else {
+        showToast('Could not send your message.');
+      }
     } finally {
       setSending(false);
     }
@@ -194,6 +205,24 @@ export function MessagesPage() {
     setSelectedEncounterId(encounterId);
     setSearchParams({ encounter: String(encounterId) }, { replace: true });
   }
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void flushPatientMessageOutbox((sentMessage, encounterId) => {
+        if (encounterId !== threadEncounterId) {
+          return;
+        }
+        setMessages((prev) => {
+          const merged = appendUniqueMessages(prev, [sentMessage]);
+          messageCursorRef.current = getLastMessageId(merged);
+          return merged;
+        });
+      });
+    }, 15_000);
+
+    void flushPatientMessageOutbox();
+    return () => window.clearInterval(timer);
+  }, [threadEncounterId]);
 
   if (loadingEncounters) {
     return (

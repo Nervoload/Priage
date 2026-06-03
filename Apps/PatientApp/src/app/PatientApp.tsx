@@ -17,12 +17,26 @@ import { Login as GuestCheckInStart } from './Login';
 import { EncounterWorkspace } from '../features/encounter-workspace/EncounterWorkspace';
 import { Routing } from '../features/pre-triage/Routing';
 import { GuestChatbotPage } from '../features/pre-triage/GuestChatbotPage';
+import { flushPatientMessageOutbox } from '../shared/patientOutbox';
 
 export function PatientApp() {
   const { session, loading } = useAuth();
   const { session: guestSession } = useGuestSession();
 
   const guestPath = resolveGuestPath(guestSession);
+
+  useEffect(() => {
+    if (!session && !guestSession) {
+      return;
+    }
+
+    void flushPatientMessageOutbox();
+    const timer = window.setInterval(() => {
+      void flushPatientMessageOutbox();
+    }, 30_000);
+
+    return () => window.clearInterval(timer);
+  }, [guestSession, session]);
 
   if (loading) {
     return (

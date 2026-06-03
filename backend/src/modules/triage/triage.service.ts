@@ -4,6 +4,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EncounterStatus, EventType, Prisma } from '@prisma/client';
 
+import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,6 +18,7 @@ export class TriageService {
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
     private readonly loggingService: LoggingService,
+    private readonly sensitiveReadAudit: SensitiveReadAuditService,
   ) {
     this.logger.log('TriageService initialized');
   }
@@ -195,7 +197,12 @@ export class TriageService {
     }
   }
 
-  async listAssessments(encounterId: number, hospitalId: number, correlationId?: string) {
+  async listAssessments(
+    encounterId: number,
+    hospitalId: number,
+    correlationId?: string,
+    actorUserId?: number,
+  ) {
     this.loggingService.debug(
       'Listing triage assessments',
       {
@@ -227,6 +234,19 @@ export class TriageService {
         },
       );
 
+      if (actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'TRIAGE_ASSESSMENT',
+          actorUserId,
+          hospitalId,
+          encounterId,
+          correlationId,
+          metadata: {
+            count: assessments.length,
+          },
+        });
+      }
+
       return assessments;
     } catch (error) {
       await this.loggingService.error(
@@ -244,7 +264,12 @@ export class TriageService {
     }
   }
 
-  async getAssessment(assessmentId: number, hospitalId: number, correlationId?: string) {
+  async getAssessment(
+    assessmentId: number,
+    hospitalId: number,
+    correlationId?: string,
+    actorUserId?: number,
+  ) {
     this.loggingService.debug(
       'Fetching triage assessment',
       {
@@ -262,6 +287,17 @@ export class TriageService {
 
     if (!assessment) {
       throw new NotFoundException(`Triage assessment ${assessmentId} not found`);
+    }
+
+    if (actorUserId) {
+      await this.sensitiveReadAudit.record({
+        resource: 'TRIAGE_ASSESSMENT',
+        actorUserId,
+        hospitalId,
+        encounterId: assessment.encounterId,
+        triageAssessmentId: assessment.id,
+        correlationId,
+      });
     }
 
     return assessment;

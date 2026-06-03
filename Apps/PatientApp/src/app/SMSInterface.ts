@@ -7,7 +7,7 @@
 // For the prototype, we simulate this via the web UI — the patient types
 // messages in the chat panel, and this module translates them.
 
-import { sendPatientMessage } from '../shared/api/encounters';
+import { sendPatientMessageReliable } from '../shared/patientOutbox';
 
 // ─── SMS command types ──────────────────────────────────────────────────────
 
@@ -47,11 +47,11 @@ export async function routeSMSCommand(
 ): Promise<{ sent: boolean; response?: string }> {
   switch (command.type) {
     case 'message':
-      await sendPatientMessage(encounterId, command.content, false);
+      await sendPatientMessageReliable(encounterId, command.content, false);
       return { sent: true };
 
     case 'worsening':
-      await sendPatientMessage(encounterId, command.content, true);
+      await sendPatientMessageReliable(encounterId, command.content, true);
       return { sent: true, response: 'Alert sent to your care team.' };
 
     case 'checkin':

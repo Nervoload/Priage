@@ -54,7 +54,14 @@ async function bootstrap(): Promise<void> {
     origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-patient-token', 'x-correlation-id', 'x-request-id'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Idempotency-Key',
+      'x-patient-token',
+      'x-correlation-id',
+      'x-request-id',
+    ],
   });
 
   // Global DTO validation:

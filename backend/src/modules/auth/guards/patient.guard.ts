@@ -8,6 +8,7 @@ import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from
 import { EncounterStatus } from '@prisma/client';
 
 import { PATIENT_SESSION_COOKIE, readCookie } from '../../../common/http/auth-cookie.util';
+import { hashPatientSessionToken } from '../../patient-auth/patient-session-token.util';
 import { PrismaService } from '../../prisma/prisma.service';
 
 export interface PatientContext {
@@ -37,8 +38,9 @@ export class PatientGuard implements CanActivate {
       throw new UnauthorizedException('Patient token is required');
     }
 
-    const session = await this.prisma.patientSession.findUnique({
-      where: { token },
+    const tokenHash = hashPatientSessionToken(token);
+    let session = await this.prisma.patientSession.findUnique({
+      where: { token: tokenHash },
       select: {
         id: true,
         patientId: true,
@@ -52,6 +54,33 @@ export class PatientGuard implements CanActivate {
         },
       },
     });
+
+    if (!session) {
+      session = await this.prisma.patientSession.findUnique({
+        where: { token },
+        select: {
+          id: true,
+          patientId: true,
+          encounterId: true,
+          expiresAt: true,
+          encounter: {
+            select: {
+              hospitalId: true,
+              status: true,
+            },
+          },
+        },
+      });
+
+      if (session) {
+        await this.prisma.patientSession.update({
+          where: { id: session.id },
+          data: { token: tokenHash },
+        }).catch(() => {
+          // A parallel request may already have migrated this legacy session.
+        });
+      }
+    }
 
     if (!session) {
       throw new UnauthorizedException('Invalid patient session token');

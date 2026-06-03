@@ -41,7 +41,12 @@ import {
   MessageReadPayload,
   RealtimeEvents,
 } from './realtime.events';
-import { encounterRoomKey, hospitalRoomKey } from './realtime.rooms';
+import {
+  clinicalEncounterRoomKey,
+  clinicalHospitalRoomKey,
+  encounterRoomKey,
+  hospitalRoomKey,
+} from './realtime.rooms';
 
 type MessageSendAck =
   | { ok: true; message: unknown }
@@ -53,6 +58,11 @@ type MessageSendAck =
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
   private static readonly MESSAGE_SEND_ALLOWED_ROLES = new Set<Role>([
+    Role.NURSE,
+    Role.DOCTOR,
+    Role.ADMIN,
+  ]);
+  private static readonly CLINICAL_EVENT_ROLES = new Set<Role>([
     Role.NURSE,
     Role.DOCTOR,
     Role.ADMIN,
@@ -158,6 +168,9 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       });
 
       await client.join(hospitalRoomKey(trustedUser.hospitalId));
+      if (this.canReceiveClinicalEvents(trustedUser.role as Role)) {
+        await client.join(clinicalHospitalRoomKey(trustedUser.hospitalId));
+      }
 
       this.loggingService.info('Client joined hospital room', {
         service: 'RealtimeGateway',
@@ -182,6 +195,9 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
           for (const encounter of encounters) {
             await client.join(encounterRoomKey(encounter.id));
+            if (this.canReceiveClinicalEvents(trustedUser.role as Role)) {
+              await client.join(clinicalEncounterRoomKey(encounter.id));
+            }
           }
 
           this.loggingService.info('Client subscribed to encounter rooms', {
@@ -432,8 +448,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: MessageCreatedPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageCreated, payload);
 
@@ -461,8 +477,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: AlertCreatedPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertCreated, payload);
     } catch (error) {
@@ -485,8 +501,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: MessageReadPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageRead, payload);
 
@@ -514,8 +530,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: AlertAcknowledgedPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
     } catch (error) {
@@ -538,8 +554,8 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: AlertResolvedPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertResolved, payload);
     } catch (error) {
@@ -602,6 +618,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     return user?.userId && user?.hospitalId ? user : null;
   }
 
+  private canReceiveClinicalEvents(role: Role): boolean {
+    return RealtimeGateway.CLINICAL_EVENT_ROLES.has(role);
+  }
+
   private async hydrateTrustedUser(client: Socket): Promise<TrustedRealtimeUser | null> {
     const existing = this.getTrustedUser(client);
     if (existing) {
@@ -626,6 +646,9 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       }
 
       await client.join(hospitalRoomKey(trustedUser.hospitalId));
+      if (this.canReceiveClinicalEvents(trustedUser.role as Role)) {
+        await client.join(clinicalHospitalRoomKey(trustedUser.hospitalId));
+      }
 
       const requestedEncounterIds = this.getEncounterIdsFromHandshake(client);
       if (requestedEncounterIds.length > 0) {
@@ -639,6 +662,9 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
         for (const encounter of encounters) {
           await client.join(encounterRoomKey(encounter.id));
+          if (this.canReceiveClinicalEvents(trustedUser.role as Role)) {
+            await client.join(clinicalEncounterRoomKey(encounter.id));
+          }
         }
       }
 

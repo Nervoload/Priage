@@ -10,10 +10,19 @@
 // Auth enforced at controller layer via JwtAuthGuard/PatientGuard.
 
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AssetContext, AssetStatus, EncounterStatus, EventType, Prisma, SummaryProjectionKind } from '@prisma/client';
+import {
+  AssetContext,
+  AssetStatus,
+  EncounterStatus,
+  EventType,
+  Prisma,
+  Role,
+  SummaryProjectionKind,
+} from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
+import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -33,6 +42,11 @@ import { hashPatientPassword } from '../patient-auth/patient-password.util';
 export type EncounterActor = {
   actorUserId?: number;
   actorPatientId?: number;
+};
+
+type StaffReadContext = {
+  actorUserId: number;
+  role: Role;
 };
 
 type EncounterTransition = {
@@ -59,6 +73,12 @@ const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
   EncounterStatus.TRIAGE,
   EncounterStatus.WAITING,
 ];
+
+const CLINICAL_READ_ROLES = new Set<Role>([
+  Role.ADMIN,
+  Role.NURSE,
+  Role.DOCTOR,
+]);
 
 const encounterMessageSelect = {
   id: true,
@@ -137,6 +157,7 @@ export class EncountersService {
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
     private readonly loggingService: LoggingService,
+    private readonly sensitiveReadAudit: SensitiveReadAuditService,
   ) {
     this.logger.log('EncountersService initialized');
   }
@@ -389,6 +410,7 @@ export class EncountersService {
     hospitalId: number,
     query: ListEncountersQueryDto,
     correlationId?: string,
+    readContext?: StaffReadContext,
   ): Promise<EncounterListResponseDto> {
     this.loggingService.info(
       'Listing encounters',
@@ -397,11 +419,13 @@ export class EncountersService {
         operation: 'listEncounters',
         correlationId,
         hospitalId,
+        userId: readContext?.actorUserId,
       },
       {
         status: query.status,
         since: query.since,
         limit: query.limit,
+        role: readContext?.role,
       },
     );
 
@@ -435,9 +459,6 @@ export class EncountersService {
                 age: true,
                 gender: true,
                 preferredLanguage: true,
-                allergies: true,
-                conditions: true,
-                optionalHealthInfo: true,
               },
             },
             summaryProjections: {
@@ -465,6 +486,7 @@ export class EncountersService {
         {
           count: encounters.length,
           total,
+          role: readContext?.role,
         },
       );
 
@@ -493,7 +515,13 @@ export class EncountersService {
     }
   }
 
-  async getEncounter(hospitalId: number, encounterId: number, correlationId?: string) {
+  async getEncounter(
+    hospitalId: number,
+    encounterId: number,
+    correlationId?: string,
+    readContext?: StaffReadContext,
+  ) {
+    const canReadClinical = this.canReadClinicalEncounter(readContext?.role);
     this.loggingService.info(
       'Fetching encounter',
       {
@@ -502,6 +530,11 @@ export class EncountersService {
         correlationId,
         encounterId,
         hospitalId,
+        userId: readContext?.actorUserId,
+      },
+      {
+        role: readContext?.role,
+        clinicalReadAllowed: canReadClinical,
       },
     );
 
@@ -586,21 +619,46 @@ export class EncountersService {
         },
         {
           status: encounter.status,
+          role: readContext?.role,
+          clinicalReadAllowed: canReadClinical,
         },
       );
 
+      if (canReadClinical && readContext?.actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'ENCOUNTER_DETAIL',
+          actorUserId: readContext.actorUserId,
+          hospitalId: encounter.hospitalId,
+          encounterId: encounter.id,
+          patientId: encounter.patientId,
+          correlationId,
+          metadata: {
+            role: readContext.role,
+            status: encounter.status,
+          },
+        });
+      }
+
       const { assets, summaryProjections, ...encounterWithoutAssets } = encounter;
+      const mappedMessages = canReadClinical
+        ? encounter.messages.map(({ assets: messageAssets, ...message }) => ({
+            ...message,
+            attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
+          }))
+        : [];
 
       return {
         ...encounterWithoutAssets,
+        patient: canReadClinical
+          ? encounter.patient
+          : this.redactClinicalPatientFields(encounter.patient),
+        triageAssessments: canReadClinical ? encounter.triageAssessments : [],
+        alerts: canReadClinical ? encounter.alerts : [],
         priagePreview: this.toPriagePreview(summaryProjections[0] ?? null),
-        priageSummary: this.toPriageSummary(summaryProjections[0] ?? null),
+        priageSummary: canReadClinical ? this.toPriageSummary(summaryProjections[0] ?? null) : null,
         activityLog: encounter.events,
-        messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
-          ...message,
-          attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
-        })),
-        intakeImages: assets.map((asset) => mapAssetSummary(asset, 'staff')),
+        messages: mappedMessages,
+        intakeImages: canReadClinical ? assets.map((asset) => mapAssetSummary(asset, 'staff')) : [],
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -1001,6 +1059,20 @@ export class EncountersService {
     };
   }
 
+  async assertPatientOwnsEncounter(patientId: number, encounterId: number): Promise<void> {
+    const encounter = await this.prisma.encounter.findFirst({
+      where: {
+        id: encounterId,
+        patientId,
+      },
+      select: { id: true },
+    });
+
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
+  }
+
   /**
    * List all encounters belonging to a patient (limited view).
    */
@@ -1316,6 +1388,27 @@ export class EncountersService {
       return null;
     }
     return value;
+  }
+
+  private canReadClinicalEncounter(role: Role | undefined): boolean {
+    return role ? CLINICAL_READ_ROLES.has(role) : true;
+  }
+
+  private redactClinicalPatientFields<T extends {
+    heightCm: number | null;
+    weightKg: number | null;
+    allergies: string | null;
+    conditions: string | null;
+    optionalHealthInfo: unknown;
+  }>(patient: T): T {
+    return {
+      ...patient,
+      heightCm: null,
+      weightKg: null,
+      allergies: null,
+      conditions: null,
+      optionalHealthInfo: null,
+    };
   }
 
   private parsePriageQuestionAnswer(value: unknown): PriageSummaryQuestionAnswerDto | null {

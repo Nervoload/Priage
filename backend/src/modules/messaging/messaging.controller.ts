@@ -19,14 +19,20 @@ export class MessagingController {
   constructor(private readonly messagingService: MessagingService) {}
 
   @Get('encounters/:encounterId/messages')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async listForEncounter(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Query() query: ListMessagesQueryDto,
     @Req() req: Request,
     @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
-    return this.messagingService.listMessages(encounterId, user.hospitalId, query, req.correlationId);
+    return this.messagingService.listMessages(
+      encounterId,
+      user.hospitalId,
+      query,
+      req.correlationId,
+      user.userId,
+    );
   }
 
   // Phase 6.2: This REST endpoint will remain as a fallback, but the primary
@@ -51,7 +57,7 @@ export class MessagingController {
   }
 
   @Post('messages/:messageId/read')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async markRead(
     @Param('messageId', ParseIntPipe) messageId: number,
     @Req() req: Request,
@@ -61,7 +67,7 @@ export class MessagingController {
   }
 
   @Get('encounters/:encounterId/read-state')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async getReadState(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Req() req: Request,

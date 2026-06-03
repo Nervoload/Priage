@@ -72,9 +72,12 @@ export class EncountersController {
   async list(
     @Query() query: ListEncountersQueryDto,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
-    return this.encountersService.listEncounters(user.hospitalId, query, req.correlationId);
+    return this.encountersService.listEncounters(user.hospitalId, query, req.correlationId, {
+      actorUserId: user.userId,
+      role: user.role,
+    });
   }
 
   @Get(':id')
@@ -82,9 +85,12 @@ export class EncountersController {
   async getOne(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
-    return this.encountersService.getEncounter(user.hospitalId, id, req.correlationId);
+    return this.encountersService.getEncounter(user.hospitalId, id, req.correlationId, {
+      actorUserId: user.userId,
+      role: user.role,
+    });
   }
 
   @Post(':id/confirm')

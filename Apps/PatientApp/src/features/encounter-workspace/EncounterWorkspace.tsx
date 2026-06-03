@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 
-import { cancelMyEncounter, getMyEncounter, getQueueInfo, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
+import { cancelMyEncounter, getMyEncounter, getQueueInfo, listMyMessages } from '../../shared/api/encounters';
+import { API_BASE_URL } from '../../shared/api/client';
 import { getMe, updateProfile } from '../../shared/api/auth';
 import { sendLocationPing, updateIntakeDetails } from '../../shared/api/intake';
 import { ENCOUNTER_STATUS_META, isTerminalEncounter } from '../../shared/encounters';
@@ -16,14 +17,18 @@ import { useAuth } from '../../shared/hooks/useAuth';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import { useHospitalDirectory } from '../../shared/hooks/useHospitalDirectory';
 import { appendUniqueMessages, getLastMessageId } from '../../shared/messages';
+import {
+  isOutboxQueuedError,
+  sendPatientMessageReliable,
+} from '../../shared/patientOutbox';
 import type { Encounter, Hospital, Message, PatientProfile, QueueInfo } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
 import { UpgradeAccountCard } from './UpgradeAccountCard';
 
-const ENCOUNTER_POLL_MS = 10_000;
-const MESSAGE_POLL_MS = 5_000;
-const QUEUE_POLL_MS = 30_000;
+const ENCOUNTER_FALLBACK_POLL_MS = 60_000;
+const MESSAGE_FALLBACK_POLL_MS = 30_000;
+const QUEUE_POLL_MS = 60_000;
 
 function formatHospitalName(slug: string | null | undefined): string {
   if (!slug) {
@@ -267,14 +272,30 @@ export function EncounterWorkspace() {
     void refreshEncounter(true);
     void refreshMessages('replace');
 
+    const eventSource = typeof EventSource !== 'undefined'
+      ? new EventSource(`${API_BASE_URL}/patient/encounters/${encounterId}/events`, {
+          withCredentials: true,
+        })
+      : null;
+    const handleEncounterUpdate = () => {
+      void refreshEncounter();
+    };
+    const handleMessageCreated = () => {
+      void refreshMessages('append');
+    };
+
+    eventSource?.addEventListener('encounter.updated', handleEncounterUpdate);
+    eventSource?.addEventListener('message.created', handleMessageCreated);
+
     const encounterTimer = window.setInterval(() => {
       void refreshEncounter();
-    }, ENCOUNTER_POLL_MS);
+    }, ENCOUNTER_FALLBACK_POLL_MS);
     const messageTimer = window.setInterval(() => {
       void refreshMessages('append');
-    }, MESSAGE_POLL_MS);
+    }, MESSAGE_FALLBACK_POLL_MS);
 
     return () => {
+      eventSource?.close();
       window.clearInterval(encounterTimer);
       window.clearInterval(messageTimer);
     };
@@ -427,15 +448,20 @@ export function EncounterWorkspace() {
       const note = transportNote.trim()
         ? `I have arrived at the hospital entrance. Note: ${transportNote.trim()}`
         : 'I have arrived at the hospital entrance and am heading inside now.';
-      const sentMessage = await sendPatientMessage(encounter.id, note, false);
+      const sentMessage = await sendPatientMessageReliable(encounter.id, note, false);
       setMessages((previous) => {
         const merged = appendUniqueMessages(previous, [sentMessage]);
         messageCursorRef.current = getLastMessageId(merged);
         return merged;
       });
       showToast('Arrival update sent to staff.', 'success');
-    } catch {
-      showToast('Could not send arrival update.');
+    } catch (error) {
+      showToast(
+        isOutboxQueuedError(error)
+          ? 'Arrival update saved. We will retry when the connection recovers.'
+          : 'Could not send arrival update.',
+        isOutboxQueuedError(error) ? 'info' : 'error',
+      );
     } finally {
       setArrivalSubmitting(false);
     }

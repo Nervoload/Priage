@@ -3,6 +3,7 @@
 
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { EncounterEvent, EventType, Prisma } from '@prisma/client';
+import { Observable, Subject, filter } from 'rxjs';
 
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,6 +33,7 @@ export type EmitEncounterEventArgs = {
 @Injectable()
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
+  private readonly encounterEvents$ = new Subject<EncounterEvent>();
 
   constructor(
     @Inject(forwardRef(() => RealtimeGateway))
@@ -215,6 +217,7 @@ export class EventsService {
           eventType: event.type,
         },
       );
+      this.encounterEvents$.next(event);
       return true;
     } catch (error) {
       await this.loggingService.error(
@@ -266,5 +269,11 @@ export class EventsService {
     }
 
     return this.dispatchEncounterEventAndMarkProcessed(event);
+  }
+
+  observeEncounterEvents(encounterId: number): Observable<EncounterEvent> {
+    return this.encounterEvents$
+      .asObservable()
+      .pipe(filter((event) => event.encounterId === encounterId));
   }
 }

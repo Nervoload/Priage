@@ -28,7 +28,7 @@ export class AlertsController {
   }
 
   @Post(':id/acknowledge')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async acknowledge(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
@@ -48,7 +48,7 @@ export class AlertsController {
   }
 
   @Get('hospitals/:hospitalId/unacknowledged')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async listUnacknowledged(
     @Param('hospitalId', ParseIntPipe) hospitalId: number,
     @Req() req: Request,
@@ -61,7 +61,7 @@ export class AlertsController {
   }
 
   @Get('encounters/:encounterId')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async listForEncounter(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Req() req: Request,

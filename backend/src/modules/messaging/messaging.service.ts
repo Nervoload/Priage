@@ -14,6 +14,7 @@ import { PaginatedResponse } from '../../common/dto/pagination.dto';
 import { AlertsService } from '../alerts/alerts.service';
 import { AssetsService } from '../assets/assets.service';
 import { AssetSummaryDto, assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
+import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -51,6 +52,7 @@ export class MessagingService {
     private readonly alerts: AlertsService,
     private readonly assetsService: AssetsService,
     private readonly loggingService: LoggingService,
+    private readonly sensitiveReadAudit: SensitiveReadAuditService,
   ) {
     this.logger.log('MessagingService initialized');
   }
@@ -60,6 +62,7 @@ export class MessagingService {
     hospitalId: number,
     query?: ListMessagesQueryDto,
     correlationId?: string,
+    actorUserId?: number,
   ): Promise<PaginatedResponse<any>> {
     const page = query?.page || 1;
     const limit = query?.limit || 20;
@@ -107,6 +110,22 @@ export class MessagingService {
       ]);
 
       const totalPages = Math.ceil(total / limit);
+
+      if (actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'MESSAGE_THREAD',
+          actorUserId,
+          hospitalId,
+          encounterId,
+          correlationId,
+          metadata: {
+            page,
+            limit,
+            afterMessageId,
+            count: messages.length,
+          },
+        });
+      }
 
       return {
         data: messages.map((message) => this.serializeMessage(message, 'staff')),
