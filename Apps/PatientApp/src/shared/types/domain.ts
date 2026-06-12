@@ -48,7 +48,6 @@ export interface PatientProfile {
 }
 
 export interface AuthResponse {
-  sessionToken: string;
   patient: PatientProfile;
 }
 
@@ -224,7 +223,6 @@ export interface CreateIntentPayload {
 }
 
 export interface CreateIntentResponse {
-  sessionToken: string;
   patientId: number;
   encounterId: number | null;
 }

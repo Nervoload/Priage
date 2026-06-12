@@ -6,6 +6,8 @@
 import { Global, Inject, Injectable, Logger, Module, OnApplicationShutdown } from '@nestjs/common';
 import Redis from 'ioredis';
 
+import { getRedisConnectionOptions } from '../../common/config/redis.config';
+
 export const REDIS_CLIENT = 'REDIS_CLIENT';
 
 @Injectable()
@@ -38,12 +40,10 @@ class RedisLifecycleService implements OnApplicationShutdown {
         const redisHost = process.env.REDIS_HOST || 'localhost';
         const redisPort = parseInt(process.env.REDIS_PORT ?? '6379', 10);
 
-        const client = new Redis({
-          host: redisHost,
-          port: redisPort,
+        const client = new Redis(getRedisConnectionOptions({
           maxRetriesPerRequest: 3,
           lazyConnect: true,
-        });
+        }));
 
         client.on('connect', () => logger.log('Redis connected'));
         client.on('error', (err) => logger.error('Redis error', err.message));

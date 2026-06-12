@@ -77,7 +77,10 @@ export class HospitalsController {
     if (user.hospitalId !== id) {
       throw new ForbiddenException('Cannot access another hospital\'s queue');
     }
-    return this.hospitalsService.getQueueStatus(id, req.correlationId);
+    return this.hospitalsService.getQueueStatus(id, req.correlationId, {
+      actorUserId: user.userId,
+      role: user.role,
+    });
   }
 
   @Get(':id/config')

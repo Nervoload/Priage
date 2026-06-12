@@ -18,6 +18,7 @@ import { EncounterWorkspace } from '../features/encounter-workspace/EncounterWor
 import { Routing } from '../features/pre-triage/Routing';
 import { GuestChatbotPage } from '../features/pre-triage/GuestChatbotPage';
 import { flushPatientMessageOutbox } from '../shared/patientOutbox';
+import { flushPatientCommandOutbox } from '../shared/patientCommandOutbox';
 
 export function PatientApp() {
   const { session, loading } = useAuth();
@@ -31,11 +32,21 @@ export function PatientApp() {
     }
 
     void flushPatientMessageOutbox();
+    void flushPatientCommandOutbox();
     const timer = window.setInterval(() => {
       void flushPatientMessageOutbox();
+      void flushPatientCommandOutbox();
     }, 30_000);
+    const handleOnline = () => {
+      void flushPatientMessageOutbox();
+      void flushPatientCommandOutbox();
+    };
+    window.addEventListener('online', handleOnline);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('online', handleOnline);
+    };
   }, [guestSession, session]);
 
   if (loading) {

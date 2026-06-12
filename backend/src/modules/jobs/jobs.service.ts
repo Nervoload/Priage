@@ -15,6 +15,7 @@ export class JobsService implements OnModuleInit {
     @InjectQueue('events') private readonly eventsQueue: Queue,
     @InjectQueue('alerts') private readonly alertsQueue: Queue,
     @InjectQueue('logging') private readonly loggingQueue: Queue,
+    @InjectQueue('assets') private readonly assetsQueue: Queue,
     private readonly loggingService: LoggingService,
   ) {
     this.logger.log('JobsService initialized');
@@ -79,6 +80,16 @@ export class JobsService implements OnModuleInit {
           repeat: { every: 24 * 60 * 60 * 1000 },
           removeOnComplete: true,
           removeOnFail: true,
+        },
+      );
+
+      await this.assetsQueue.add(
+        'reconcile-deletes',
+        {},
+        {
+          repeat: { every: 5 * 60 * 1000 },
+          removeOnComplete: 100,
+          removeOnFail: 100,
         },
       );
 

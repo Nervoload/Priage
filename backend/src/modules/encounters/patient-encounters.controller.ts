@@ -2,15 +2,17 @@
 // Patient-facing encounter endpoints.
 // Protected by PatientGuard — only the patient who owns the encounter can access it.
 
-import { Controller, Get, Headers, MessageEvent, Param, ParseIntPipe, Post, Req, Sse, UseGuards } from '@nestjs/common';
+import { Controller, Get, Headers, HttpException, HttpStatus, MessageEvent, Param, ParseIntPipe, Post, Req, Sse, UseGuards } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { Request } from 'express';
-import { Observable, interval, map, merge } from 'rxjs';
+import { Observable, finalize, interval, map, merge, tap } from 'rxjs';
 
 import { CurrentPatient } from '../auth/decorators/current-patient.decorator';
 import { PatientIdempotencyService } from '../auth/patient-idempotency.service';
 import { PatientRateLimitGuard } from '../auth/guards/patient-rate-limit.guard';
 import { PatientContext, PatientGuard } from '../auth/guards/patient.guard';
 import { EventsService } from '../events/events.service';
+import { PatientRealtimeService } from '../events/patient-realtime.service';
 import { EncountersService } from './encounters.service';
 
 @Controller('patient/encounters')
@@ -20,6 +22,7 @@ export class PatientEncountersController {
     private readonly encountersService: EncountersService,
     private readonly patientIdempotency: PatientIdempotencyService,
     private readonly eventsService: EventsService,
+    private readonly patientRealtime: PatientRealtimeService,
   ) {}
 
   /**
@@ -87,6 +90,10 @@ export class PatientEncountersController {
     @CurrentPatient() patient: PatientContext,
   ): Promise<Observable<MessageEvent>> {
     await this.encountersService.assertPatientOwnsEncounter(patient.patientId, id);
+    const connectionId = randomUUID();
+    if (!await this.patientRealtime.reservePatientConnection(patient.patientId, connectionId)) {
+      throw new HttpException('Patient realtime connection limit reached', HttpStatus.TOO_MANY_REQUESTS);
+    }
 
     const eventStream = this.eventsService.observeEncounterEvents(id).pipe(
       map((event): MessageEvent => ({
@@ -96,18 +103,25 @@ export class PatientEncountersController {
           eventId: event.id,
           encounterId: event.encounterId,
           createdAt: event.createdAt,
-          metadata: event.metadata,
+          metadata: this.toPatientEventMetadata(event.type, event.metadata),
         },
       })),
     );
     const keepAlive = interval(25_000).pipe(
+      tap(() => {
+        void this.patientRealtime.touchPatientConnection(patient.patientId, connectionId).catch(() => undefined);
+      }),
       map((): MessageEvent => ({
         type: 'keepalive',
         data: { ok: true },
       })),
     );
 
-    return merge(eventStream, keepAlive);
+    return merge(eventStream, keepAlive).pipe(
+      finalize(() => {
+        void this.patientRealtime.releasePatientConnection(patient.patientId, connectionId).catch(() => undefined);
+      }),
+    );
   }
 
   /**
@@ -150,5 +164,20 @@ export class PatientEncountersController {
       default:
         return 'encounter.event';
     }
+  }
+
+  private toPatientEventMetadata(type: string, rawMetadata: unknown): Record<string, unknown> {
+    if (type !== 'STATUS_CHANGE' && type !== 'ENCOUNTER_CREATED') {
+      return {};
+    }
+    const metadata = rawMetadata && typeof rawMetadata === 'object' && !Array.isArray(rawMetadata)
+      ? rawMetadata as Record<string, unknown>
+      : {};
+    return {
+      status: metadata.status,
+      fromStatus: metadata.fromStatus,
+      toStatus: metadata.toStatus,
+      transition: metadata.transition,
+    };
   }
 }

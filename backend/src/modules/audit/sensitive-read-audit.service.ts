@@ -57,6 +57,13 @@ export class SensitiveReadAuditService {
           errorCode: error instanceof Error ? error.name : 'UnknownError',
         },
       );
+      const failClosed = (process.env.SENSITIVE_READ_AUDIT_FAIL_CLOSED
+        ?? ((process.env.NODE_ENV || '').toLowerCase() === 'production' ? 'true' : 'false'))
+        .trim()
+        .toLowerCase();
+      if (['1', 'true', 'yes', 'on'].includes(failClosed)) {
+        throw error;
+      }
     }
   }
 }

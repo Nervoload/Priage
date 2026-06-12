@@ -27,6 +27,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
 import { EncountersService } from './encounters.service';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
 import { CreateAdmittanceEncounterDto } from './dto/create-admittance-encounter.dto';
@@ -35,21 +36,25 @@ import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
 @Controller('encounters')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class EncountersController {
-  constructor(private readonly encountersService: EncountersService) {}
+  constructor(
+    private readonly encountersService: EncountersService,
+    private readonly clinicalAccess: ClinicalAccessService,
+  ) {}
 
   @Post()
   @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async create(
     @Body() dto: CreateEncounterDto,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
-    return this.encountersService.createEncounter(
+    const encounter = await this.encountersService.createEncounter(
       user.hospitalId,
       dto,
       { actorUserId: user.userId },
       req.correlationId,
     );
+    return this.redactStaffWriteResponse(encounter, user, req.correlationId);
   }
 
   @Post('admit')
@@ -57,14 +62,15 @@ export class EncountersController {
   async createAdmittanceEncounter(
     @Body() dto: CreateAdmittanceEncounterDto,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
-    return this.encountersService.createAdmittanceEncounter(
+    const encounter = await this.encountersService.createAdmittanceEncounter(
       user.hospitalId,
       dto,
       { actorUserId: user.userId },
       req.correlationId,
     );
+    return this.redactStaffWriteResponse(encounter, user, req.correlationId);
   }
 
   @Get()
@@ -98,14 +104,15 @@ export class EncountersController {
   async confirm(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
-    return this.encountersService.confirm(
+    const encounter = await this.encountersService.confirm(
       user.hospitalId,
       id,
       { actorUserId: user.userId },
       req.correlationId,
     );
+    return this.redactStaffWriteResponse(encounter, user, req.correlationId);
   }
 
   @Post(':id/arrived')
@@ -113,14 +120,15 @@ export class EncountersController {
   async markArrived(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
-    return this.encountersService.markArrived(
+    const encounter = await this.encountersService.markArrived(
       user.hospitalId,
       id,
       { actorUserId: user.userId },
       req.correlationId,
     );
+    return this.redactStaffWriteResponse(encounter, user, req.correlationId);
   }
 
   @Post(':id/waiting')
@@ -128,8 +136,9 @@ export class EncountersController {
   async createWaiting(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, id);
     return this.encountersService.createWaiting(
       user.hospitalId,
       id,
@@ -143,8 +152,9 @@ export class EncountersController {
   async startExam(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, id);
     return this.encountersService.startExam(
       user.hospitalId,
       id,
@@ -158,8 +168,9 @@ export class EncountersController {
   async discharge(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, id);
     return this.encountersService.discharge(
       user.hospitalId,
       id,
@@ -173,13 +184,28 @@ export class EncountersController {
   async cancel(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, id);
     return this.encountersService.cancel(
       user.hospitalId,
       id,
       { actorUserId: user.userId },
       req.correlationId,
     );
+  }
+
+  private redactStaffWriteResponse<T extends { id: number }>(
+    encounter: T,
+    user: { userId: number; hospitalId: number; role: Role },
+    correlationId?: string,
+  ) {
+    if (user.role !== Role.STAFF) {
+      return encounter;
+    }
+    return this.encountersService.getEncounter(user.hospitalId, encounter.id, correlationId, {
+      actorUserId: user.userId,
+      role: user.role,
+    });
   }
 }

@@ -24,11 +24,18 @@ export class ListEncountersQueryDto {
   @IsDate()
   since?: Date;
 
-  /** Maximum number of results to return (default 200, max 500) */
+  /** Opaque-enough stable cursor for the next page. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(500)
-  limit?: number = 200;
+  cursor?: number;
+
+  /** Maximum number of results to return (default 50, max 100) */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 50;
 }

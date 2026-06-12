@@ -389,6 +389,14 @@ export class IntakeService {
       return hashedSession;
     }
 
+    const allowLegacyRawToken = (process.env.NODE_ENV || '').trim().toLowerCase() !== 'production'
+      && ['1', 'true', 'yes', 'on'].includes(
+        (process.env.ALLOW_LEGACY_RAW_PATIENT_TOKENS || 'true').trim().toLowerCase(),
+      );
+    if (!allowLegacyRawToken) {
+      return null;
+    }
+
     const legacySession = await this.prisma.patientSession.findUnique({
       where: { token: sessionToken },
       include: args.include,

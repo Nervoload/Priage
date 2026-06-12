@@ -11,19 +11,24 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateTriageAssessmentDto } from './dto/create-triage-assessment.dto';
 import { TriageService } from './triage.service';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
 
 @Controller('triage')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class TriageController {
-  constructor(private readonly triageService: TriageService) {}
+  constructor(
+    private readonly triageService: TriageService,
+    private readonly clinicalAccess: ClinicalAccessService,
+  ) {}
 
   @Post('assessments')
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async createAssessment(
     @Body() dto: CreateTriageAssessmentDto,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, dto.encounterId);
     return this.triageService.createAssessment(dto, user.hospitalId, user.userId, req.correlationId);
   }
 
@@ -32,8 +37,9 @@ export class TriageController {
   async getAssessment(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalAssessmentAccess(user, id);
     return this.triageService.getAssessment(id, user.hospitalId, req.correlationId, user.userId);
   }
 
@@ -42,8 +48,9 @@ export class TriageController {
   async listAssessments(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, encounterId);
     return this.triageService.listAssessments(
       encounterId,
       user.hospitalId,

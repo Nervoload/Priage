@@ -18,6 +18,10 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader } = require('./lib/demo-gate');
+const {
+  extractPatientCookieHeader,
+  hashPatientCookie,
+} = require('./lib/session-cookies');
 const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 // ============================================================================
@@ -113,7 +117,7 @@ const testState = {
   staffToken: null,
   nurseToken: null,
   doctorToken: null,
-  patientToken: null,    // x-patient-token from intake intent
+  patientToken: null,    // patient session cookie from intake intent
   
   // Tracking
   correlationId: null,
@@ -203,7 +207,7 @@ function generateCorrelationId() {
 }
 
 /**
- * Make an HTTP request. Supports both staff (Bearer) and patient (x-patient-token) auth.
+ * Make an HTTP request. Supports staff and cookie-backed patient auth.
  */
 async function makeRequest(method, path, opts = {}) {
   const url = `${CONFIG.baseUrl}${path}`;
@@ -215,8 +219,8 @@ async function makeRequest(method, path, opts = {}) {
   const headers = {
     'Content-Type': 'application/json',
     'X-Correlation-ID': correlationId,
+    ...(!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? { Origin: CONFIG.baseUrl } : {}),
     ...(staffHeaders && staffHeaders.Authorization ? { Authorization: staffHeaders.Authorization } : {}),
-    ...(staffHeaders && staffHeaders['x-patient-token'] ? { 'x-patient-token': staffHeaders['x-patient-token'] } : {}),
   };
   const cookieParts = [demoCookie, staffHeaders.Cookie];
   const cookieHeader = cookieParts.filter(Boolean).join('; ');
@@ -224,7 +228,7 @@ async function makeRequest(method, path, opts = {}) {
     headers.Cookie = cookieHeader;
   }
   for (const [key, value] of Object.entries(staffHeaders)) {
-    if (key === 'Cookie' || key === 'Authorization' || key === 'x-patient-token') {
+    if (key === 'Cookie' || key === 'Authorization') {
       continue;
     }
     headers[key] = value;
@@ -272,9 +276,12 @@ function staffAuth(token) {
   return { Cookie: `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}` };
 }
 
-/** Helper: patient auth header */
-function patientAuth(token) {
-  return { 'x-patient-token': token };
+/** Helper: patient auth and retry-safety headers */
+function patientAuth(patientCookie) {
+  return {
+    Cookie: patientCookie,
+    'Idempotency-Key': `smoke-patient-${randomUUID()}`,
+  };
 }
 
 function pushUnique(list, value) {
@@ -315,6 +322,10 @@ async function createTrackedGuestEncounter(intentOverrides = {}) {
   const intent = await makeRequest('POST', '/intake/intent', {
     body: buildIntentPayload(intentOverrides),
   });
+  const patientCookie = extractPatientCookieHeader(intent._headers);
+  if (!patientCookie) {
+    throw new Error('Guest intake intent did not set a patient session cookie');
+  }
   fixtures.trackPatient(intent.patientId);
   const patient = await prisma.patientProfile.findUnique({
     where: { id: intent.patientId },
@@ -323,14 +334,14 @@ async function createTrackedGuestEncounter(intentOverrides = {}) {
     pushUnique(testState.extraPatientIds, patient.id);
   }
 
-  await completeInterviewForPatient(intent.sessionToken);
+  await completeInterviewForPatient(patientCookie);
 
   const encounter = await makeRequest('POST', '/intake/confirm', {
-    headers: patientAuth(intent.sessionToken),
+    headers: patientAuth(patientCookie),
     body: { hospitalId: testState.hospital.id },
   });
 
-  return { intent, patient, encounter };
+  return { intent, patient, encounter, patientCookie };
 }
 
 function buildInterviewAnswer(question) {
@@ -354,9 +365,9 @@ function buildInterviewAnswer(question) {
   }
 }
 
-async function completeInterviewForPatient(sessionToken) {
+async function completeInterviewForPatient(patientCookie) {
   let interview = await makeRequest('POST', '/intake/interview/start', {
-    headers: patientAuth(sessionToken),
+    headers: patientAuth(patientCookie),
   });
 
   for (let index = 0; index < 12; index += 1) {
@@ -369,7 +380,7 @@ async function completeInterviewForPatient(sessionToken) {
 
     if (interview.status === 'emergency_ack_required') {
       interview = await makeRequest('POST', '/intake/interview/advance', {
-        headers: patientAuth(sessionToken),
+        headers: patientAuth(patientCookie),
         body: { action: 'acknowledge_emergency' },
       });
       continue;
@@ -380,7 +391,7 @@ async function completeInterviewForPatient(sessionToken) {
     }
 
     interview = await makeRequest('POST', '/intake/interview/advance', {
-      headers: patientAuth(sessionToken),
+      headers: patientAuth(patientCookie),
       body: buildInterviewAnswer(interview.currentQuestion),
     });
   }
@@ -691,21 +702,23 @@ async function testPatientIntake() {
       body: buildIntentPayload(),
     });
     
-    if (!intent.sessionToken) throw new Error('No sessionToken returned');
+    if (intent.sessionToken !== undefined) throw new Error('Patient intent exposed a sessionToken');
     if (!intent.patientId) throw new Error('No patientId returned');
+    const patientCookie = extractPatientCookieHeader(intent._headers);
+    if (!patientCookie) throw new Error('No patient session cookie returned');
     
-    testState.patientToken = intent.sessionToken;
+    testState.patientToken = patientCookie;
     fixtures.trackPatient(intent.patientId);
     testState.intakePatient = await prisma.patientProfile.findUnique({
       where: { id: intent.patientId },
     });
     
     logSuccess(`Intent created — patientId: ${intent.patientId}, encounterId: ${intent.encounterId ?? 'null (expected)'}`);
-    logVerbose(`  Token: ${intent.sessionToken.substring(0, 30)}...`);
+    logVerbose('  Patient session established through an HttpOnly cookie');
     
     logSubSection('2C: Verify Patient Session Token');
     testState.patientSession = await prisma.patientSession.findFirst({
-      where: { token: testState.patientToken },
+      where: { token: hashPatientCookie(testState.patientToken) },
     });
     if (!testState.patientSession) throw new Error('No patient session found');
     logSuccess('Patient session token verified in database');
@@ -714,7 +727,7 @@ async function testPatientIntake() {
     logSubSection('2D: Invalid Patient Token (Expected 401)');
     await expectRequestFailure(
       () => makeRequest('POST', '/intake/confirm', {
-        headers: patientAuth('invalid-patient-token'),
+        headers: patientAuth('priage_patient_session=invalid-patient-token'),
         body: { hospitalId: testState.hospital.id },
       }),
       ['401', 'Invalid patient session token', 'Unauthorized'],
@@ -759,16 +772,18 @@ async function testPatientIntake() {
         chiefComplaint: 'Dizziness',
       }),
     });
+    const expiredPatientCookie = extractPatientCookieHeader(expiredIntent._headers);
+    if (!expiredPatientCookie) throw new Error('Expired-session fixture did not receive a patient cookie');
     fixtures.trackPatient(expiredIntent.patientId);
     pushUnique(testState.extraPatientIds, expiredIntent.patientId);
-    await completeInterviewForPatient(expiredIntent.sessionToken);
+    await completeInterviewForPatient(expiredPatientCookie);
     await prisma.patientSession.update({
-      where: { token: expiredIntent.sessionToken },
+      where: { token: hashPatientCookie(expiredPatientCookie) },
       data: { expiresAt: new Date(Date.now() - 60_000) },
     });
     await expectRequestFailure(
       () => makeRequest('POST', '/intake/confirm', {
-        headers: patientAuth(expiredIntent.sessionToken),
+        headers: patientAuth(expiredPatientCookie),
         body: { hospitalId: testState.hospital.id },
       }),
       ['401', 'expired', 'Unauthorized'],
@@ -848,7 +863,7 @@ async function testPatientIntake() {
       details: 'Temporary encounter to verify cancel flow.',
     });
     const cancelledEncounter = await makeRequest('POST', `/patient/encounters/${cancelFlow.encounter.id}/cancel`, {
-      headers: patientAuth(cancelFlow.intent.sessionToken),
+      headers: patientAuth(cancelFlow.patientCookie),
     });
     if (cancelledEncounter.status !== 'CANCELLED' || !cancelledEncounter.cancelledAt) {
       throw new Error('Patient cancel flow did not persist CANCELLED state');

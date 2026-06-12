@@ -103,8 +103,8 @@ export interface PatientSummary {
   id: number;
   firstName: string | null;
   lastName: string | null;
-  phone: string | null;
-  age: number | null;
+  phone?: string | null;
+  age?: number | null;
   gender?: string | null;
   preferredLanguage?: string;
   heightCm?: number | null;
@@ -210,13 +210,14 @@ interface EncounterBase {
   createdAt: string;
   updatedAt: string;
   status: EncounterStatus;
-  chiefComplaint: string | null;
+  chiefComplaint?: string | null;
   details?: string | null;
   hospitalId: number;
   patientId: number;
 
-  currentCtasLevel: number | null;
-  currentPriorityScore: number | null;
+  currentCtasLevel?: number | null;
+  currentPriorityScore?: number | null;
+  clinicalFieldsRedacted?: boolean;
 
   // Pipeline timestamps
   expectedAt: string | null;
@@ -249,6 +250,7 @@ export type Encounter = EncounterListItem | EncounterDetail;
 export interface EncounterListResponse {
   data: EncounterListItem[];
   total: number;
+  nextCursor: number | null;
 }
 
 // ─── Triage ─────────────────────────────────────────────────────────────────

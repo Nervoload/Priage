@@ -11,9 +11,15 @@ import { TriageView } from '../features/triage/TriageView';
 import { WaitingRoomView } from '../features/waitingroom/WaitingRoomView';
 import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
-import { listEncounters, startExam, confirmEncounter, dischargeEncounter } from '../shared/api/encounters';
+import { getEncounter, listEncounters, startExam, confirmEncounter, dischargeEncounter } from '../shared/api/encounters';
 import { ApiError } from '../shared/api/client';
-import { connectSocket, disconnectSocket, getSocket, sendMessageViaSocket } from '../shared/realtime/socket';
+import {
+  connectSocket,
+  disconnectSocket,
+  getSocket,
+  sendMessageViaSocket,
+  subscribeToEncounterRealtime,
+} from '../shared/realtime/socket';
 import { listMessages } from '../shared/api/messaging';
 import type { View } from '../shared/ui/NavBar';
 import { getHospitalConfig } from '../shared/api/hospitals';
@@ -93,6 +99,8 @@ export function HospitalApp() {
   const loadingMessageEncounters = useRef<Set<number>>(new Set());
   const messageRetryAt = useRef<Map<number, number>>(new Map());
   const encounterRefreshTimer = useRef<number | null>(null);
+  const encounterIdsRef = useRef<number[]>([]);
+  const realtimeSubscriptionKey = useRef('');
   const effectiveConfig = hospitalConfig ?? DEFAULT_HOSPITAL_CONFIG;
   const availableViews = useMemo<View[]>(
     () => (user ? effectiveConfig.pageAccess[user.role] : []),
@@ -175,6 +183,8 @@ export function HospitalApp() {
       messageCursorByEncounter.current.clear();
       loadingMessageEncounters.current.clear();
       messageRetryAt.current.clear();
+      encounterIdsRef.current = [];
+      realtimeSubscriptionKey.current = '';
       if (encounterRefreshTimer.current !== null) {
         window.clearTimeout(encounterRefreshTimer.current);
         encounterRefreshTimer.current = null;
@@ -215,6 +225,26 @@ export function HospitalApp() {
     }, delayMs);
   }, [fetchEncounters]);
 
+  const applyEncounterDelta = useCallback(async (encounterId: number) => {
+    try {
+      const encounter = await getEncounter(encounterId);
+      setEncounters((current) => {
+        if (!visibleEncounterStatuses.includes(encounter.status)) {
+          return current.filter((item) => item.id !== encounter.id);
+        }
+        const existing = current.findIndex((item) => item.id === encounter.id);
+        if (existing < 0) {
+          return [...current, encounter];
+        }
+        const next = [...current];
+        next[existing] = encounter;
+        return next;
+      });
+    } catch {
+      scheduleFetchEncounters();
+    }
+  }, [scheduleFetchEncounters, visibleEncounterStatuses]);
+
   const upsertChatMessage = useCallback((message: Message) => {
     const nextMessage = messageToChatMessage(message);
     setChatMessages((prev) => {
@@ -237,6 +267,19 @@ export function HospitalApp() {
       };
     });
   }, []);
+
+  useEffect(() => {
+    const encounterIds = encounters.map((encounter) => encounter.id).sort((left, right) => left - right);
+    encounterIdsRef.current = encounterIds;
+    const nextKey = encounterIds.join(',');
+    if (!user || !waitingRoomRealtimeEnabled || nextKey === realtimeSubscriptionKey.current) {
+      return;
+    }
+    realtimeSubscriptionKey.current = nextKey;
+    void subscribeToEncounterRealtime(encounterIds).catch(() => {
+      realtimeSubscriptionKey.current = '';
+    });
+  }, [encounters, user, waitingRoomRealtimeEnabled]);
 
   const loadMessagesForEncounter = useCallback(async (encounterId: number, mode: 'replace' | 'append' = 'replace') => {
     if (!clinicalMessagingEnabled) {
@@ -320,12 +363,14 @@ export function HospitalApp() {
     const socket = getSocket();
     const handleConnect = () => {
       scheduleFetchEncounters(0);
+      realtimeSubscriptionKey.current = '';
+      void subscribeToEncounterRealtime(encounterIdsRef.current).catch(() => undefined);
       for (const encounterId of loadedMessageEncounters.current) {
         void loadMessagesForEncounter(encounterId, 'append');
       }
     };
-    const handleEncounterUpdate = () => {
-      scheduleFetchEncounters();
+    const handleEncounterUpdate = (payload: { encounterId: number }) => {
+      void applyEncounterDelta(payload.encounterId);
     };
     const handleMessageCreated = (payload: { encounterId: number }) => {
       void loadMessagesForEncounter(payload.encounterId, 'append');
@@ -346,7 +391,7 @@ export function HospitalApp() {
         encounterRefreshTimer.current = null;
       }
     };
-  }, [user, loadingConfig, fetchEncounters, loadMessagesForEncounter, scheduleFetchEncounters, waitingRoomRealtimeEnabled]);
+  }, [user, loadingConfig, fetchEncounters, loadMessagesForEncounter, applyEncounterDelta, scheduleFetchEncounters, waitingRoomRealtimeEnabled]);
 
   const handleSendMessage = useCallback(async (encounterId: number, text: string) => {
     if (!clinicalMessagingEnabled) {

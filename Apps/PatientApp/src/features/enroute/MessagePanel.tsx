@@ -48,7 +48,7 @@ export function MessagePanel({ encounterId }: MessagePanelProps) {
     }
   }, [encounterId]);
 
-  // Fetch messages on mount + poll every 5s
+  // Fetch messages on mount + slow fallback polling.
   useEffect(() => {
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -59,7 +59,7 @@ export function MessagePanel({ encounterId }: MessagePanelProps) {
       if (!cancelled) {
         intervalId = setInterval(() => {
           void loadMessages('append');
-        }, 5000);
+        }, 30_000);
       }
     }
 

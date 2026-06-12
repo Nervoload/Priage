@@ -40,6 +40,7 @@ export class PatientsService {
     query: ListPatientsQueryDto,
     correlationId?: string,
     actorUserId?: number,
+    encounterScope: number[] | null = null,
   ): Promise<PaginatedResponse<PatientListItem>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
@@ -61,6 +62,7 @@ export class PatientsService {
         some: {
           hospitalId,
           ...(query.status ? { status: query.status } : {}),
+          ...(encounterScope === null ? {} : { id: { in: encounterScope } }),
         },
       },
     };
@@ -78,7 +80,10 @@ export class PatientsService {
             gender: true,
             preferredLanguage: true,
             encounters: {
-              where: { hospitalId },
+              where: {
+                hospitalId,
+                ...(encounterScope === null ? {} : { id: { in: encounterScope } }),
+              },
               orderBy: { createdAt: 'desc' },
               take: 1,
               select: {
@@ -139,6 +144,7 @@ export class PatientsService {
             limit,
             count: data.length,
             status: query.status ?? null,
+            careTeamScoped: encounterScope !== null,
           },
         });
       }
@@ -174,6 +180,7 @@ export class PatientsService {
     hospitalId: number,
     correlationId?: string,
     actorUserId?: number,
+    encounterScope: number[] | null = null,
   ) {
     this.loggingService.debug('Fetching patient profile', {
       service: 'PatientsService',
@@ -201,7 +208,10 @@ export class PatientsService {
         optionalHealthInfo: true,
         createdAt: true,
         encounters: {
-          where: { hospitalId },
+          where: {
+            hospitalId,
+            ...(encounterScope === null ? {} : { id: { in: encounterScope } }),
+          },
           orderBy: { createdAt: 'desc' },
           select: {
             id: true,
@@ -254,6 +264,7 @@ export class PatientsService {
         correlationId,
         metadata: {
           encounterCount: patient.encounters.length,
+          careTeamScoped: encounterScope !== null,
         },
       });
     }

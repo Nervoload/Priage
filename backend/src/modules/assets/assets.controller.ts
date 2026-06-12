@@ -23,11 +23,15 @@ import {
   ASSET_MAX_FILES_PER_REQUEST,
 } from './assets.constants';
 import { AssetsService } from './assets.service';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
 
 @Controller('assets')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AssetsController {
-  constructor(private readonly assetsService: AssetsService) {}
+  constructor(
+    private readonly assetsService: AssetsService,
+    private readonly clinicalAccess: ClinicalAccessService,
+  ) {}
 
   @Post('encounters/:encounterId/message-images')
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
@@ -37,8 +41,9 @@ export class AssetsController {
   async uploadMessageImages(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @UploadedFiles() files: Array<{ buffer: Buffer; mimetype: string; size: number; originalname: string }>,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, encounterId);
     return this.assetsService.uploadMessageImagesForStaff(
       encounterId,
       user.hospitalId,
@@ -51,19 +56,27 @@ export class AssetsController {
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async listForEncounter(
     @Param('encounterId', ParseIntPipe) encounterId: number,
-    @CurrentUser() user: { hospitalId: number },
+    @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
-    return this.assetsService.listEncounterAssets(encounterId, user.hospitalId);
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, encounterId);
+    return this.assetsService.listEncounterAssets(
+      encounterId,
+      user.hospitalId,
+      user.userId,
+      req.correlationId,
+    );
   }
 
   @Get(':assetId/content')
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async streamStaffAsset(
     @Param('assetId', ParseIntPipe) assetId: number,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
+    await this.clinicalAccess.assertClinicalAssetAccess(user, assetId);
     const file = await this.assetsService.streamAssetForStaff(
       assetId,
       user.hospitalId,

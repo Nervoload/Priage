@@ -1,7 +1,7 @@
 // backend/src/modules/auth/guards/patient.guard.ts
 // Patient authentication guard.
-// Validates the cookie-backed patient session token (or legacy x-patient-token
-// header) against PatientSession in the database.
+// Validates the cookie-backed patient session token against PatientSession.
+// Legacy headers/raw records are development-only migration aids.
 // Attaches { patientId, sessionId, encounterId, hospitalId } to request.patientUser.
 
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
@@ -30,9 +30,11 @@ export class PatientGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const token = readCookie(request.headers?.cookie, PATIENT_SESSION_COOKIE)
-      ?? (request.headers['x-patient-token'] as string | undefined)
-      ?? null;
+    const cookieToken = readCookie(request.headers?.cookie, PATIENT_SESSION_COOKIE);
+    const headerToken = request.headers['x-patient-token'] as string | undefined;
+    const allowHeaderToken = (process.env.NODE_ENV || '').trim().toLowerCase() !== 'production'
+      || ['1', 'true', 'yes', 'on'].includes((process.env.ALLOW_PATIENT_TOKEN_HEADER || '').trim().toLowerCase());
+    const token = cookieToken ?? (allowHeaderToken ? headerToken : undefined) ?? null;
 
     if (!token) {
       throw new UnauthorizedException('Patient token is required');
@@ -55,7 +57,11 @@ export class PatientGuard implements CanActivate {
       },
     });
 
-    if (!session) {
+    const allowLegacyRawToken = (process.env.NODE_ENV || '').trim().toLowerCase() !== 'production'
+      && ['1', 'true', 'yes', 'on'].includes(
+        (process.env.ALLOW_LEGACY_RAW_PATIENT_TOKENS || 'true').trim().toLowerCase(),
+      );
+    if (!session && allowLegacyRawToken) {
       session = await this.prisma.patientSession.findUnique({
         where: { token },
         select: {

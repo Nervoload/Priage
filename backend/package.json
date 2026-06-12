@@ -19,11 +19,14 @@
     "test:logging:db": "node scripts/test-logging.js",
     "test:security": "node scripts/security-regression.js",
     "test:load": "node scripts/load-regression.js",
+    "check:production": "node scripts/production-readiness.js",
     "demo:seed": "node scripts/demo-seed.js",
     "seed:full": "node scripts/demo-seed.js",
     "test:platform": "node scripts/platform-smoke.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1068.0",
+    "@aws-sdk/s3-request-presigner": "^3.1068.0",
     "@nestjs/bullmq": "11.0.4",
     "@nestjs/common": "11.1.11",
     "@nestjs/core": "11.1.11",

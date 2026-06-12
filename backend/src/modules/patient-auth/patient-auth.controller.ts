@@ -8,7 +8,7 @@
 // DELETE /patient-auth/account — deactivate patient account access (PatientGuard)
 // POST /patient-auth/logout   — delete current session (PatientGuard)
 
-import { Body, Controller, Delete, Get, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 
@@ -25,6 +25,7 @@ import {
 import { CurrentPatient } from '../auth/decorators/current-patient.decorator';
 import { PatientRateLimitGuard } from '../auth/guards/patient-rate-limit.guard';
 import { PatientContext, PatientGuard } from '../auth/guards/patient.guard';
+import { PatientIdempotencyService } from '../auth/patient-idempotency.service';
 import { PatientAuthService } from './patient-auth.service';
 import { RegisterPatientDto } from './dto/register-patient.dto';
 import { LoginPatientDto } from './dto/login-patient.dto';
@@ -35,7 +36,10 @@ import { DeletePatientAccountDto } from './dto/delete-account.dto';
 
 @Controller('patient-auth')
 export class PatientAuthController {
-  constructor(private readonly patientAuthService: PatientAuthService) {}
+  constructor(
+    private readonly patientAuthService: PatientAuthService,
+    private readonly patientIdempotency: PatientIdempotencyService,
+  ) {}
 
   @Post('register')
   @Throttle(PATIENT_REGISTER_THROTTLE)
@@ -46,7 +50,8 @@ export class PatientAuthController {
   ) {
     const result = await this.patientAuthService.register(dto, req.correlationId);
     res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
-    return result;
+    const { sessionToken: _, ...responseBody } = result;
+    return responseBody;
   }
 
   @Post('login')
@@ -58,7 +63,8 @@ export class PatientAuthController {
   ) {
     const result = await this.patientAuthService.login(dto, req.correlationId);
     res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
-    return result;
+    const { sessionToken: _, ...responseBody } = result;
+    return responseBody;
   }
 
   @Get('me')
@@ -74,10 +80,20 @@ export class PatientAuthController {
   @UseGuards(PatientGuard, PatientRateLimitGuard)
   async updateProfile(
     @Body() dto: UpdatePatientProfileDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentPatient() patient: PatientContext,
     @Req() req: Request,
   ) {
-    return this.patientAuthService.updateProfile(patient.patientId, dto, req.correlationId);
+    return this.patientIdempotency.execute(
+      {
+        patient,
+        command: 'patient.profile.update',
+        idempotencyKey,
+        fingerprintInput: { body: dto },
+        correlationId: req.correlationId,
+      },
+      () => this.patientAuthService.updateProfile(patient.patientId, dto, req.correlationId),
+    );
   }
 
   @Post('upgrade')
@@ -95,7 +111,8 @@ export class PatientAuthController {
       req.correlationId,
     );
     res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
-    return result;
+    const { sessionToken: _, ...responseBody } = result;
+    return responseBody;
   }
 
   @Post('feedback')

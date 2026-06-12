@@ -23,6 +23,8 @@ import { randomUUID } from 'crypto';
 
 import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
 import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
+import { hasClinicalCapability } from '../clinical-access/clinical-access.policy';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -65,6 +67,7 @@ const TERMINAL_STATUSES = new Set<EncounterStatus>([
 const PRIORITY_ORDER: Prisma.EncounterOrderByWithRelationInput[] = [
   { currentPriorityScore: { sort: 'desc', nulls: 'last' } },
   { createdAt: 'asc' },
+  { id: 'asc' },
 ];
 
 const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
@@ -73,12 +76,6 @@ const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
   EncounterStatus.TRIAGE,
   EncounterStatus.WAITING,
 ];
-
-const CLINICAL_READ_ROLES = new Set<Role>([
-  Role.ADMIN,
-  Role.NURSE,
-  Role.DOCTOR,
-]);
 
 const encounterMessageSelect = {
   id: true,
@@ -158,6 +155,7 @@ export class EncountersService {
     private readonly events: EventsService,
     private readonly loggingService: LoggingService,
     private readonly sensitiveReadAudit: SensitiveReadAuditService,
+    private readonly clinicalAccess: ClinicalAccessService,
   ) {
     this.logger.log('EncountersService initialized');
   }
@@ -442,13 +440,17 @@ export class EncountersService {
         where.createdAt = { gte: query.since };
       }
 
-      const limit = query.limit || 200;
+      const limit = query.limit || 50;
+      const roleCanReadClinical = readContext
+        ? hasClinicalCapability(readContext.role, 'encounter.list.clinical')
+        : true;
 
       const [encounters, total] = await Promise.all([
         this.prisma.encounter.findMany({
           where,
           orderBy: PRIORITY_ORDER,
-          take: limit,
+          take: limit + 1,
+          ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
           include: {
             patient: {
               select: {
@@ -474,6 +476,28 @@ export class EncountersService {
         }),
         this.prisma.encounter.count({ where }),
       ]);
+      const hasMore = encounters.length > limit;
+      const page = hasMore ? encounters.slice(0, limit) : encounters;
+      const clinicallyAccessibleIds = readContext
+        ? await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
+            { userId: readContext.actorUserId, hospitalId, role: readContext.role },
+            page.map((encounter) => encounter.id),
+          )
+        : new Set(page.map((encounter) => encounter.id));
+      if (readContext?.actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'ENCOUNTER_LIST',
+          actorUserId: readContext.actorUserId,
+          hospitalId,
+          correlationId,
+          metadata: {
+            role: readContext.role,
+            clinicalFieldsIncluded: roleCanReadClinical,
+            clinicallyAccessibleCount: clinicallyAccessibleIds.size,
+            resultCount: page.length,
+          },
+        });
+      }
 
       this.loggingService.info(
         'Encounters listed successfully',
@@ -484,18 +508,21 @@ export class EncountersService {
           hospitalId,
         },
         {
-          count: encounters.length,
+          count: page.length,
           total,
           role: readContext?.role,
         },
       );
 
       return {
-        data: encounters.map(({ summaryProjections, ...encounter }) => ({
-          ...encounter,
-          priagePreview: this.toPriagePreview(summaryProjections[0] ?? null),
-        })),
+        data: page.map(({ summaryProjections, ...encounter }) => clinicallyAccessibleIds.has(encounter.id)
+          ? {
+              ...encounter,
+              priagePreview: this.toPriagePreview(summaryProjections[0] ?? null),
+            }
+          : this.toOperationalEncounter(encounter)),
         total,
+        nextCursor: hasMore ? page.at(-1)?.id ?? null : null,
       };
     } catch (error) {
       await this.loggingService.error(
@@ -521,7 +548,18 @@ export class EncountersService {
     correlationId?: string,
     readContext?: StaffReadContext,
   ) {
-    const canReadClinical = this.canReadClinicalEncounter(readContext?.role);
+    let canReadClinical = this.canReadClinicalEncounter(readContext?.role);
+    if (canReadClinical && readContext) {
+      const accessible = await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
+        {
+          userId: readContext.actorUserId,
+          hospitalId,
+          role: readContext.role,
+        },
+        [encounterId],
+      );
+      canReadClinical = accessible.has(encounterId);
+    }
     this.loggingService.info(
       'Fetching encounter',
       {
@@ -624,7 +662,7 @@ export class EncountersService {
         },
       );
 
-      if (canReadClinical && readContext?.actorUserId) {
+      if (readContext?.actorUserId) {
         await this.sensitiveReadAudit.record({
           resource: 'ENCOUNTER_DETAIL',
           actorUserId: readContext.actorUserId,
@@ -635,6 +673,7 @@ export class EncountersService {
           metadata: {
             role: readContext.role,
             status: encounter.status,
+            clinicalFieldsIncluded: canReadClinical,
           },
         });
       }
@@ -646,6 +685,10 @@ export class EncountersService {
             attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
           }))
         : [];
+
+      if (!canReadClinical) {
+        return this.toOperationalEncounterDetail(encounterWithoutAssets);
+      }
 
       return {
         ...encounterWithoutAssets,
@@ -1391,7 +1434,61 @@ export class EncountersService {
   }
 
   private canReadClinicalEncounter(role: Role | undefined): boolean {
-    return role ? CLINICAL_READ_ROLES.has(role) : true;
+    return role ? hasClinicalCapability(role, 'encounter.detail.clinical') : true;
+  }
+
+  private toOperationalEncounter<T extends {
+    id: number;
+    createdAt: Date;
+    updatedAt: Date;
+    status: EncounterStatus;
+    hospitalId: number;
+    patientId: number;
+    expectedAt: Date | null;
+    arrivedAt: Date | null;
+    triagedAt: Date | null;
+    waitingAt: Date | null;
+    seenAt: Date | null;
+    departedAt: Date | null;
+    cancelledAt: Date | null;
+    patient: { id: number; firstName: string | null; lastName: string | null };
+  }>(encounter: T) {
+    return {
+      id: encounter.id,
+      createdAt: encounter.createdAt,
+      updatedAt: encounter.updatedAt,
+      status: encounter.status,
+      hospitalId: encounter.hospitalId,
+      patientId: encounter.patientId,
+      expectedAt: encounter.expectedAt,
+      arrivedAt: encounter.arrivedAt,
+      triagedAt: encounter.triagedAt,
+      waitingAt: encounter.waitingAt,
+      seenAt: encounter.seenAt,
+      departedAt: encounter.departedAt,
+      cancelledAt: encounter.cancelledAt,
+      patient: {
+        id: encounter.patient.id,
+        firstName: encounter.patient.firstName,
+        lastName: encounter.patient.lastName,
+      },
+      clinicalFieldsRedacted: true,
+    };
+  }
+
+  private toOperationalEncounterDetail<T extends Parameters<EncountersService['toOperationalEncounter']>[0]>(
+    encounter: T,
+  ) {
+    return {
+      ...this.toOperationalEncounter(encounter),
+      triageAssessments: [],
+      alerts: [],
+      priagePreview: null,
+      priageSummary: null,
+      activityLog: [],
+      messages: [],
+      intakeImages: [],
+    };
   }
 
   private redactClinicalPatientFields<T extends {

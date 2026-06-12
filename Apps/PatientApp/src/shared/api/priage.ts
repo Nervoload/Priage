@@ -8,6 +8,7 @@ import type {
   PriageAdmitResponse,
   Hospital,
 } from '../types/domain';
+import { sendDurablePatientCommand } from '../patientCommandOutbox';
 
 /** POST /patient/priage/chat — send conversation to AI, get response */
 export async function priageChat(
@@ -23,10 +24,7 @@ export async function priageChat(
 export async function priageAdmit(
   payload: PriageAdmitPayload,
 ): Promise<PriageAdmitResponse> {
-  return client<PriageAdmitResponse>('/patient/priage/admit', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return sendDurablePatientCommand<PriageAdmitResponse>('/patient/priage/admit', 'POST', payload);
 }
 
 /** GET /patient/priage/hospitals — list available hospitals */

@@ -4,7 +4,7 @@
 
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 
-import { readCookie, STAFF_AUTH_COOKIE } from '../../../common/http/auth-cookie.util';
+import { readCookie, STAFF_AUTH_COOKIE, STAFF_DEVICE_COOKIE } from '../../../common/http/auth-cookie.util';
 import { AuthService } from '../auth.service';
 
 @Injectable()
@@ -27,6 +27,7 @@ export class JwtAuthGuard implements CanActivate {
       {
         ipAddress: request.ip,
         userAgent: request.get?.('user-agent') ?? request.headers?.['user-agent'] ?? null,
+        deviceId: readCookie(request.headers?.cookie, STAFF_DEVICE_COOKIE),
       },
     );
     request.authToken = token;

@@ -17,6 +17,7 @@ export interface ListEncountersParams {
   status?: EncounterStatus[];
   since?: string;
   limit?: number;
+  cursor?: number;
 }
 
 export async function listEncounters(
@@ -28,6 +29,7 @@ export async function listEncounters(
   }
   if (params.since) query.set('since', params.since);
   if (params.limit) query.set('limit', String(params.limit));
+  if (params.cursor) query.set('cursor', String(params.cursor));
 
   const qs = query.toString();
   return client<EncounterListResponse>(`/encounters${qs ? `?${qs}` : ''}`);

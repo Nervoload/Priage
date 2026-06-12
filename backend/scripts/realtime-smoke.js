@@ -10,6 +10,7 @@ const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader, demoSocketHeaders } = require('./lib/demo-gate');
+const { extractPatientCookieHeader } = require('./lib/session-cookies');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const BASE_URL_API = process.env.BASE_URL_API || BASE;
@@ -78,6 +79,13 @@ function buildSocketAuth(token) {
 }
 
 async function api(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    options.headers = {
+      Origin: BASE_URL_API,
+      ...(options.headers || {}),
+    };
+  }
   const demoCookie = demoCookieHeader();
   if (demoCookie) {
     options.headers = {
@@ -206,8 +214,8 @@ function buildInterviewAnswer(question) {
   }
 }
 
-async function completeInterviewForPatient(sessionToken) {
-  const headers = { 'x-patient-token': sessionToken };
+async function completeInterviewForPatient(patientCookie) {
+  const headers = { Cookie: patientCookie };
   let { res, json, text } = await api('/intake/interview/start', {
     method: 'POST',
     headers,
@@ -228,7 +236,11 @@ async function completeInterviewForPatient(sessionToken) {
     if (json?.status === 'emergency_ack_required') {
       ({ res, json, text } = await api('/intake/interview/advance', {
         method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `realtime-interview-${randomUUID()}`,
+        },
         body: JSON.stringify({ action: 'acknowledge_emergency' }),
       }));
     } else {
@@ -238,7 +250,11 @@ async function completeInterviewForPatient(sessionToken) {
 
       ({ res, json, text } = await api('/intake/interview/advance', {
         method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `realtime-interview-${randomUUID()}`,
+        },
         body: JSON.stringify(buildInterviewAnswer(json.currentQuestion)),
       }));
     }
@@ -253,7 +269,7 @@ async function completeInterviewForPatient(sessionToken) {
 
 async function createEncounter(hospitalSlug) {
   const suffix = String(Date.now()).slice(-7);
-  const { res: intentRes, json: intent, text: intentText } = await api('/intake/intent', {
+  const { res: intentRes, json: intent, text: intentText, headers: intentHeaders } = await api('/intake/intent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -265,20 +281,22 @@ async function createEncounter(hospitalSlug) {
       details: 'Realtime smoke test encounter',
     }),
   });
-  if (!intentRes.ok || !intent?.sessionToken) {
+  const patientCookie = extractPatientCookieHeader(intentHeaders);
+  if (!intentRes.ok || !patientCookie) {
     throw new Error(`Failed to create intake intent: ${intentRes.status} ${intentText}`);
   }
   if (fixtureContext) {
     fixtureContext.fixtures.trackPatient(intent.patientId);
   }
 
-  await completeInterviewForPatient(intent.sessionToken);
+  await completeInterviewForPatient(patientCookie);
 
   const { res: confirmRes, json: encounter, text: confirmText } = await api('/intake/confirm', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-patient-token': intent.sessionToken,
+      Cookie: patientCookie,
+      'Idempotency-Key': `realtime-confirm-${randomUUID()}`,
     },
     body: JSON.stringify({ hospitalSlug }),
   });

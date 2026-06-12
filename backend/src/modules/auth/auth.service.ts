@@ -6,14 +6,16 @@
 // creates revocable staff sessions with audit metadata
 // injected into auth.controller.ts
 
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import * as bcrypt from 'bcrypt';
+import { verify as verifyJwt, type JwtPayload } from 'jsonwebtoken';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggingService } from '../logging/logging.service';
 import { STAFF_AUTH_TTL_MS } from '../../common/http/auth-cookie.util';
 import { LoginDto } from './dto/login.dto';
+import { StaffMfaService } from './staff-mfa.service';
 
 const STAFF_SESSION_ACTIVITY_TOUCH_MS = 5 * 60 * 1000;
 
@@ -34,6 +36,7 @@ export interface StaffAuthUser {
 type SessionAuditContext = {
   ipAddress?: string | null;
   userAgent?: string | null;
+  deviceId?: string | null;
 };
 
 @Injectable()
@@ -43,6 +46,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly loggingService: LoggingService,
+    private readonly staffMfa: StaffMfaService,
   ) {
     this.logger.log('AuthService initialized');
   }
@@ -93,20 +97,17 @@ export class AuthService {
         throw new UnauthorizedException('Invalid credentials');
       }
 
-      const sessionToken = this.generateSessionToken();
-      const expiresAt = this.buildSessionExpiry();
-      const session = await this.prisma.staffSession.create({
-        data: {
-          tokenHash: this.hashSessionToken(sessionToken),
-          userId: user.id,
-          expiresAt,
-          lastSeenAt: new Date(),
-          createdIp: this.normalizeAuditField(auditContext?.ipAddress),
-          createdUserAgent: this.normalizeAuditField(auditContext?.userAgent),
-          lastSeenIp: this.normalizeAuditField(auditContext?.ipAddress),
-          lastSeenUserAgent: this.normalizeAuditField(auditContext?.userAgent),
-        },
-      });
+      const mfaRequired = user.mfaEnabled || this.readBooleanEnv('STAFF_MFA_REQUIRED', false);
+      if (mfaRequired) {
+        if (!user.mfaEnabled || !user.mfaSecretEncrypted) {
+          throw new ForbiddenException('Staff MFA enrollment is required before login');
+        }
+        if (!dto.mfaCode || !this.staffMfa.verify(this.staffMfa.decrypt(user.mfaSecretEncrypted), dto.mfaCode)) {
+          throw new UnauthorizedException('Valid MFA code is required');
+        }
+      }
+
+      const { sessionToken, session } = await this.createSession(user.id, auditContext, 'password', mfaRequired);
 
       this.loggingService.info('Login successful', {
         service: 'AuthService',
@@ -153,6 +154,114 @@ export class AuthService {
       });
       throw error;
     }
+  }
+
+  async loginWithSso(assertion: string, correlationId?: string, auditContext?: SessionAuditContext) {
+    const verificationKey = process.env.SSO_JWT_PUBLIC_KEY?.replace(/\\n/g, '\n')
+      || process.env.SSO_JWT_SECRET;
+    if (!verificationKey) {
+      throw new ForbiddenException('SSO is not configured');
+    }
+    const payload = verifyJwt(assertion, verificationKey, {
+      algorithms: process.env.SSO_JWT_PUBLIC_KEY ? ['RS256', 'ES256'] : ['HS256'],
+      issuer: process.env.SSO_JWT_ISSUER || undefined,
+      audience: process.env.SSO_JWT_AUDIENCE || undefined,
+    }) as JwtPayload;
+    const issuer = String(payload.iss || '');
+    const subject = String(payload.sub || '');
+    const email = typeof payload.email === 'string' ? payload.email.toLowerCase() : null;
+    if (!issuer || !subject) {
+      throw new UnauthorizedException('SSO assertion is missing issuer or subject');
+    }
+
+    let user = await this.prisma.user.findUnique({
+      where: { ssoIssuer_ssoSubject: { ssoIssuer: issuer, ssoSubject: subject } },
+      include: { hospital: true },
+    });
+    if (!user && email && this.readBooleanEnv('SSO_ALLOW_EMAIL_LINK', false)) {
+      user = await this.prisma.user.findUnique({ where: { email }, include: { hospital: true } });
+      if (user) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { ssoIssuer: issuer, ssoSubject: subject },
+          include: { hospital: true },
+        });
+      }
+    }
+    if (!user) {
+      throw new UnauthorizedException('SSO identity is not provisioned');
+    }
+
+    const { sessionToken, session } = await this.createSession(user.id, auditContext, 'sso', true);
+    await this.loggingService.info('SSO login successful', {
+      service: 'AuthService',
+      operation: 'loginWithSso',
+      correlationId,
+      userId: user.id,
+      hospitalId: user.hospitalId,
+    });
+    return {
+      sessionToken,
+      session: { id: session.id, createdAt: session.createdAt.toISOString(), expiresAt: session.expiresAt?.toISOString() ?? null },
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        hospitalId: user.hospitalId,
+        hospital: user.hospital,
+      },
+    };
+  }
+
+  async beginMfaEnrollment(userId: number) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    if (!user) throw new NotFoundException('Staff user not found');
+    const secret = this.staffMfa.createSecret();
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { mfaSecretEncrypted: this.staffMfa.encrypt(secret), mfaEnabled: false },
+    });
+    return { secret, otpAuthUri: this.staffMfa.buildOtpAuthUri(user.email, secret) };
+  }
+
+  async enableMfa(userId: number, code: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { mfaSecretEncrypted: true },
+    });
+    if (!user?.mfaSecretEncrypted || !this.staffMfa.verify(this.staffMfa.decrypt(user.mfaSecretEncrypted), code)) {
+      throw new UnauthorizedException('Invalid MFA code');
+    }
+    await this.prisma.user.update({ where: { id: userId }, data: { mfaEnabled: true } });
+    return { ok: true };
+  }
+
+  async listSessions(userId: number) {
+    return this.prisma.staffSession.findMany({
+      where: { userId, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        createdAt: true,
+        expiresAt: true,
+        lastSeenAt: true,
+        createdIp: true,
+        createdUserAgent: true,
+        lastSeenIp: true,
+        lastSeenUserAgent: true,
+        authMethod: true,
+        mfaVerifiedAt: true,
+      },
+    });
+  }
+
+  async revokeSession(userId: number, sessionId: number) {
+    const result = await this.prisma.staffSession.updateMany({
+      where: { id: sessionId, userId, revokedAt: null },
+      data: { revokedAt: new Date(), revokedReason: 'revoked_by_user' },
+    });
+    if (result.count !== 1) throw new NotFoundException('Active session not found');
+    return { ok: true };
   }
 
   async validateSessionToken(
@@ -213,6 +322,25 @@ export class AuthService {
           sessionId: session.id,
         });
         throw new UnauthorizedException('Staff session has expired');
+      }
+
+      const idleTimeoutMs = this.readPositiveIntEnv('STAFF_SESSION_IDLE_TIMEOUT_MS', 30 * 60 * 1000);
+      if (session.lastSeenAt && session.lastSeenAt.getTime() < Date.now() - idleTimeoutMs) {
+        await this.prisma.staffSession.updateMany({
+          where: { id: session.id, revokedAt: null },
+          data: { revokedAt: new Date(), revokedReason: 'idle_timeout' },
+        });
+        throw new UnauthorizedException('Staff session expired due to inactivity');
+      }
+
+      const expectedDeviceIdHash = session.deviceIdHash;
+      const receivedDeviceIdHash = auditContext?.deviceId ? this.hashSessionToken(auditContext.deviceId) : null;
+      if (
+        expectedDeviceIdHash
+        && expectedDeviceIdHash !== receivedDeviceIdHash
+        && this.readBooleanEnv('STAFF_DEVICE_BINDING_REQUIRED', (process.env.NODE_ENV || '') === 'production')
+      ) {
+        throw new UnauthorizedException('Staff session is not valid for this device');
       }
 
       if (options?.touch !== false && this.shouldTouchSession(session, auditContext)) {
@@ -319,6 +447,61 @@ export class AuthService {
 
   private buildSessionExpiry(): Date {
     return new Date(Date.now() + STAFF_AUTH_TTL_MS);
+  }
+
+  private async createSession(
+    userId: number,
+    auditContext: SessionAuditContext | undefined,
+    authMethod: string,
+    mfaVerified: boolean,
+  ) {
+    const maxSessions = this.readPositiveIntEnv('STAFF_MAX_ACTIVE_SESSIONS', 5);
+    const active = await this.prisma.staffSession.findMany({
+      where: { userId, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (active.length >= maxSessions) {
+      await this.prisma.staffSession.updateMany({
+        where: { id: { in: active.slice(maxSessions - 1).map((session) => session.id) } },
+        data: { revokedAt: new Date(), revokedReason: 'active_session_limit' },
+      });
+    }
+
+    const sessionToken = this.generateSessionToken();
+    const session = await this.prisma.staffSession.create({
+      data: {
+        tokenHash: this.hashSessionToken(sessionToken),
+        userId,
+        expiresAt: this.buildSessionExpiry(),
+        lastSeenAt: new Date(),
+        createdIp: this.normalizeAuditField(auditContext?.ipAddress),
+        createdUserAgent: this.normalizeAuditField(auditContext?.userAgent),
+        lastSeenIp: this.normalizeAuditField(auditContext?.ipAddress),
+        lastSeenUserAgent: this.normalizeAuditField(auditContext?.userAgent),
+        deviceIdHash: auditContext?.deviceId ? this.hashSessionToken(auditContext.deviceId) : null,
+        deviceFingerprintHash: this.hashDeviceFingerprint(auditContext),
+        authMethod,
+        mfaVerifiedAt: mfaVerified ? new Date() : null,
+      },
+    });
+    return { sessionToken, session };
+  }
+
+  private hashDeviceFingerprint(auditContext?: SessionAuditContext): string | null {
+    const value = `${auditContext?.ipAddress || ''}|${auditContext?.userAgent || ''}`;
+    return value === '|' ? null : createHash('sha256').update(value).digest('hex');
+  }
+
+  private readPositiveIntEnv(name: string, fallback: number): number {
+    const parsed = Number.parseInt(process.env[name] || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private readBooleanEnv(name: string, fallback: boolean): boolean {
+    const value = process.env[name]?.trim().toLowerCase();
+    if (!value) return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(value);
   }
 
   private shouldTouchSession(

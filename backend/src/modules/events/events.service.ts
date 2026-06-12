@@ -1,9 +1,9 @@
 // backend/src/modules/events/events.service.ts
 // Domain event helpers for encounter-centric events.
 
-import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import { EncounterEvent, EventType, Prisma } from '@prisma/client';
-import { Observable, Subject, filter } from 'rxjs';
+import { Observable } from 'rxjs';
 
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,6 +16,7 @@ import {
   AlertAcknowledgedPayload,
   AlertResolvedPayload,
 } from '../realtime/realtime.events';
+import { PatientRealtimeService } from './patient-realtime.service';
 
 export type EncounterEventActor = {
   actorUserId?: number;
@@ -33,13 +34,13 @@ export type EmitEncounterEventArgs = {
 @Injectable()
 export class EventsService {
   private readonly logger = new Logger(EventsService.name);
-  private readonly encounterEvents$ = new Subject<EncounterEvent>();
 
   constructor(
     @Inject(forwardRef(() => RealtimeGateway))
     private readonly realtime: RealtimeGateway,
     private readonly loggingService: LoggingService,
     private readonly prisma: PrismaService,
+    private readonly patientRealtime: PatientRealtimeService,
   ) {
     this.logger.log('EventsService initialized');
   }
@@ -217,7 +218,7 @@ export class EventsService {
           eventType: event.type,
         },
       );
-      this.encounterEvents$.next(event);
+      await this.patientRealtime.publish(event);
       return true;
     } catch (error) {
       await this.loggingService.error(
@@ -244,17 +245,32 @@ export class EventsService {
       return true;
     }
 
-    const dispatched = await this.dispatchEncounterEvent(event);
-    if (!dispatched) {
+    try {
+      const dispatched = await this.dispatchEncounterEvent(event);
+      if (!dispatched) {
+        return false;
+      }
+
+      await this.prisma.encounterEvent.updateMany({
+        where: { id: event.id, processedAt: null },
+        data: { processedAt: new Date() },
+      });
+
+      return true;
+    } catch (error) {
+      await this.loggingService.error(
+        'Event was dispatched but could not be marked processed',
+        {
+          service: 'EventsService',
+          operation: 'dispatchEncounterEventAndMarkProcessed',
+          eventId: event.id,
+          encounterId: event.encounterId,
+          hospitalId: event.hospitalId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
       return false;
     }
-
-    await this.prisma.encounterEvent.updateMany({
-      where: { id: event.id, processedAt: null },
-      data: { processedAt: new Date() },
-    });
-
-    return true;
   }
 
   async dispatchEncounterEventById(eventId: number): Promise<boolean> {
@@ -272,8 +288,41 @@ export class EventsService {
   }
 
   observeEncounterEvents(encounterId: number): Observable<EncounterEvent> {
-    return this.encounterEvents$
-      .asObservable()
-      .pipe(filter((event) => event.encounterId === encounterId));
+    return this.patientRealtime.observe(encounterId);
+  }
+
+  listDeadLetters(hospitalId: number, limit = 100) {
+    return this.prisma.encounterEvent.findMany({
+      where: { hospitalId, deadLetteredAt: { not: null } },
+      orderBy: { deadLetteredAt: 'desc' },
+      take: Math.min(Math.max(limit, 1), 500),
+      select: {
+        id: true,
+        type: true,
+        encounterId: true,
+        hospitalId: true,
+        createdAt: true,
+        attemptCount: true,
+        lastError: true,
+        deadLetteredAt: true,
+      },
+    });
+  }
+
+  async requeueDeadLetter(hospitalId: number, eventId: number): Promise<{ ok: true }> {
+    const updated = await this.prisma.encounterEvent.updateMany({
+      where: { id: eventId, hospitalId, deadLetteredAt: { not: null }, processedAt: null },
+      data: {
+        deadLetteredAt: null,
+        claimedAt: null,
+        claimToken: null,
+        attemptCount: 0,
+        lastError: null,
+      },
+    });
+    if (updated.count !== 1) {
+      throw new NotFoundException('Dead-letter event not found');
+    }
+    return { ok: true };
   }
 }

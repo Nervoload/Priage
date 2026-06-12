@@ -23,6 +23,10 @@ const { PrismaClient } = require('@prisma/client');
 const { Pool } = require('pg');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { resolveHospitalActors, resolveTargetHospital } = require('./lib/seed-support');
+const {
+  generatePatientSessionToken,
+  hashPatientSessionToken,
+} = require('./lib/session-cookies');
 
 const connectionString =
   process.env.DATABASE_URL || 'postgresql://priage:priage@localhost:5432/priage';
@@ -477,7 +481,7 @@ async function seed() {
       if (!existingSession) {
         await prisma.patientSession.create({
           data: {
-            token: randomUUID(),
+            token: hashPatientSessionToken(generatePatientSessionToken()),
             patientId: patient.id,
             expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           },
@@ -502,7 +506,7 @@ async function seed() {
       if (!existingSession) {
         await prisma.patientSession.create({
           data: {
-            token: randomUUID(),
+            token: hashPatientSessionToken(generatePatientSessionToken()),
             patientId: patient.id,
             encounterId: encounter.id,
             expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
@@ -602,7 +606,7 @@ async function seed() {
     if (!existingSession) {
       await prisma.patientSession.create({
         data: {
-          token: randomUUID(),
+          token: hashPatientSessionToken(generatePatientSessionToken()),
           patientId: patient.id,
           encounterId: encounter.id,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),

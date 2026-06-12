@@ -57,7 +57,10 @@ enum AssetContext {
 }
 
 enum AssetStatus {
+  QUARANTINED
   READY
+  DELETE_PENDING
+  REJECTED
   DELETED
 }
 
@@ -79,11 +82,15 @@ enum LogRecordLevel {
 }
 
 enum SensitiveReadResource {
+  ENCOUNTER_LIST
   ENCOUNTER_DETAIL
+  HOSPITAL_QUEUE
   PATIENT_PROFILE
   MESSAGE_THREAD
   TRIAGE_ASSESSMENT
   ASSET_CONTENT
+  ALERT
+  BREAK_GLASS
 }
 
 enum EventType {
@@ -213,6 +220,8 @@ model Encounter {
   partnerReferences PartnerReference[]
   commandResults    CommandResult[]
   readCursors       EncounterReadCursor[]
+  staffAccess       StaffEncounterAccess[]
+  breakGlassAccess  BreakGlassAccess[]
 
 
   // Tenant-hardening: enables compound FKs from child tables
@@ -237,6 +246,11 @@ model EncounterEvent {
 
   // Optional “outbox processing” 
   processedAt DateTime?
+  claimedAt DateTime?
+  claimToken String?
+  attemptCount Int @default(0)
+  lastError String?
+  deadLetteredAt DateTime?
 
   // Tenant-safe encounter link
   encounterId Int
@@ -246,6 +260,8 @@ model EncounterEvent {
   @@index([encounterId, createdAt])
   @@index([hospitalId, createdAt])
   @@index([processedAt])
+  @@index([deadLetteredAt, processedAt, createdAt])
+  @@index([claimedAt])
 }
 
 //---------------------------------------------------------------------//
@@ -257,6 +273,10 @@ model User {
   password  String
   role      Role     @default(STAFF)
   createdAt DateTime @default(now())
+  mfaEnabled Boolean @default(false)
+  mfaSecretEncrypted String?
+  ssoIssuer String?
+  ssoSubject String?
 
   hospital   Hospital @relation(fields: [hospitalId], references: [id])
   hospitalId Int
@@ -268,8 +288,12 @@ model User {
   readCursors        EncounterReadCursor[]
   assets             Asset[]
   staffSessions      StaffSession[]
+  encounterAccess    StaffEncounterAccess[] @relation("care_team_user")
+  grantedEncounterAccess StaffEncounterAccess[] @relation("care_team_granted_by")
+  breakGlassAccess   BreakGlassAccess[]
 
   @@unique([hospitalId, email])
+  @@unique([ssoIssuer, ssoSubject])
   @@index([hospitalId, role])
 }
 
@@ -285,6 +309,10 @@ model StaffSession {
   createdUserAgent String?
   lastSeenIp String?
   lastSeenUserAgent String?
+  deviceIdHash String?
+  deviceFingerprintHash String?
+  authMethod String @default("password")
+  mfaVerifiedAt DateTime?
 
   userId Int
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -292,6 +320,45 @@ model StaffSession {
   @@index([userId, createdAt])
   @@index([expiresAt])
   @@index([revokedAt])
+  @@index([deviceIdHash])
+}
+
+model StaffEncounterAccess {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+  reason      String?
+
+  encounterId Int
+  hospitalId  Int
+  encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  userId      Int
+  user        User @relation("care_team_user", fields: [userId], references: [id], onDelete: Cascade)
+
+  grantedByUserId Int
+  grantedBy       User @relation("care_team_granted_by", fields: [grantedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([encounterId, userId])
+  @@index([hospitalId, userId, expiresAt])
+}
+
+model BreakGlassAccess {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  reason      String
+  correlationId String?
+
+  encounterId Int
+  hospitalId  Int
+  encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  userId      Int
+  user        User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([encounterId, userId, expiresAt])
+  @@index([hospitalId, createdAt])
 }
 
 model Hospital {
@@ -567,7 +634,7 @@ model Asset {
   // Store pointers/metadata, not the binary.
   kind             AssetKind    @default(IMAGE)
   context          AssetContext
-  status           AssetStatus  @default(READY)
+  status           AssetStatus  @default(QUARANTINED)
   storageKey       String
   storageProvider  AssetStorageProvider @default(LOCAL)
   storageBucket    String?
@@ -578,6 +645,9 @@ model Asset {
   archivedAt       DateTime?
   deletedAt        DateTime?
   scanStatus       String @default("NOT_SCANNED")
+  scanDetail       String?
+  deletionAttempts Int @default(0)
+  deletionLastError String?
   encryption       String?
   originalFilename String
   mimeType         String
@@ -872,7 +942,9 @@ model ErrorReportSnapshot {
   logCount        Int
   payload         Json
   createdByUserId Int?
+  hospitalId      Int?
 
   @@index([correlationId, generatedAt])
+  @@index([hospitalId, generatedAt])
   @@index([generatedAt])
 }

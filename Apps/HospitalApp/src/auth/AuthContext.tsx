@@ -23,7 +23,7 @@ interface AuthContextValue {
   /** Refresh the current user from the backend session. */
   refreshUser: () => Promise<AuthUser | null>;
   /** Log in with email + password. Throws on failure. */
-  login: (email: string, password: string) => Promise<LoginResponse>;
+  login: (email: string, password: string, mfaCode?: string) => Promise<LoginResponse>;
   /** Log out and clear all auth state. */
   logout: () => void;
 }
@@ -76,10 +76,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string, mfaCode?: string) => {
     setLoggingIn(true);
     try {
-      const result = await apiLogin(email, password);
+      const result = await apiLogin(email, password, mfaCode);
       // Map the login response user shape → AuthUser shape
       setUser({
         userId: result.user.id,

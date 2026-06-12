@@ -5,10 +5,14 @@ import { Module, forwardRef } from '@nestjs/common';
 
 import { RealtimeModule } from '../realtime/realtime.module';
 import { EventsService } from './events.service';
+import { RedisModule } from '../redis/redis.module';
+import { PatientRealtimeService } from './patient-realtime.service';
+import { EventsAdminController } from './events-admin.controller';
 
 @Module({
-  providers: [EventsService],
-  imports: [forwardRef(() => RealtimeModule)],
-  exports: [EventsService],
+  controllers: [EventsAdminController],
+  providers: [EventsService, PatientRealtimeService],
+  imports: [forwardRef(() => RealtimeModule), RedisModule],
+  exports: [EventsService, PatientRealtimeService],
 })
 export class EventsModule {}

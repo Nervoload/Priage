@@ -114,6 +114,10 @@ type MessageSendAck =
   | { ok: true; message: Message }
   | { ok: false; error: { code: string; message: string } };
 
+type EncounterSubscribeAck =
+  | { ok: true; subscribedEncounterIds: number[] }
+  | { ok: false; error: { code: string; message: string } };
+
 async function ensureConnected(socket: Socket): Promise<void> {
   if (socket.connected) {
     return;
@@ -142,6 +146,21 @@ export function connectSocket(): void {
   if (!socket.connected) {
     socket.connect();
   }
+}
+
+export async function subscribeToEncounterRealtime(encounterIds: number[]): Promise<number[]> {
+  const socket = getSocket();
+  await ensureConnected(socket);
+  const ack = await new Promise<EncounterSubscribeAck>((resolve, reject) => {
+    const handleDisconnect = () => reject(new Error('Socket disconnected before subscription acknowledgement'));
+    socket.emit('encounters.subscribe', { encounterIds }, (response: EncounterSubscribeAck) => {
+      socket.off('disconnect', handleDisconnect);
+      resolve(response);
+    });
+    socket.once('disconnect', handleDisconnect);
+  });
+  if (!ack.ok) throw new Error(ack.error.message);
+  return ack.subscribedEncounterIds;
 }
 
 export async function sendMessageViaSocket(

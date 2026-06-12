@@ -8,6 +8,7 @@ import type {
   Message,
   QueueInfo,
 } from '../types/domain';
+import { sendDurablePatientCommand } from '../patientCommandOutbox';
 
 // ─── Encounters ─────────────────────────────────────────────────────────────
 
@@ -28,9 +29,7 @@ export async function getQueueInfo(id: number): Promise<QueueInfo> {
 
 /** POST /patient/encounters/:id/cancel — cancel own encounter */
 export async function cancelMyEncounter(id: number): Promise<Encounter> {
-  return client<Encounter>(`/patient/encounters/${id}/cancel`, {
-    method: 'POST',
-  });
+  return sendDurablePatientCommand<Encounter>(`/patient/encounters/${id}/cancel`, 'POST', {});
 }
 
 // ─── Messaging ──────────────────────────────────────────────────────────────
@@ -62,12 +61,12 @@ export async function listMyMessages(
 export async function sendPatientMessage(
   encounterId: number,
   content: string,
-  isWorsening = false,
-  idempotencyKey?: string,
+  isWorsening: boolean,
+  idempotencyKey: string,
 ): Promise<Message> {
   return client<Message>(`/patient/encounters/${encounterId}/messages`, {
     method: 'POST',
-    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({ content, isWorsening }),
   });
 }

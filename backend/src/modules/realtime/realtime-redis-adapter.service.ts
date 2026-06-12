@@ -71,9 +71,13 @@ export class RealtimeRedisAdapterService implements OnModuleInit, OnModuleDestro
     await this.initialized;
 
     if (!this.pubClient || !this.subClient) {
-      this.logger.warn('Socket.IO Redis adapter not available — using default in-memory adapter');
+      const message = 'Socket.IO Redis adapter not available';
+      if ((process.env.NODE_ENV || '').trim().toLowerCase() === 'production') {
+        throw new Error(message);
+      }
+      this.logger.warn(`${message} — using default in-memory adapter`);
       await this.loggingService.warn(
-        'Socket.IO Redis adapter not available — using default in-memory adapter',
+        `${message} — using default in-memory adapter`,
         {
           service: 'RealtimeRedisAdapterService',
           operation: 'attach',

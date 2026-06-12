@@ -12,11 +12,15 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { ListMessagesQueryDto } from './dto/list-messages.query.dto';
 import { MessagingService } from './messaging.service';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
 
 @Controller('messaging')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class MessagingController {
-  constructor(private readonly messagingService: MessagingService) {}
+  constructor(
+    private readonly messagingService: MessagingService,
+    private readonly clinicalAccess: ClinicalAccessService,
+  ) {}
 
   @Get('encounters/:encounterId/messages')
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
@@ -24,8 +28,9 @@ export class MessagingController {
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Query() query: ListMessagesQueryDto,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, encounterId);
     return this.messagingService.listMessages(
       encounterId,
       user.hospitalId,
@@ -45,8 +50,9 @@ export class MessagingController {
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Body() dto: CreateMessageDto,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, encounterId);
     return this.messagingService.createMessage(
       encounterId,
       user.hospitalId,
@@ -61,8 +67,9 @@ export class MessagingController {
   async markRead(
     @Param('messageId', ParseIntPipe) messageId: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalMessageAccess(user, messageId);
     return this.messagingService.markMessageRead(messageId, user.hospitalId, user.userId, req.correlationId);
   }
 
@@ -71,8 +78,9 @@ export class MessagingController {
   async getReadState(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Req() req: Request,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, encounterId);
     return this.messagingService.getEncounterReadState(
       encounterId,
       user.hospitalId,

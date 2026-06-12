@@ -1,0 +1,2 @@
+-- RenameIndex
+ALTER INDEX "IdempotencyRecord_partnerCredentialId_command_idempotencyKey_ke" RENAME TO "IdempotencyRecord_partnerCredentialId_command_idempotencyKe_key";

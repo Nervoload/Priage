@@ -63,7 +63,10 @@ async function timedFetch(url, options) {
 
 async function runLiveLoadChecks() {
   const baseUrl = process.env.LOAD_TEST_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
-  const patientToken = requireEnv('LOAD_TEST_PATIENT_TOKEN');
+  const patientTokens = (process.env.LOAD_TEST_PATIENT_TOKENS || requireEnv('LOAD_TEST_PATIENT_TOKEN'))
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
   const encounterId = requireEnv('LOAD_TEST_ENCOUNTER_ID');
   const concurrency = Number.parseInt(process.env.LOAD_TEST_CONCURRENCY || '500', 10);
   const durationMs = Number.parseInt(process.env.LOAD_TEST_DURATION_MS || '15000', 10);
@@ -87,7 +90,12 @@ async function runLiveLoadChecks() {
       requests += 1;
       try {
         const result = await timedFetch(`${baseUrl}${route}`, {
-          headers: { 'x-patient-token': patientToken },
+          headers: {
+            Cookie: `priage_patient_session=${patientTokens[workerId % patientTokens.length]}`,
+            ...(process.env.LOAD_TEST_GATEWAY_TOKEN
+              ? { 'x-priage-gateway-token': process.env.LOAD_TEST_GATEWAY_TOKEN }
+              : {}),
+          },
         });
         latencies.push(result.durationMs);
         if (result.status >= 500 || result.status === 429) {
@@ -116,6 +124,31 @@ async function runLiveLoadChecks() {
 
   assert.ok(errorRate <= maxErrorRate, `error rate ${errorRate} exceeds ${maxErrorRate}`);
   assert.ok(p95Ms <= maxP95Ms, `p95 ${p95Ms}ms exceeds ${maxP95Ms}ms`);
+
+  if (process.env.LOAD_TEST_STAFF_TOKEN || process.env.LOAD_TEST_STAFF_COOKIE) {
+    await runSocketStorm(baseUrl, process.env.LOAD_TEST_STAFF_TOKEN, process.env.LOAD_TEST_STAFF_COOKIE);
+  }
+}
+
+async function runSocketStorm(baseUrl, staffToken, staffCookie) {
+  const { io } = require('socket.io-client');
+  const connectionCount = Number.parseInt(process.env.LOAD_TEST_SOCKET_CONNECTIONS || '100', 10);
+  const sockets = Array.from({ length: connectionCount }, () => io(baseUrl, {
+    transports: ['websocket'],
+    auth: staffToken ? { token: staffToken } : undefined,
+    extraHeaders: staffCookie ? { Cookie: staffCookie } : undefined,
+    reconnection: false,
+    timeout: 5000,
+  }));
+  await Promise.all(sockets.map((socket) => new Promise((resolve) => {
+    socket.once('connect', () => resolve());
+    socket.once('connect_error', () => resolve());
+    setTimeout(resolve, 6000);
+  })));
+  const connected = sockets.filter((socket) => socket.connected).length;
+  sockets.forEach((socket) => socket.disconnect());
+  console.log(JSON.stringify({ socketAttempts: connectionCount, socketConnected: connected }));
+  assert.ok(connected <= Number.parseInt(process.env.SOCKET_CONNECTIONS_PER_USER || '5', 10));
 }
 
 check('patient encounter workspace uses SSE plus slower fallback polling', () => {
@@ -134,11 +167,50 @@ check('patient messages page avoids 5 second active-thread polling', () => {
   assert.ok(source.includes('flushPatientMessageOutbox'), 'Messages page should drain queued sends');
 });
 
-check('hospital encounter realtime refetches are debounced', () => {
+check('hospital encounter realtime applies per-encounter deltas with full-refetch fallback', () => {
   const source = read('Apps/HospitalApp/src/app/HospitalApp.tsx');
+  const socket = read('Apps/HospitalApp/src/shared/realtime/socket.ts');
+  const gateway = read('backend/src/modules/realtime/realtime.gateway.ts');
+  assert.ok(source.includes('applyEncounterDelta'), 'Hospital app should apply encounter deltas');
+  assert.ok(source.includes('getEncounter(encounterId)'), 'Hospital app should fetch only the changed encounter');
+  assert.ok(source.includes('subscribeToEncounterRealtime'), 'Hospital app should subscribe to assigned encounter deltas');
+  assert.ok(socket.includes("'encounters.subscribe'"), 'Socket client should request encounter subscriptions');
+  assert.ok(gateway.includes("SubscribeMessage('encounters.subscribe')"), 'Socket server should authorize encounter subscriptions');
+  assert.ok(gateway.includes('SOCKET_ENCOUNTER_SUBSCRIPTION_CAP'), 'Socket encounter subscriptions should be capped');
   assert.ok(source.includes('scheduleFetchEncounters'), 'Hospital app should schedule encounter refetches');
   assert.ok(source.includes('encounterRefreshTimer'), 'Hospital app should keep one pending refetch timer');
   assert.ok(source.includes('window.clearTimeout'), 'Hospital app should clear stale refetch timers');
+});
+
+check('legacy enroute paths use SSE and do not retain 5/10 second polling', () => {
+  const enroute = read('Apps/PatientApp/src/features/enroute/Enroute.tsx');
+  const panel = read('Apps/PatientApp/src/features/enroute/MessagePanel.tsx');
+  assert.ok(enroute.includes('new EventSource'));
+  assert.ok(extractNumericConstant(enroute, 'ENCOUNTER_FALLBACK_POLL_MS') >= 60_000);
+  assert.ok(extractNumericConstant(enroute, 'MESSAGES_FALLBACK_POLL_MS') >= 30_000);
+  assert.ok(!panel.includes('}, 5000)'));
+});
+
+check('patient realtime is Redis-distributed and event processing is claimed with a dead-letter path', () => {
+  const realtime = read('backend/src/modules/events/patient-realtime.service.ts');
+  const processor = read('backend/src/modules/jobs/processors/events.processor.ts');
+  assert.ok(realtime.includes("subscribe(CHANNEL)"));
+  assert.ok(realtime.includes('publisher.publish'));
+  assert.ok(realtime.includes('PATIENT_SSE_CONNECTIONS_PER_PATIENT'));
+  assert.ok(read('backend/src/modules/encounters/patient-encounters.controller.ts').includes('reservePatientConnection'));
+  assert.ok(processor.includes('FOR UPDATE SKIP LOCKED'));
+  assert.ok(processor.includes('claimToken'));
+  assert.ok(processor.includes('deadLetteredAt'));
+  assert.ok(read('backend/src/modules/events/events-admin.controller.ts').includes('dead-letters/:id/requeue'));
+  assert.ok(read('backend/src/modules/health/health.service.ts').includes('oldestPendingAgeSeconds'));
+});
+
+check('encounter lists use bounded cursor pagination', () => {
+  const dto = read('backend/src/modules/encounters/dto/list-encounters.query.dto.ts');
+  const service = read('backend/src/modules/encounters/encounters.service.ts');
+  assert.ok(dto.includes('cursor?: number'));
+  assert.ok(dto.includes('@Max(100)'));
+  assert.ok(service.includes('nextCursor'));
 });
 
 check('patient realtime endpoint verifies encounter ownership before streaming', () => {

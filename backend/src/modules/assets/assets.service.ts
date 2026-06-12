@@ -24,6 +24,7 @@ import {
   ASSET_MAX_FILE_SIZE_BYTES,
 } from './assets.constants';
 import { readImageMetadata } from './image-metadata.util';
+import { AssetScanService } from './asset-scan.service';
 
 type UploadedImageFile = {
   buffer: Buffer;
@@ -58,6 +59,7 @@ export class AssetsService {
     private readonly storage: AssetStorageService,
     private readonly loggingService: LoggingService,
     private readonly sensitiveReadAudit: SensitiveReadAuditService,
+    private readonly scanner: AssetScanService,
   ) {}
 
   async uploadIntakeImagesForSession(
@@ -335,7 +337,12 @@ export class AssetsService {
     return updatedAssets.map((asset) => mapAssetSummary(asset, audience));
   }
 
-  async listEncounterAssets(encounterId: number, hospitalId: number): Promise<AssetSummaryDto[]> {
+  async listEncounterAssets(
+    encounterId: number,
+    hospitalId: number,
+    actorUserId?: number,
+    correlationId?: string,
+  ): Promise<AssetSummaryDto[]> {
     const encounter = await this.prisma.encounter.findUnique({
       where: {
         id_hospitalId: {
@@ -359,6 +366,17 @@ export class AssetsService {
       select: assetSummarySelect,
       orderBy: { createdAt: 'asc' },
     });
+
+    if (actorUserId) {
+      await this.sensitiveReadAudit.record({
+        resource: 'ASSET_CONTENT',
+        actorUserId,
+        hospitalId,
+        encounterId,
+        correlationId,
+        metadata: { action: 'LIST', count: assets.length },
+      });
+    }
 
     return assets.map((asset) => mapAssetSummary(asset, 'staff'));
   }
@@ -390,12 +408,26 @@ export class AssetsService {
     await this.prisma.asset.update({
       where: { id: assetId },
       data: {
-        status: AssetStatus.DELETED,
-        deletedAt: new Date(),
+        status: AssetStatus.DELETE_PENDING,
       },
     });
 
-    await this.storage.delete(asset.storageKey);
+    try {
+      await this.storage.delete(asset.storageKey);
+      await this.prisma.asset.update({
+        where: { id: assetId },
+        data: { status: AssetStatus.DELETED, deletedAt: new Date(), deletionLastError: null },
+      });
+    } catch (error) {
+      await this.prisma.asset.update({
+        where: { id: assetId },
+        data: {
+          deletionAttempts: { increment: 1 },
+          deletionLastError: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+        },
+      });
+      throw error;
+    }
 
     return { ok: true };
   }
@@ -520,19 +552,28 @@ export class AssetsService {
         bucket: context.context === AssetContext.INTAKE_IMAGE ? 'intake' : 'messages',
         mimeType: file.mimetype,
       });
+      let activeStorageKey = stored.storageKey;
 
       try {
+        const scan = await this.scanner.scan(file.buffer, file.mimetype);
+        if (!scan.clean) {
+          await this.storage.delete(stored.storageKey);
+          throw new BadRequestException('Uploaded asset was rejected by malware scanning');
+        }
+        activeStorageKey = await this.storage.promoteFromQuarantine(stored.storageKey);
         const asset = await this.prisma.asset.create({
           data: {
             context: context.context,
-            storageKey: stored.storageKey,
+            storageKey: activeStorageKey,
             storageProvider: stored.storageProvider,
             storageBucket: stored.storageBucket,
             storageRegion: stored.storageRegion,
             storageEndpoint: stored.storageEndpoint,
             accessMode: stored.accessMode,
             retainedUntil: stored.retainedUntil,
-            scanStatus: 'NOT_SCANNED',
+            status: AssetStatus.READY,
+            scanStatus: 'CLEAN',
+            scanDetail: scan.detail,
             encryption: stored.encryption,
             originalFilename: file.originalname || 'upload',
             mimeType: file.mimetype,
@@ -552,7 +593,10 @@ export class AssetsService {
 
         createdAssets.push(mapAssetSummary(asset, audience));
       } catch (error) {
-        await this.storage.delete(stored.storageKey);
+        await this.storage.delete(activeStorageKey);
+        if (activeStorageKey !== stored.storageKey) {
+          await this.storage.delete(stored.storageKey);
+        }
         throw error;
       }
     }
@@ -575,6 +619,35 @@ export class AssetsService {
     );
 
     return createdAssets;
+  }
+
+  async reconcilePendingDeletes(limit = 100): Promise<{ processed: number; failed: number }> {
+    const assets = await this.prisma.asset.findMany({
+      where: { status: AssetStatus.DELETE_PENDING },
+      orderBy: { updatedAt: 'asc' },
+      take: Math.min(Math.max(limit, 1), 500),
+      select: { id: true, storageKey: true },
+    });
+    let failed = 0;
+    for (const asset of assets) {
+      try {
+        await this.storage.delete(asset.storageKey);
+        await this.prisma.asset.update({
+          where: { id: asset.id },
+          data: { status: AssetStatus.DELETED, deletedAt: new Date(), deletionLastError: null },
+        });
+      } catch (error) {
+        failed += 1;
+        await this.prisma.asset.update({
+          where: { id: asset.id },
+          data: {
+            deletionAttempts: { increment: 1 },
+            deletionLastError: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+          },
+        });
+      }
+    }
+    return { processed: assets.length, failed };
   }
 
   private validateFiles(files: UploadedImageFile[]): void {

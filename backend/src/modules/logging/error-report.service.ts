@@ -48,7 +48,7 @@ type LoggingPrismaClient = PrismaService & {
   };
   errorReportSnapshot: {
     create(args: unknown): Promise<unknown>;
-    findUnique(args: unknown): Promise<ErrorReportSnapshotRow | null>;
+    findFirst(args: unknown): Promise<ErrorReportSnapshotRow | null>;
   };
 };
 
@@ -65,13 +65,13 @@ export class ErrorReportService {
     this.logger.log('ErrorReportService initialized');
   }
 
-  async generateReport(correlationId: string, createdByUserId?: number): Promise<ErrorReport> {
+  async generateReport(correlationId: string, createdByUserId?: number, hospitalId?: number): Promise<ErrorReport> {
     this.logger.log({
       message: 'Generating error report',
       correlationId,
     });
 
-    const logs = await this.getLogsForCorrelation(correlationId);
+    const logs = await this.getLogsForCorrelation(correlationId, hospitalId);
     if (logs.length === 0) {
       throw new Error(`No logs found for correlation ID: ${correlationId}`);
     }
@@ -87,7 +87,7 @@ export class ErrorReportService {
       errorChain: this.buildErrorChain(errorLogs),
       affectedServices: this.getAffectedServices(logs),
       failurePoint: this.identifyFailurePoint(errorLogs),
-      systemMetrics: await this.captureSystemMetrics(),
+      systemMetrics: await this.captureSystemMetrics(hospitalId),
       requestContext: this.extractRequestContext(logs),
       userAction: this.extractUserAction(logs),
       logs,
@@ -103,6 +103,7 @@ export class ErrorReportService {
         logCount: logs.length,
         payload: this.serializeReport(report),
         createdByUserId,
+        hospitalId,
       },
     });
 
@@ -117,9 +118,9 @@ export class ErrorReportService {
     return report;
   }
 
-  async getReport(reportId: string): Promise<ErrorReport | null> {
-    const snapshot = await this.getLoggingPrisma().errorReportSnapshot.findUnique({
-      where: { reportId },
+  async getReport(reportId: string, hospitalId?: number): Promise<ErrorReport | null> {
+    const snapshot = await this.getLoggingPrisma().errorReportSnapshot.findFirst({
+      where: { reportId, hospitalId },
     });
 
     if (!snapshot) {
@@ -129,8 +130,8 @@ export class ErrorReportService {
     return this.deserializeReport(snapshot.payload as ErrorReportPayload);
   }
 
-  async exportReport(reportId: string): Promise<ErrorReportExport> {
-    const report = await this.getReport(reportId);
+  async exportReport(reportId: string, hospitalId?: number): Promise<ErrorReportExport> {
+    const report = await this.getReport(reportId, hospitalId);
     if (!report) {
       throw new Error(`Report not found: ${reportId}`);
     }
@@ -163,11 +164,11 @@ export class ErrorReportService {
     return null;
   }
 
-  private async getLogsForCorrelation(correlationId: string): Promise<LogEntry[]> {
+  private async getLogsForCorrelation(correlationId: string, hospitalId?: number): Promise<LogEntry[]> {
     await this.loggingService.flushCorrelation(correlationId);
 
     const rows = await this.getLoggingPrisma().logRecord.findMany({
-      where: { correlationId },
+      where: { correlationId, hospitalId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
@@ -231,7 +232,7 @@ export class ErrorReportService {
     };
   }
 
-  private async captureSystemMetrics(): Promise<SystemMetrics> {
+  private async captureSystemMetrics(hospitalId?: number): Promise<SystemMetrics> {
     const memory = process.memoryUsage();
     const dbMetrics: SystemMetrics['database'] = {
       connected: false,
@@ -260,9 +261,12 @@ export class ErrorReportService {
 
     try {
       const wsStats = this.realtime.getConnectionStats();
+      const scopedConnections = hospitalId === undefined
+        ? Object.fromEntries(wsStats.connectionsByHospital)
+        : { [hospitalId]: wsStats.connectionsByHospital.get(hospitalId) || 0 };
       wsMetrics = {
-        totalConnections: wsStats.totalConnections,
-        connectionsByHospital: Object.fromEntries(wsStats.connectionsByHospital),
+        totalConnections: Object.values(scopedConnections).reduce((sum, count) => sum + count, 0),
+        connectionsByHospital: scopedConnections,
       };
     } catch (error) {
       this.logger.warn({

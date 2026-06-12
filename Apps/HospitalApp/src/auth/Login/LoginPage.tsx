@@ -13,6 +13,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const { login, loggingIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -20,7 +21,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setError(null);
 
     try {
-      await login(email, password);
+      await login(email, password, mfaCode || undefined);
       onLogin?.();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 401) {
@@ -71,6 +72,19 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="mfaCode" className="block text-sm font-medium text-gray-700 mb-1">Authenticator code</label>
+            <input
+              id="mfaCode"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={mfaCode}
+              onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+              placeholder="Required when MFA is enabled"
               className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
             />
           </div>

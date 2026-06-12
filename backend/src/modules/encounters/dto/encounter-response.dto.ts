@@ -11,10 +11,10 @@ export interface EncounterPatientSummary {
   id: number;
   firstName: string | null;
   lastName: string | null;
-  phone: string | null;
-  age: number | null;
-  gender: string | null;
-  preferredLanguage: string;
+  phone?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  preferredLanguage?: string;
 }
 
 export interface PriagePreviewDto {
@@ -49,11 +49,11 @@ export interface EncounterSummaryDto {
   createdAt: Date;
   updatedAt: Date;
   status: EncounterStatus;
-  chiefComplaint: string | null;
+  chiefComplaint?: string | null;
   hospitalId: number;
   patientId: number;
-  currentCtasLevel: number | null;
-  currentPriorityScore: number | null;
+  currentCtasLevel?: number | null;
+  currentPriorityScore?: number | null;
 
   // Pipeline timestamps
   expectedAt: Date | null;
@@ -65,8 +65,8 @@ export interface EncounterSummaryDto {
     id: number;
     firstName: string | null;
     lastName: string | null;
-    phone: string | null;
-    age: number | null;
+    phone?: string | null;
+    age?: number | null;
   };
 
   priagePreview?: PriagePreviewDto | null;
@@ -75,18 +75,18 @@ export interface EncounterSummaryDto {
 // ─── Staff-facing encounter detail ───────────────────────────────────────────
 
 export interface EncounterDetailDto extends EncounterSummaryDto {
-  details: string | null;
+  details?: string | null;
 
   seenAt: Date | null;
   departedAt: Date | null;
   cancelledAt: Date | null;
 
   patient: EncounterPatientSummary & {
-    heightCm: number | null;
-    weightKg: number | null;
-    allergies: string | null;
-    conditions: string | null;
-    optionalHealthInfo: unknown;
+    heightCm?: number | null;
+    weightKg?: number | null;
+    allergies?: string | null;
+    conditions?: string | null;
+    optionalHealthInfo?: unknown;
   };
 
   triageAssessments: Array<{
@@ -136,6 +136,7 @@ export interface EncounterDetailDto extends EncounterSummaryDto {
 export interface EncounterListResponseDto {
   data: EncounterSummaryDto[];
   total: number;
+  nextCursor: number | null;
 }
 
 // ─── Patient-facing encounter view (limited) ─────────────────────────────────

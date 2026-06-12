@@ -10,6 +10,7 @@ import type {
   UpdateIntakeDetailsPayload,
   UpdateIntakeDetailsResponse,
 } from '../types/domain';
+import { sendDurablePatientCommand } from '../patientCommandOutbox';
 
 export async function createIntent(
   payload: CreateIntentPayload,
@@ -32,17 +33,11 @@ export async function createIntent(
 export async function updateIntakeDetails(
   payload: UpdateIntakeDetailsPayload,
 ): Promise<Encounter | UpdateIntakeDetailsResponse> {
-  return client<Encounter | UpdateIntakeDetailsResponse>('/intake/details', {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
+  return sendDurablePatientCommand<Encounter | UpdateIntakeDetailsResponse>('/intake/details', 'PATCH', payload);
 }
 
 export async function confirmIntent(payload: ConfirmIntentPayload): Promise<Encounter> {
-  return client<Encounter>('/intake/confirm', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return sendDurablePatientCommand<Encounter>('/intake/confirm', 'POST', payload);
 }
 
 export async function startInterview(): Promise<InterviewState> {
@@ -53,10 +48,7 @@ export async function startInterview(): Promise<InterviewState> {
 }
 
 export async function advanceInterview(payload: AdvanceInterviewPayload): Promise<InterviewState> {
-  return client<InterviewState>('/intake/interview/advance', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return sendDurablePatientCommand<InterviewState>('/intake/interview/advance', 'POST', payload);
 }
 
 export async function sendLocationPing(payload: LocationPingPayload): Promise<{ ok: boolean }> {

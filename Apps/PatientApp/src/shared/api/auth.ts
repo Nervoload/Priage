@@ -12,6 +12,7 @@ import type {
   UpgradeGuestPayload,
   PatientProfile,
 } from '../types/domain';
+import { sendDurablePatientCommand } from '../patientCommandOutbox';
 
 async function readErrorMessage(res: Response, fallback: string): Promise<string> {
   const text = await res.text().catch(() => '');
@@ -83,10 +84,7 @@ export async function getMe(): Promise<PatientProfile> {
  * Update patient profile fields.
  */
 export async function updateProfile(payload: UpdateProfilePayload): Promise<PatientProfile> {
-  return requestAuth<PatientProfile>('/patient-auth/profile', 'Failed to save profile changes', {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
+  return sendDurablePatientCommand<PatientProfile>('/patient-auth/profile', 'PATCH', payload);
 }
 
 export async function submitPatientFeedback(payload: SubmitPatientFeedbackPayload): Promise<void> {

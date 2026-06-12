@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 
 import { cancelMyEncounter, getMyEncounter, listMyMessages } from '../../shared/api/encounters';
+import { API_BASE_URL } from '../../shared/api/client';
 import { getMe, updateProfile } from '../../shared/api/auth';
 import { appendUniqueMessages, getLastMessageId } from '../../shared/messages';
 import {
@@ -29,8 +30,8 @@ import type {
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
 
-const ENCOUNTER_POLL_MS = 10_000;
-const MESSAGES_POLL_MS = 5_000;
+const ENCOUNTER_FALLBACK_POLL_MS = 60_000;
+const MESSAGES_FALLBACK_POLL_MS = 30_000;
 
 function formatHospitalName(slug: string | null | undefined): string {
   if (!slug) return 'Priage General Hospital';
@@ -200,14 +201,20 @@ export function Enroute() {
     setMessages([]);
     void refreshEncounter(true);
     void refreshMessages('replace');
+    const eventSource = new EventSource(`${API_BASE_URL}/patient/encounters/${encounterId}/events`, {
+      withCredentials: true,
+    });
+    eventSource.addEventListener('encounter.updated', () => void refreshEncounter());
+    eventSource.addEventListener('message.created', () => void refreshMessages('append'));
     const encounterTimer = setInterval(() => {
       void refreshEncounter();
-    }, ENCOUNTER_POLL_MS);
+    }, ENCOUNTER_FALLBACK_POLL_MS);
     const messageTimer = setInterval(() => {
       void refreshMessages('append');
-    }, MESSAGES_POLL_MS);
+    }, MESSAGES_FALLBACK_POLL_MS);
 
     return () => {
+      eventSource.close();
       clearInterval(encounterTimer);
       clearInterval(messageTimer);
     };

@@ -9,11 +9,12 @@ import { AssetStorageService } from './asset-storage.service';
 import { AssetsController } from './assets.controller';
 import { AssetsService } from './assets.service';
 import { PatientAssetsController } from './patient-assets.controller';
+import { AssetScanService } from './asset-scan.service';
 
 @Module({
   controllers: [AssetsController, PatientAssetsController],
-  providers: [AssetsService, AssetStorageService],
+  providers: [AssetsService, AssetStorageService, AssetScanService],
   imports: [PrismaModule, LoggingModule, forwardRef(() => IntakeSessionsModule)],
-  exports: [AssetsService],
+  exports: [AssetsService, AssetStorageService],
 })
 export class AssetsModule {}

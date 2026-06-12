@@ -262,13 +262,13 @@ export class LoggingService implements OnModuleInit {
 
   async getLogsByCorrelationId(
     correlationId: string,
-    options?: { limit?: number; offset?: number },
+    options?: { limit?: number; offset?: number; hospitalId?: number },
   ): Promise<QueryResult> {
     const { limit, offset } = this.normalizePagination(options?.limit, options?.offset);
     await this.flushCorrelation(correlationId);
 
     const prisma = this.getPrismaOrThrow();
-    const where = { correlationId };
+    const where = { correlationId, hospitalId: options?.hospitalId };
 
     const [count, rows] = await prisma.$transaction([
       prisma.logRecord.count({ where }),
@@ -354,20 +354,22 @@ export class LoggingService implements OnModuleInit {
     return count > 0;
   }
 
-  async getStats() {
+  async getStats(hospitalId?: number) {
     const prisma = this.getPrismaOrThrow();
     const recentWindowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     const [totalLogs, totalReports, oldestLog, recentCounts] = await Promise.all([
-      prisma.logRecord.count(),
-      prisma.errorReportSnapshot.count(),
+      prisma.logRecord.count({ where: { hospitalId } }),
+      prisma.errorReportSnapshot.count({ where: { hospitalId } }),
       prisma.logRecord.findFirst({
+        where: { hospitalId },
         orderBy: { createdAt: 'asc' },
         select: { createdAt: true },
       }),
       prisma.logRecord.groupBy({
         by: ['level'],
         where: {
+          hospitalId,
           createdAt: {
             gte: recentWindowStart,
           },

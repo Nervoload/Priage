@@ -1,6 +1,7 @@
 import type { CookieOptions } from 'express';
 
 export const STAFF_AUTH_COOKIE = 'priage_staff_auth';
+export const STAFF_DEVICE_COOKIE = 'priage_staff_device';
 export const PATIENT_SESSION_COOKIE = 'priage_patient_session';
 
 const DEFAULT_STAFF_AUTH_TTL_MS = 8 * 60 * 60 * 1000;
@@ -63,6 +64,13 @@ export function buildClearedAuthCookieOptions(): CookieOptions {
   };
 }
 
+export function buildDeviceCookieOptions(): CookieOptions {
+  return {
+    ...buildAuthCookieOptions(365 * 24 * 60 * 60 * 1000),
+    sameSite: 'strict',
+  };
+}
+
 export function parseCookieHeader(cookieHeader?: string | string[]): Record<string, string> {
   const header = Array.isArray(cookieHeader) ? cookieHeader.join(';') : cookieHeader;
   if (!header) {
@@ -86,7 +94,11 @@ export function parseCookieHeader(cookieHeader?: string | string[]): Record<stri
       return acc;
     }
 
-    acc[key] = decodeURIComponent(value);
+    try {
+      acc[key] = decodeURIComponent(value);
+    } catch {
+      acc[key] = value;
+    }
     return acc;
   }, {});
 }

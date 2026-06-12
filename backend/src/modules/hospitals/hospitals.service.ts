@@ -15,6 +15,9 @@ import {
 } from '@prisma/client';
 
 import { LoggingService } from '../logging/logging.service';
+import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
+import { hasClinicalCapability } from '../clinical-access/clinical-access.policy';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateFeedbackSubmissionDto } from './dto/create-feedback-submission.dto';
 import { UpdateHospitalConfigDto } from './dto/update-hospital-config.dto';
@@ -29,6 +32,8 @@ export class HospitalsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly loggingService: LoggingService,
+    private readonly sensitiveReadAudit: SensitiveReadAuditService,
+    private readonly clinicalAccess: ClinicalAccessService,
   ) {}
 
   async getHospital(id: number, correlationId?: string) {
@@ -236,7 +241,11 @@ export class HospitalsService {
     return dashboard;
   }
 
-  async getQueueStatus(hospitalId: number, correlationId?: string) {
+  async getQueueStatus(
+    hospitalId: number,
+    correlationId?: string,
+    readContext?: { actorUserId: number; role: Role },
+  ) {
     this.loggingService.info('Fetching hospital queue status', {
       service: 'HospitalsService',
       operation: 'getQueueStatus',
@@ -281,11 +290,47 @@ export class HospitalsService {
       ],
     });
 
+    const canReadClinical = readContext
+      ? hasClinicalCapability(readContext.role, 'hospital.queue.clinical')
+      : true;
+    const clinicallyAccessibleIds = readContext
+      ? await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
+          { userId: readContext.actorUserId, hospitalId, role: readContext.role },
+          encounters.map((encounter) => encounter.id),
+        )
+      : new Set(encounters.map((encounter) => encounter.id));
     const queue = {
       hospitalId,
       queueLength: encounters.length,
-      encounters,
+      encounters: encounters.map((encounter) => canReadClinical && clinicallyAccessibleIds.has(encounter.id)
+        ? encounter
+        : ({
+            id: encounter.id,
+            status: encounter.status,
+            createdAt: encounter.createdAt,
+            patient: {
+              id: encounter.patient.id,
+              firstName: encounter.patient.firstName,
+              lastName: encounter.patient.lastName,
+            },
+            clinicalFieldsRedacted: true,
+          })),
     };
+
+    if (readContext) {
+      await this.sensitiveReadAudit.record({
+        resource: 'HOSPITAL_QUEUE',
+        actorUserId: readContext.actorUserId,
+        hospitalId,
+        correlationId,
+        metadata: {
+          role: readContext.role,
+          clinicalFieldsIncluded: canReadClinical,
+          clinicallyAccessibleCount: clinicallyAccessibleIds.size,
+          resultCount: encounters.length,
+        },
+      });
+    }
 
     this.loggingService.info('Hospital queue status fetched', {
       service: 'HospitalsService',

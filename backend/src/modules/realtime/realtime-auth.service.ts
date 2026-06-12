@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 
 import { AuthService } from '../auth/auth.service';
+import { readCookie, STAFF_DEVICE_COOKIE } from '../../common/http/auth-cookie.util';
 
 export type TrustedRealtimeUser = {
   userId: number;
@@ -13,8 +14,10 @@ export type TrustedRealtimeUser = {
 export class RealtimeAuthService {
   constructor(private readonly authService: AuthService) {}
 
-  async validateStaffToken(token: string): Promise<TrustedRealtimeUser> {
-    const user = await this.authService.validateSessionToken(token, undefined, undefined, {
+  async validateStaffToken(token: string, cookieHeader?: string | string[]): Promise<TrustedRealtimeUser> {
+    const user = await this.authService.validateSessionToken(token, undefined, {
+      deviceId: readCookie(cookieHeader, STAFF_DEVICE_COOKIE),
+    }, {
       touch: true,
     }).catch(() => {
       throw new UnauthorizedException('Invalid staff session');

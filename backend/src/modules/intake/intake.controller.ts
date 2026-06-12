@@ -45,7 +45,8 @@ export class IntakeController {
   ) {
     const result = await this.intakeService.createIntent(dto, req.correlationId);
     res.cookie(PATIENT_SESSION_COOKIE, result.sessionToken, buildAuthCookieOptions(PATIENT_SESSION_TTL_MS));
-    return result;
+    const { sessionToken: _, ...responseBody } = result;
+    return responseBody;
   }
 
   /**

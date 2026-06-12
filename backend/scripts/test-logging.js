@@ -12,6 +12,7 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader } = require('./lib/demo-gate');
+const { extractPatientCookieHeader } = require('./lib/session-cookies');
 const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 // Initialize Prisma with pg-adapter (Prisma 7 approach)
@@ -215,6 +216,7 @@ function buildRequestOptions(path, method = 'GET', includeAuth = false) {
     method: method,
     headers: {
       'Content-Type': 'application/json',
+      ...(!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? { Origin: CONFIG.baseUrl } : {}),
       ...(authHeaders.Authorization ? { Authorization: authHeaders.Authorization } : {}),
     },
   };
@@ -224,6 +226,15 @@ function buildRequestOptions(path, method = 'GET', includeAuth = false) {
     options.headers.Cookie = cookieHeader;
   }
   
+  return options;
+}
+
+function buildPatientRequestOptions(path, method, patientCookie, idempotencyKey) {
+  const options = buildRequestOptions(path, method, false);
+  options.headers.Cookie = [options.headers.Cookie, patientCookie].filter(Boolean).join('; ');
+  if (idempotencyKey) {
+    options.headers['Idempotency-Key'] = idempotencyKey;
+  }
   return options;
 }
 
@@ -248,9 +259,8 @@ function buildInterviewAnswer(question) {
   }
 }
 
-async function completeInterviewForPatient(sessionToken) {
-  let options = buildRequestOptions('/intake/interview/start', 'POST', false);
-  options.headers['x-patient-token'] = sessionToken;
+async function completeInterviewForPatient(patientCookie) {
+  let options = buildPatientRequestOptions('/intake/interview/start', 'POST', patientCookie);
   let response = await makeRequest(options);
   let interview = response.data;
 
@@ -266,8 +276,12 @@ async function completeInterviewForPatient(sessionToken) {
       return interview;
     }
 
-    options = buildRequestOptions('/intake/interview/advance', 'POST', false);
-    options.headers['x-patient-token'] = sessionToken;
+    options = buildPatientRequestOptions(
+      '/intake/interview/advance',
+      'POST',
+      patientCookie,
+      `logging-interview-${randomUUID()}`,
+    );
 
     if (interview?.status === 'emergency_ack_required') {
       response = await makeRequest(options, { action: 'acknowledge_emergency' });
@@ -1079,7 +1093,7 @@ async function testNewServicesLogging() {
   
   // Test 8A: Intake service - Create intent
   logInfo('Test 8A: Testing intake service logging - create intent...');
-  let sessionToken = null;
+  let patientCookie = null;
   try {
     const options = buildRequestOptions('/intake/intent', 'POST', false);
     const response = await makeRequest(options, {
@@ -1094,8 +1108,11 @@ async function testNewServicesLogging() {
     const correlationId = response.headers['x-correlation-id'];
 
     if (response.statusCode === 200 || response.statusCode === 201) {
-      sessionToken = response.data.sessionToken;
+      patientCookie = extractPatientCookieHeader(response.headers);
       testState.intakePatientId = response.data.patientId;
+      if (!patientCookie || response.data.sessionToken !== undefined) {
+        throw new Error('Patient intent did not use the expected cookie-only session response');
+      }
       logSuccess('Test 8A: Patient intent created');
       
       logPromotedCorrelationNote('Test 8A');
@@ -1109,13 +1126,17 @@ async function testNewServicesLogging() {
   await sleep(1000);
   
   // Test 8B: Intake service - Confirm intent
-  if (sessionToken) {
+  if (patientCookie) {
     logInfo('Test 8B: Testing intake service logging - confirm intent...');
     try {
-      await completeInterviewForPatient(sessionToken);
+      await completeInterviewForPatient(patientCookie);
 
-      const options = buildRequestOptions('/intake/confirm', 'POST', false);
-      options.headers['x-patient-token'] = sessionToken;
+      const options = buildPatientRequestOptions(
+        '/intake/confirm',
+        'POST',
+        patientCookie,
+        `logging-confirm-${randomUUID()}`,
+      );
       
       const response = await makeRequest(options, {
         hospitalId: testState.hospitalId,
@@ -1134,18 +1155,22 @@ async function testNewServicesLogging() {
       logError(`Test 8B: Failed - ${error.message}`);
     }
   } else {
-    logWarning('Test 8B: Skipped (no session token)');
+    logWarning('Test 8B: Skipped (no patient session cookie)');
     testState.testsSkipped++;
   }
   
   await sleep(1000);
   
   // Test 8C: Intake service - Update details
-  if (sessionToken) {
+  if (patientCookie) {
     logInfo('Test 8C: Testing intake service logging - update details...');
     try {
-      const options = buildRequestOptions('/intake/details', 'PATCH', false);
-      options.headers['x-patient-token'] = sessionToken;
+      const options = buildPatientRequestOptions(
+        '/intake/details',
+        'PATCH',
+        patientCookie,
+        `logging-details-${randomUUID()}`,
+      );
       
       const response = await makeRequest(options, {
         firstName: 'Updated',

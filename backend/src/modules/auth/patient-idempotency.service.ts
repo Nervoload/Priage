@@ -31,7 +31,7 @@ export class PatientIdempotencyService {
   ): Promise<T> {
     const idempotencyKey = this.normalizeKey(context.idempotencyKey);
     if (!idempotencyKey) {
-      return action();
+      throw new BadRequestException('Idempotency-Key is required for this patient write');
     }
 
     const requestFingerprint = this.createFingerprint(context.fingerprintInput);
@@ -101,7 +101,28 @@ export class PatientIdempotencyService {
         }
 
         if (existing.status === IdempotencyRecordStatus.IN_PROGRESS) {
-          throw new ConflictException('An identical patient request is already in progress for this idempotency key');
+          const staleAfterMs = this.readPositiveIntEnv('PATIENT_IDEMPOTENCY_STALE_AFTER_MS', 5 * 60_000);
+          if (existing.createdAt.getTime() > Date.now() - staleAfterMs) {
+            throw new ConflictException('An identical patient request is already in progress for this idempotency key');
+          }
+          const reclaimed = await this.prisma.patientIdempotencyRecord.updateMany({
+            where: {
+              id: existing.id,
+              status: IdempotencyRecordStatus.IN_PROGRESS,
+              createdAt: existing.createdAt,
+            },
+            data: {
+              status: IdempotencyRecordStatus.IN_PROGRESS,
+              completedAt: null,
+              responseStatus: null,
+              responseBody: Prisma.DbNull,
+              createdAt: new Date(),
+            },
+          });
+          if (reclaimed.count === 1) {
+            return { recordId: existing.id };
+          }
+          continue;
         }
 
         if (existing.status === IdempotencyRecordStatus.FAILED) {
@@ -179,6 +200,11 @@ export class PatientIdempotencyService {
     }
 
     return normalized;
+  }
+
+  private readPositiveIntEnv(name: string, fallback: number): number {
+    const parsed = Number.parseInt(process.env[name] || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
   private createFingerprint(value: unknown): string {

@@ -11,12 +11,15 @@ import 'dotenv/config';
 import { ValidationPipe, LogLevel } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
+import { json, urlencoded } from 'express';
 
 import { getAllowedCorsOrigins } from './common/http/cors.util';
 import { AppModule } from './app.module';
 import { CorrelationMiddleware } from './common/middleware/correlation.middleware';
+import { assertProductionConfiguration } from './common/config/production-config';
 
 async function bootstrap(): Promise<void> {
+  assertProductionConfiguration();
   // Configure log levels based on environment
   // Default: 'log', 'error', 'warn' (clean)
   // With LOG_LEVEL=debug: adds 'debug' and 'verbose'
@@ -32,7 +35,10 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create(AppModule, {
     logger: logLevels,
+    bodyParser: false,
   });
+  app.use(json({ limit: process.env.REQUEST_JSON_LIMIT || '1mb' }));
+  app.use(urlencoded({ limit: process.env.REQUEST_FORM_LIMIT || '256kb', extended: true }));
 
   // Trust the first proxy (e.g. Railway, Render, or nginx) so Express
   // sees the real client IP for rate-limiting, logging, and secure cookies.
@@ -58,7 +64,6 @@ async function bootstrap(): Promise<void> {
       'Content-Type',
       'Authorization',
       'Idempotency-Key',
-      'x-patient-token',
       'x-correlation-id',
       'x-request-id',
     ],
