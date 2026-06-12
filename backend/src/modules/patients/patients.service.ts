@@ -5,6 +5,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { EncounterStatus } from '@prisma/client';
 
 import { PaginatedResponse } from '../../common/dto/pagination.dto';
+import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListPatientsQueryDto } from './dto/list-patients.query.dto';
@@ -31,12 +32,15 @@ export class PatientsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly loggingService: LoggingService,
+    private readonly sensitiveReadAudit: SensitiveReadAuditService,
   ) {}
 
   async listPatients(
     hospitalId: number,
     query: ListPatientsQueryDto,
     correlationId?: string,
+    actorUserId?: number,
+    encounterScope: number[] | null = null,
   ): Promise<PaginatedResponse<PatientListItem>> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
@@ -58,6 +62,7 @@ export class PatientsService {
         some: {
           hospitalId,
           ...(query.status ? { status: query.status } : {}),
+          ...(encounterScope === null ? {} : { id: { in: encounterScope } }),
         },
       },
     };
@@ -75,7 +80,10 @@ export class PatientsService {
             gender: true,
             preferredLanguage: true,
             encounters: {
-              where: { hospitalId },
+              where: {
+                hospitalId,
+                ...(encounterScope === null ? {} : { id: { in: encounterScope } }),
+              },
               orderBy: { createdAt: 'desc' },
               take: 1,
               select: {
@@ -125,6 +133,22 @@ export class PatientsService {
         status: query.status,
       });
 
+      if (actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'PATIENT_PROFILE',
+          actorUserId,
+          hospitalId,
+          correlationId,
+          metadata: {
+            page,
+            limit,
+            count: data.length,
+            status: query.status ?? null,
+            careTeamScoped: encounterScope !== null,
+          },
+        });
+      }
+
       return {
         data,
         meta: {
@@ -151,7 +175,13 @@ export class PatientsService {
     }
   }
 
-  async getPatient(patientId: number, hospitalId: number, correlationId?: string) {
+  async getPatient(
+    patientId: number,
+    hospitalId: number,
+    correlationId?: string,
+    actorUserId?: number,
+    encounterScope: number[] | null = null,
+  ) {
     this.loggingService.debug('Fetching patient profile', {
       service: 'PatientsService',
       operation: 'getPatient',
@@ -178,7 +208,10 @@ export class PatientsService {
         optionalHealthInfo: true,
         createdAt: true,
         encounters: {
-          where: { hospitalId },
+          where: {
+            hospitalId,
+            ...(encounterScope === null ? {} : { id: { in: encounterScope } }),
+          },
           orderBy: { createdAt: 'desc' },
           select: {
             id: true,
@@ -221,6 +254,20 @@ export class PatientsService {
     }, {
       encounterCount: patient.encounters.length,
     });
+
+    if (actorUserId) {
+      await this.sensitiveReadAudit.record({
+        resource: 'PATIENT_PROFILE',
+        actorUserId,
+        hospitalId,
+        patientId: patient.id,
+        correlationId,
+        metadata: {
+          encounterCount: patient.encounters.length,
+          careTeamScoped: encounterScope !== null,
+        },
+      });
+    }
 
     return patient;
   }

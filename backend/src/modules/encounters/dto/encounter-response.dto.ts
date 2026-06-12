@@ -11,10 +11,35 @@ export interface EncounterPatientSummary {
   id: number;
   firstName: string | null;
   lastName: string | null;
-  phone: string | null;
-  age: number | null;
-  gender: string | null;
-  preferredLanguage: string;
+  phone?: string | null;
+  age?: number | null;
+  gender?: string | null;
+  preferredLanguage?: string;
+}
+
+export interface PriagePreviewDto {
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  progressionRiskCount: number;
+}
+
+export interface PriageSummaryQuestionAnswerDto {
+  question: string;
+  answer: string;
+  phase: string;
+  answeredAt: string;
+}
+
+export interface PriageSummaryDto {
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  caseSummary: string;
+  questionAnswers: PriageSummaryQuestionAnswerDto[];
+  progressionRisks: string[];
+  redFlags: string[];
+  recommendedAction: string;
+  generatedAt: string;
+  generationMode: 'ai' | 'fallback';
 }
 
 // ─── Staff-facing encounter list item ────────────────────────────────────────
@@ -24,11 +49,11 @@ export interface EncounterSummaryDto {
   createdAt: Date;
   updatedAt: Date;
   status: EncounterStatus;
-  chiefComplaint: string | null;
+  chiefComplaint?: string | null;
   hospitalId: number;
   patientId: number;
-  currentCtasLevel: number | null;
-  currentPriorityScore: number | null;
+  currentCtasLevel?: number | null;
+  currentPriorityScore?: number | null;
 
   // Pipeline timestamps
   expectedAt: Date | null;
@@ -40,26 +65,28 @@ export interface EncounterSummaryDto {
     id: number;
     firstName: string | null;
     lastName: string | null;
-    phone: string | null;
-    age: number | null;
+    phone?: string | null;
+    age?: number | null;
   };
+
+  priagePreview?: PriagePreviewDto | null;
 }
 
 // ─── Staff-facing encounter detail ───────────────────────────────────────────
 
 export interface EncounterDetailDto extends EncounterSummaryDto {
-  details: string | null;
+  details?: string | null;
 
   seenAt: Date | null;
   departedAt: Date | null;
   cancelledAt: Date | null;
 
   patient: EncounterPatientSummary & {
-    heightCm: number | null;
-    weightKg: number | null;
-    allergies: string | null;
-    conditions: string | null;
-    optionalHealthInfo: unknown;
+    heightCm?: number | null;
+    weightKg?: number | null;
+    allergies?: string | null;
+    conditions?: string | null;
+    optionalHealthInfo?: unknown;
   };
 
   triageAssessments: Array<{
@@ -69,6 +96,15 @@ export interface EncounterDetailDto extends EncounterSummaryDto {
     priorityScore: number;
     note: string | null;
     createdByUserId: number;
+  }>;
+
+  activityLog: Array<{
+    id: number;
+    createdAt: Date;
+    type: string;
+    actorUserId: number | null;
+    actorPatientId: number | null;
+    metadata: unknown;
   }>;
 
   messages: Array<{
@@ -83,6 +119,7 @@ export interface EncounterDetailDto extends EncounterSummaryDto {
   }>;
 
   intakeImages: AssetSummaryDto[];
+  priageSummary?: PriageSummaryDto | null;
 
   alerts: Array<{
     id: number;
@@ -99,6 +136,7 @@ export interface EncounterDetailDto extends EncounterSummaryDto {
 export interface EncounterListResponseDto {
   data: EncounterSummaryDto[];
   total: number;
+  nextCursor: number | null;
 }
 
 // ─── Patient-facing encounter view (limited) ─────────────────────────────────
@@ -127,4 +165,5 @@ export interface PatientEncounterDto {
   }>;
 
   intakeImages: AssetSummaryDto[];
+  priageSummary?: PriageSummaryDto | null;
 }

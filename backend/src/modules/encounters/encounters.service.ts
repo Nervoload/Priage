@@ -10,20 +10,45 @@
 // Auth enforced at controller layer via JwtAuthGuard/PatientGuard.
 
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AssetContext, AssetStatus, EncounterStatus, EventType, Prisma } from '@prisma/client';
+import {
+  AssetContext,
+  AssetStatus,
+  EncounterStatus,
+  EventType,
+  Prisma,
+  Role,
+  SummaryProjectionKind,
+} from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
+import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
+import { hasClinicalCapability } from '../clinical-access/clinical-access.policy';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
-import { EncounterListResponseDto, PatientEncounterDto } from './dto/encounter-response.dto';
+import { CreateAdmittanceEncounterDto } from './dto/create-admittance-encounter.dto';
+import {
+  EncounterListResponseDto,
+  EncounterDetailDto,
+  PatientEncounterDto,
+  PriagePreviewDto,
+  PriageSummaryDto,
+  PriageSummaryQuestionAnswerDto,
+} from './dto/encounter-response.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
+import { hashPatientPassword } from '../patient-auth/patient-password.util';
 
 export type EncounterActor = {
   actorUserId?: number;
   actorPatientId?: number;
+};
+
+type StaffReadContext = {
+  actorUserId: number;
+  role: Role;
 };
 
 type EncounterTransition = {
@@ -42,6 +67,7 @@ const TERMINAL_STATUSES = new Set<EncounterStatus>([
 const PRIORITY_ORDER: Prisma.EncounterOrderByWithRelationInput[] = [
   { currentPriorityScore: { sort: 'desc', nulls: 'last' } },
   { createdAt: 'asc' },
+  { id: 'asc' },
 ];
 
 const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
@@ -65,6 +91,20 @@ const encounterMessageSelect = {
     orderBy: { createdAt: 'asc' as const },
   },
 } satisfies Prisma.MessageSelect;
+
+const priageProjectionSelect = {
+  createdAt: true,
+  content: true,
+} satisfies Prisma.SummaryProjectionSelect;
+
+const encounterActivitySelect = {
+  id: true,
+  createdAt: true,
+  type: true,
+  actorUserId: true,
+  actorPatientId: true,
+  metadata: true,
+} satisfies Prisma.EncounterEventSelect;
 
 // TRANSTIONS --> changing Encounter.status throughout the lifecycle
 
@@ -114,6 +154,8 @@ export class EncountersService {
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
     private readonly loggingService: LoggingService,
+    private readonly sensitiveReadAudit: SensitiveReadAuditService,
+    private readonly clinicalAccess: ClinicalAccessService,
   ) {
     this.logger.log('EncountersService initialized');
   }
@@ -221,10 +263,152 @@ export class EncountersService {
     }
   }
 
+  async createAdmittanceEncounter(
+    hospitalId: number,
+    dto: CreateAdmittanceEncounterDto,
+    actor?: EncounterActor,
+    correlationId?: string,
+  ): Promise<EncounterDetailDto> {
+    this.loggingService.info(
+      'Creating admittance encounter with a new patient account',
+      {
+        service: 'EncountersService',
+        operation: 'createAdmittanceEncounter',
+        correlationId,
+        hospitalId,
+        email: dto.email,
+      },
+      {
+        actorUserId: actor?.actorUserId,
+        actorPatientId: actor?.actorPatientId,
+      },
+    );
+
+    try {
+      const { encounter, event } = await this.prisma.$transaction(async (tx) => {
+        const email = dto.email.trim().toLowerCase();
+        const existingPatient = await tx.patientProfile.findUnique({
+          where: { email },
+          select: { id: true },
+        });
+
+        if (existingPatient) {
+          throw new ConflictException('An account with this email already exists');
+        }
+
+        const password = await hashPatientPassword('00000');
+        const patient = await tx.patientProfile.create({
+          data: {
+            email,
+            password,
+            firstName: dto.firstName?.trim() || null,
+            lastName: dto.lastName?.trim() || null,
+            phone: dto.phone?.trim() || null,
+            age: dto.age ?? null,
+            gender: dto.gender?.trim() || null,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        const created = await tx.encounter.create({
+          data: {
+            publicId: `enc_${randomUUID()}`,
+            status: EncounterStatus.EXPECTED,
+            hospitalId,
+            patientId: patient.id,
+            chiefComplaint: dto.chiefComplaint.trim(),
+            details: dto.details?.trim() || null,
+          },
+          include: {
+            patient: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                phone: true,
+                age: true,
+                gender: true,
+                preferredLanguage: true,
+                heightCm: true,
+                weightKg: true,
+                allergies: true,
+                conditions: true,
+                optionalHealthInfo: true,
+              },
+            },
+            summaryProjections: {
+              where: {
+                active: true,
+                kind: SummaryProjectionKind.AI_DERIVED,
+              },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+              select: priageProjectionSelect,
+            },
+          },
+        });
+
+        const createdEvent = await this.events.emitEncounterEventTx(tx, {
+          encounterId: created.id,
+          hospitalId: created.hospitalId,
+          type: EventType.ENCOUNTER_CREATED,
+          metadata: {
+            status: created.status,
+            createdFrom: 'hospital_admittance',
+          },
+          actor,
+        });
+
+        return { encounter: created, event: createdEvent };
+      });
+
+      this.loggingService.info(
+        'Admittance encounter created successfully',
+        {
+          service: 'EncountersService',
+          operation: 'createAdmittanceEncounter',
+          correlationId,
+          hospitalId,
+          encounterId: encounter.id,
+        },
+        {
+          status: encounter.status,
+          eventId: event.id,
+          actorUserId: actor?.actorUserId,
+          actorPatientId: actor?.actorPatientId,
+        },
+      );
+
+      void this.events.dispatchEncounterEventAndMarkProcessed(event);
+
+      return this.getEncounter(hospitalId, encounter.id, correlationId);
+    } catch (error) {
+      await this.loggingService.error(
+        'Failed to create admittance encounter',
+        {
+          service: 'EncountersService',
+          operation: 'createAdmittanceEncounter',
+          correlationId,
+          hospitalId,
+          email: dto.email,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          actorUserId: actor?.actorUserId,
+          actorPatientId: actor?.actorPatientId,
+        },
+      );
+      throw error;
+    }
+  }
+
   async listEncounters(
     hospitalId: number,
     query: ListEncountersQueryDto,
     correlationId?: string,
+    readContext?: StaffReadContext,
   ): Promise<EncounterListResponseDto> {
     this.loggingService.info(
       'Listing encounters',
@@ -233,11 +417,13 @@ export class EncountersService {
         operation: 'listEncounters',
         correlationId,
         hospitalId,
+        userId: readContext?.actorUserId,
       },
       {
         status: query.status,
         since: query.since,
         limit: query.limit,
+        role: readContext?.role,
       },
     );
 
@@ -254,13 +440,17 @@ export class EncountersService {
         where.createdAt = { gte: query.since };
       }
 
-      const limit = query.limit || 200;
+      const limit = query.limit || 50;
+      const roleCanReadClinical = readContext
+        ? hasClinicalCapability(readContext.role, 'encounter.list.clinical')
+        : true;
 
       const [encounters, total] = await Promise.all([
         this.prisma.encounter.findMany({
           where,
           orderBy: PRIORITY_ORDER,
-          take: limit,
+          take: limit + 1,
+          ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
           include: {
             patient: {
               select: {
@@ -271,15 +461,43 @@ export class EncountersService {
                 age: true,
                 gender: true,
                 preferredLanguage: true,
-                allergies: true,
-                conditions: true,
-                optionalHealthInfo: true,
               },
+            },
+            summaryProjections: {
+              where: {
+                active: true,
+                kind: SummaryProjectionKind.AI_DERIVED,
+              },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+              select: priageProjectionSelect,
             },
           },
         }),
         this.prisma.encounter.count({ where }),
       ]);
+      const hasMore = encounters.length > limit;
+      const page = hasMore ? encounters.slice(0, limit) : encounters;
+      const clinicallyAccessibleIds = readContext
+        ? await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
+            { userId: readContext.actorUserId, hospitalId, role: readContext.role },
+            page.map((encounter) => encounter.id),
+          )
+        : new Set(page.map((encounter) => encounter.id));
+      if (readContext?.actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'ENCOUNTER_LIST',
+          actorUserId: readContext.actorUserId,
+          hospitalId,
+          correlationId,
+          metadata: {
+            role: readContext.role,
+            clinicalFieldsIncluded: roleCanReadClinical,
+            clinicallyAccessibleCount: clinicallyAccessibleIds.size,
+            resultCount: page.length,
+          },
+        });
+      }
 
       this.loggingService.info(
         'Encounters listed successfully',
@@ -290,14 +508,21 @@ export class EncountersService {
           hospitalId,
         },
         {
-          count: encounters.length,
+          count: page.length,
           total,
+          role: readContext?.role,
         },
       );
 
       return {
-        data: encounters,
+        data: page.map(({ summaryProjections, ...encounter }) => clinicallyAccessibleIds.has(encounter.id)
+          ? {
+              ...encounter,
+              priagePreview: this.toPriagePreview(summaryProjections[0] ?? null),
+            }
+          : this.toOperationalEncounter(encounter)),
         total,
+        nextCursor: hasMore ? page.at(-1)?.id ?? null : null,
       };
     } catch (error) {
       await this.loggingService.error(
@@ -317,7 +542,24 @@ export class EncountersService {
     }
   }
 
-  async getEncounter(hospitalId: number, encounterId: number, correlationId?: string) {
+  async getEncounter(
+    hospitalId: number,
+    encounterId: number,
+    correlationId?: string,
+    readContext?: StaffReadContext,
+  ) {
+    let canReadClinical = this.canReadClinicalEncounter(readContext?.role);
+    if (canReadClinical && readContext) {
+      const accessible = await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
+        {
+          userId: readContext.actorUserId,
+          hospitalId,
+          role: readContext.role,
+        },
+        [encounterId],
+      );
+      canReadClinical = accessible.has(encounterId);
+    }
     this.loggingService.info(
       'Fetching encounter',
       {
@@ -326,6 +568,11 @@ export class EncountersService {
         correlationId,
         encounterId,
         hospitalId,
+        userId: readContext?.actorUserId,
+      },
+      {
+        role: readContext?.role,
+        clinicalReadAllowed: canReadClinical,
       },
     );
 
@@ -354,7 +601,21 @@ export class EncountersService {
               optionalHealthInfo: true,
             },
           },
+          summaryProjections: {
+            where: {
+              active: true,
+              kind: SummaryProjectionKind.AI_DERIVED,
+            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+            select: priageProjectionSelect,
+          },
           triageAssessments: { orderBy: { createdAt: 'asc' } },
+          events: {
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: 12,
+            select: encounterActivitySelect,
+          },
           messages: {
             orderBy: { createdAt: 'asc' },
             select: encounterMessageSelect,
@@ -396,18 +657,51 @@ export class EncountersService {
         },
         {
           status: encounter.status,
+          role: readContext?.role,
+          clinicalReadAllowed: canReadClinical,
         },
       );
 
-      const { assets, ...encounterWithoutAssets } = encounter;
+      if (readContext?.actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'ENCOUNTER_DETAIL',
+          actorUserId: readContext.actorUserId,
+          hospitalId: encounter.hospitalId,
+          encounterId: encounter.id,
+          patientId: encounter.patientId,
+          correlationId,
+          metadata: {
+            role: readContext.role,
+            status: encounter.status,
+            clinicalFieldsIncluded: canReadClinical,
+          },
+        });
+      }
+
+      const { assets, summaryProjections, ...encounterWithoutAssets } = encounter;
+      const mappedMessages = canReadClinical
+        ? encounter.messages.map(({ assets: messageAssets, ...message }) => ({
+            ...message,
+            attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
+          }))
+        : [];
+
+      if (!canReadClinical) {
+        return this.toOperationalEncounterDetail(encounterWithoutAssets);
+      }
 
       return {
         ...encounterWithoutAssets,
-        messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
-          ...message,
-          attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'staff')),
-        })),
-        intakeImages: assets.map((asset) => mapAssetSummary(asset, 'staff')),
+        patient: canReadClinical
+          ? encounter.patient
+          : this.redactClinicalPatientFields(encounter.patient),
+        triageAssessments: canReadClinical ? encounter.triageAssessments : [],
+        alerts: canReadClinical ? encounter.alerts : [],
+        priagePreview: this.toPriagePreview(summaryProjections[0] ?? null),
+        priageSummary: canReadClinical ? this.toPriageSummary(summaryProjections[0] ?? null) : null,
+        activityLog: encounter.events,
+        messages: mappedMessages,
+        intakeImages: canReadClinical ? assets.map((asset) => mapAssetSummary(asset, 'staff')) : [],
       };
     } catch (error) {
       if (error instanceof NotFoundException) {
@@ -623,6 +917,17 @@ export class EncountersService {
           actor,
         });
 
+        if (TERMINAL_STATUSES.has(updated.status)) {
+          await tx.patientSession.updateMany({
+            where: {
+              encounterId: updated.id,
+            },
+            data: {
+              encounterId: null,
+            },
+          });
+        }
+
         return { encounter: updated, event: createdEvent };
       });
 
@@ -724,6 +1029,15 @@ export class EncountersService {
               orderBy: { createdAt: 'asc' },
               select: encounterMessageSelect,
             },
+            summaryProjections: {
+              where: {
+                active: true,
+                kind: SummaryProjectionKind.AI_DERIVED,
+              },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+              select: priageProjectionSelect,
+            },
             assets: {
               where: {
                 status: AssetStatus.READY,
@@ -741,6 +1055,15 @@ export class EncountersService {
               where: { isInternal: false },
               orderBy: { createdAt: 'asc' },
               select: encounterMessageSelect,
+            },
+            summaryProjections: {
+              where: {
+                active: true,
+                kind: SummaryProjectionKind.AI_DERIVED,
+              },
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+              select: priageProjectionSelect,
             },
             assets: {
               where: {
@@ -770,12 +1093,27 @@ export class EncountersService {
       hospitalId: encounter.hospitalId,
       expectedAt: encounter.expectedAt,
       arrivedAt: encounter.arrivedAt,
+      priageSummary: this.toPriageSummary(encounter.summaryProjections[0] ?? null),
       messages: encounter.messages.map(({ assets: messageAssets, ...message }) => ({
         ...message,
         attachments: messageAssets.map((asset) => mapAssetSummary(asset, 'patient')),
       })),
       intakeImages: encounter.assets.map((asset) => mapAssetSummary(asset, 'patient')),
     };
+  }
+
+  async assertPatientOwnsEncounter(patientId: number, encounterId: number): Promise<void> {
+    const encounter = await this.prisma.encounter.findFirst({
+      where: {
+        id: encounterId,
+        patientId,
+      },
+      select: { id: true },
+    });
+
+    if (!encounter) {
+      throw new NotFoundException(`Encounter ${encounterId} not found`);
+    }
   }
 
   /**
@@ -1021,5 +1359,288 @@ export class EncountersService {
         `Patient ${patientId} already has an active encounter (${activeEncounter.status})`,
       );
     }
+  }
+
+  private toPriagePreview(
+    projection: { createdAt: Date; content: Prisma.JsonValue } | null,
+  ): PriagePreviewDto | null {
+    const summary = this.toPriageSummary(projection);
+    if (!summary) {
+      return null;
+    }
+
+    return {
+      briefing: summary.briefing,
+      recommendedCtasLevel: summary.recommendedCtasLevel,
+      progressionRiskCount: summary.progressionRisks.length,
+    };
+  }
+
+  private toPriageSummary(
+    projection: { createdAt: Date; content: Prisma.JsonValue } | null,
+  ): PriageSummaryDto | null {
+    if (!projection || !projection.content || typeof projection.content !== 'object' || Array.isArray(projection.content)) {
+      return null;
+    }
+
+    const content = projection.content as Record<string, unknown>;
+    const generatedAt = typeof content.generatedAt === 'string'
+      ? content.generatedAt
+      : projection.createdAt.toISOString();
+    const extractedSections = this.extractStructuredPriageSections(
+      [
+        typeof content.briefing === 'string' ? content.briefing : '',
+        typeof content.caseSummary === 'string' ? content.caseSummary : '',
+        typeof content.recommendedAction === 'string' ? content.recommendedAction : '',
+        typeof content.summaryPreview === 'string' ? content.summaryPreview : '',
+      ],
+      generatedAt,
+    );
+    const briefing = extractedSections.briefing
+      || (typeof content.briefing === 'string' ? content.briefing.trim() : '');
+    const caseSummary = extractedSections.caseSummary
+      || (typeof content.caseSummary === 'string' ? content.caseSummary.trim() : '');
+    const recommendedAction = extractedSections.recommendedAction
+      || (typeof content.recommendedAction === 'string' ? content.recommendedAction.trim() : '');
+    const questionAnswers = Array.isArray(content.questionAnswers)
+      ? content.questionAnswers
+          .map((answer) => this.parsePriageQuestionAnswer(answer))
+          .filter((answer): answer is PriageSummaryQuestionAnswerDto => answer !== null)
+      : [];
+    const progressionRisks = this.parseStringArray(content.progressionRisks);
+
+    if (!briefing && !caseSummary && !recommendedAction) {
+      return null;
+    }
+
+    return {
+      briefing,
+      recommendedCtasLevel: this.parseRecommendedCtasLevel(content.recommendedCtasLevel),
+      caseSummary,
+      questionAnswers: questionAnswers.length > 0 ? questionAnswers : extractedSections.questionAnswers,
+      progressionRisks: progressionRisks.length > 0 ? progressionRisks : extractedSections.progressionRisks,
+      redFlags: this.parseStringArray(content.redFlags),
+      recommendedAction,
+      generatedAt,
+      generationMode: content.generationMode === 'fallback' ? 'fallback' : 'ai',
+    };
+  }
+
+  private parseRecommendedCtasLevel(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 5) {
+      return null;
+    }
+    return value;
+  }
+
+  private canReadClinicalEncounter(role: Role | undefined): boolean {
+    return role ? hasClinicalCapability(role, 'encounter.detail.clinical') : true;
+  }
+
+  private toOperationalEncounter<T extends {
+    id: number;
+    createdAt: Date;
+    updatedAt: Date;
+    status: EncounterStatus;
+    hospitalId: number;
+    patientId: number;
+    expectedAt: Date | null;
+    arrivedAt: Date | null;
+    triagedAt: Date | null;
+    waitingAt: Date | null;
+    seenAt: Date | null;
+    departedAt: Date | null;
+    cancelledAt: Date | null;
+    patient: { id: number; firstName: string | null; lastName: string | null };
+  }>(encounter: T) {
+    return {
+      id: encounter.id,
+      createdAt: encounter.createdAt,
+      updatedAt: encounter.updatedAt,
+      status: encounter.status,
+      hospitalId: encounter.hospitalId,
+      patientId: encounter.patientId,
+      expectedAt: encounter.expectedAt,
+      arrivedAt: encounter.arrivedAt,
+      triagedAt: encounter.triagedAt,
+      waitingAt: encounter.waitingAt,
+      seenAt: encounter.seenAt,
+      departedAt: encounter.departedAt,
+      cancelledAt: encounter.cancelledAt,
+      patient: {
+        id: encounter.patient.id,
+        firstName: encounter.patient.firstName,
+        lastName: encounter.patient.lastName,
+      },
+      clinicalFieldsRedacted: true,
+    };
+  }
+
+  private toOperationalEncounterDetail<T extends Parameters<EncountersService['toOperationalEncounter']>[0]>(
+    encounter: T,
+  ) {
+    return {
+      ...this.toOperationalEncounter(encounter),
+      triageAssessments: [],
+      alerts: [],
+      priagePreview: null,
+      priageSummary: null,
+      activityLog: [],
+      messages: [],
+      intakeImages: [],
+    };
+  }
+
+  private redactClinicalPatientFields<T extends {
+    heightCm: number | null;
+    weightKg: number | null;
+    allergies: string | null;
+    conditions: string | null;
+    optionalHealthInfo: unknown;
+  }>(patient: T): T {
+    return {
+      ...patient,
+      heightCm: null,
+      weightKg: null,
+      allergies: null,
+      conditions: null,
+      optionalHealthInfo: null,
+    };
+  }
+
+  private parsePriageQuestionAnswer(value: unknown): PriageSummaryQuestionAnswerDto | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    const answer = value as Record<string, unknown>;
+    if (
+      typeof answer.question !== 'string'
+      || typeof answer.answer !== 'string'
+      || typeof answer.phase !== 'string'
+      || typeof answer.answeredAt !== 'string'
+    ) {
+      return null;
+    }
+
+    return {
+      question: answer.question,
+      answer: answer.answer,
+      phase: answer.phase,
+      answeredAt: answer.answeredAt,
+    };
+  }
+
+  private parseStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      : [];
+  }
+
+  private extractStructuredPriageSections(
+    values: string[],
+    fallbackAnsweredAt: string,
+  ): {
+    briefing: string;
+    caseSummary: string;
+    recommendedAction: string;
+    progressionRisks: string[];
+    questionAnswers: PriageSummaryQuestionAnswerDto[];
+  } {
+    const combinedText = values
+      .map((value) => value.replace(/\r\n/g, '\n').trim())
+      .find((value) => this.looksLikeStructuredPriageText(value));
+
+    if (!combinedText) {
+      return {
+        briefing: '',
+        caseSummary: '',
+        recommendedAction: '',
+        progressionRisks: [],
+        questionAnswers: [],
+      };
+    }
+
+    const matches = [...combinedText.matchAll(/(AI briefing|Case summary|Recommended action|Progression risks|Structured Q&A):/gi)];
+    if (matches.length === 0) {
+      return {
+        briefing: '',
+        caseSummary: '',
+        recommendedAction: '',
+        progressionRisks: [],
+        questionAnswers: [],
+      };
+    }
+
+    const sections = new Map<string, string>();
+    for (const [index, match] of matches.entries()) {
+      const nextMatch = matches[index + 1];
+      const key = match[1].toLowerCase();
+      const valueStart = (match.index ?? 0) + match[0].length;
+      const valueEnd = nextMatch?.index ?? combinedText.length;
+      sections.set(key, combinedText.slice(valueStart, valueEnd).trim());
+    }
+
+    const progressionRisks = this.parseStructuredList(sections.get('progression risks') ?? '');
+    const questionAnswers = this.parseStructuredQuestionAnswers(
+      sections.get('structured q&a') ?? '',
+      fallbackAnsweredAt,
+    );
+
+    return {
+      briefing: sections.get('ai briefing')?.trim() ?? '',
+      caseSummary: sections.get('case summary')?.trim() ?? '',
+      recommendedAction: sections.get('recommended action')?.trim() ?? '',
+      progressionRisks,
+      questionAnswers,
+    };
+  }
+
+  private looksLikeStructuredPriageText(value: string): boolean {
+    return /(AI briefing|Case summary|Recommended action|Progression risks|Structured Q&A):/i.test(value);
+  }
+
+  private parseStructuredList(value: string): string[] {
+    if (!value.trim()) {
+      return [];
+    }
+
+    return value
+      .split('\n')
+      .map((entry) => entry.replace(/^[-*]\s*/, '').trim())
+      .filter(Boolean);
+  }
+
+  private parseStructuredQuestionAnswers(
+    value: string,
+    fallbackAnsweredAt: string,
+  ): PriageSummaryQuestionAnswerDto[] {
+    if (!value.trim()) {
+      return [];
+    }
+
+    return value
+      .split('\n')
+      .map((entry) => entry.replace(/^[-*]\s*/, '').trim())
+      .map((entry) => {
+        const separatorIndex = entry.indexOf(':');
+        if (separatorIndex <= 0) {
+          return null;
+        }
+
+        const question = entry.slice(0, separatorIndex).trim();
+        const answer = entry.slice(separatorIndex + 1).trim();
+        if (!question || !answer) {
+          return null;
+        }
+
+        return {
+          question,
+          answer,
+          phase: 'history',
+          answeredAt: fallbackAnsweredAt,
+        };
+      })
+      .filter((entry): entry is PriageSummaryQuestionAnswerDto => entry !== null);
   }
 }

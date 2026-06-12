@@ -1,6 +1,6 @@
 // backend/src/modules/intake/dto/update-intake-details.dto.ts
 
-import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsInt, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { Sanitize } from '../../../common/decorators/sanitize.decorator';
 
 export class UpdateIntakeDetailsDto {
@@ -44,4 +44,8 @@ export class UpdateIntakeDetailsDto {
   @MaxLength(120)
   @Sanitize()
   conditions?: string;
+
+  @IsOptional()
+  @IsObject()
+  customQuestionAnswers?: Record<string, unknown>;
 }

@@ -27,13 +27,13 @@ export class LoggingController {
   @Get('error-reports/generate')
   async generateErrorReport(
     @Query('correlationId') correlationId: string,
-    @CurrentUser() user: { userId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number },
   ) {
     if (!correlationId) {
       throw new NotFoundException('correlationId query parameter is required');
     }
 
-    return this.errorReportService.generateReport(correlationId, user.userId);
+    return this.errorReportService.generateReport(correlationId, user.userId, user.hospitalId);
   }
 
   /**
@@ -41,8 +41,11 @@ export class LoggingController {
    * GET /logging/error-reports/:reportId
    */
   @Get('error-reports/:reportId')
-  async getErrorReport(@Param('reportId') reportId: string) {
-    const report = await this.errorReportService.getReport(reportId);
+  async getErrorReport(
+    @Param('reportId') reportId: string,
+    @CurrentUser() user: { hospitalId: number },
+  ) {
+    const report = await this.errorReportService.getReport(reportId, user.hospitalId);
     
     if (!report) {
       throw new NotFoundException(`Error report not found: ${reportId}`);
@@ -56,8 +59,11 @@ export class LoggingController {
    * GET /logging/error-reports/:reportId/export
    */
   @Get('error-reports/:reportId/export')
-  async exportErrorReport(@Param('reportId') reportId: string) {
-    return this.errorReportService.exportReport(reportId);
+  async exportErrorReport(
+    @Param('reportId') reportId: string,
+    @CurrentUser() user: { hospitalId: number },
+  ) {
+    return this.errorReportService.exportReport(reportId, user.hospitalId);
   }
 
   /**
@@ -68,12 +74,14 @@ export class LoggingController {
   @Get('correlation/:correlationId')
   async getLogsByCorrelation(
     @Param('correlationId') correlationId: string,
+    @CurrentUser() user: { hospitalId: number },
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
     const result = await this.loggingService.getLogsByCorrelationId(correlationId, {
       limit: this.parseNumberQuery(limit),
       offset: this.parseNumberQuery(offset),
+      hospitalId: user.hospitalId,
     });
 
     return {
@@ -90,12 +98,12 @@ export class LoggingController {
    */
   @Get('query')
   async queryLogs(
+    @CurrentUser() user: { hospitalId: number },
     @Query('correlationId') correlationId?: string,
     @Query('level') level?: LogLevel,
     @Query('service') service?: string,
     @Query('userId') userId?: string,
     @Query('patientId') patientId?: string,
-    @Query('hospitalId') hospitalId?: string,
     @Query('encounterId') encounterId?: string,
     @Query('startTime') startTime?: string,
     @Query('endTime') endTime?: string,
@@ -108,7 +116,7 @@ export class LoggingController {
       service,
       userId: this.parseNumberQuery(userId),
       patientId: this.parseNumberQuery(patientId),
-      hospitalId: this.parseNumberQuery(hospitalId),
+      hospitalId: user.hospitalId,
       encounterId: this.parseNumberQuery(encounterId),
       startTime: this.parseDateQuery(startTime),
       endTime: this.parseDateQuery(endTime),
@@ -128,8 +136,8 @@ export class LoggingController {
    * GET /logging/stats
    */
   @Get('stats')
-  async getStats() {
-    return this.loggingService.getStats();
+  async getStats(@CurrentUser() user: { hospitalId: number }) {
+    return this.loggingService.getStats(user.hospitalId);
   }
 
   private parseNumberQuery(value?: string) {

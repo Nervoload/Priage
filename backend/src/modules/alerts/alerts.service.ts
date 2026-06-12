@@ -5,6 +5,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { AlertSeverity, EventType, Prisma } from '@prisma/client';
 
 import { EventsService } from '../events/events.service';
+import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAlertDto } from './dto/create-alert.dto';
@@ -29,6 +30,7 @@ export class AlertsService {
     private readonly prisma: PrismaService,
     private readonly events: EventsService,
     private readonly loggingService: LoggingService,
+    private readonly sensitiveReadAudit: SensitiveReadAuditService,
   ) {
     this.logger.log('AlertsService initialized');
   }
@@ -473,7 +475,12 @@ export class AlertsService {
     }
   }
 
-  async listUnacknowledgedAlerts(hospitalId: number, correlationId?: string) {
+  async listUnacknowledgedAlerts(
+    hospitalId: number,
+    correlationId?: string,
+    encounterScope: number[] | null = null,
+    actorUserId?: number,
+  ) {
     this.loggingService.debug(
       'Listing unacknowledged alerts',
       {
@@ -486,7 +493,11 @@ export class AlertsService {
 
     try {
       const alerts = await this.prisma.alert.findMany({
-        where: { hospitalId, acknowledgedAt: null },
+        where: {
+          hospitalId,
+          acknowledgedAt: null,
+          ...(encounterScope === null ? {} : { encounterId: { in: encounterScope } }),
+        },
         orderBy: { createdAt: 'desc' },
       });
 
@@ -502,6 +513,16 @@ export class AlertsService {
           count: alerts.length,
         },
       );
+
+      if (actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'ALERT',
+          actorUserId,
+          hospitalId,
+          correlationId,
+          metadata: { count: alerts.length, unacknowledgedOnly: true },
+        });
+      }
 
       return alerts;
     } catch (error) {
@@ -519,7 +540,12 @@ export class AlertsService {
     }
   }
 
-  async listAlertsForEncounter(encounterId: number, hospitalId: number, correlationId?: string) {
+  async listAlertsForEncounter(
+    encounterId: number,
+    hospitalId: number,
+    correlationId?: string,
+    actorUserId?: number,
+  ) {
     this.loggingService.debug(
       'Listing alerts for encounter',
       {
@@ -550,6 +576,17 @@ export class AlertsService {
           count: alerts.length,
         },
       );
+
+      if (actorUserId) {
+        await this.sensitiveReadAudit.record({
+          resource: 'ALERT',
+          actorUserId,
+          hospitalId,
+          encounterId,
+          correlationId,
+          metadata: { count: alerts.length },
+        });
+      }
 
       return alerts;
     } catch (error) {

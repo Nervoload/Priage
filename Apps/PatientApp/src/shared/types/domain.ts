@@ -8,6 +8,18 @@ export type EncounterStatus =
   | 'CANCELLED';
 
 export type SenderType = 'PATIENT' | 'USER' | 'SYSTEM';
+export type HospitalIntakeResponseType = 'text' | 'textarea' | 'boolean' | 'number' | 'select';
+export type HospitalIntakeAppliesTo = 'admit' | 'triage' | 'both';
+
+export interface HospitalCustomIntakeQuestion {
+  id: string;
+  fieldKey: string;
+  label: string;
+  helpText: string;
+  required: boolean;
+  responseType: HospitalIntakeResponseType;
+  appliesTo: HospitalIntakeAppliesTo;
+}
 
 export interface AssetSummary {
   id: number;
@@ -32,10 +44,10 @@ export interface PatientProfile {
   allergies: string | null;
   conditions: string | null;
   preferredLanguage: string;
+  optionalHealthInfo?: Record<string, unknown> | null;
 }
 
 export interface AuthResponse {
-  sessionToken: string;
   patient: PatientProfile;
 }
 
@@ -65,6 +77,19 @@ export interface UpdateProfilePayload {
   allergies?: string;
   conditions?: string;
   preferredLanguage?: string;
+  currentPassword?: string;
+}
+
+export type PatientFeedbackType = 'feedback' | 'bug';
+
+export interface SubmitPatientFeedbackPayload {
+  type: PatientFeedbackType;
+  message: string;
+}
+
+export interface DeletePatientAccountPayload {
+  email: string;
+  password: string;
 }
 
 export interface UpgradeGuestPayload {
@@ -88,6 +113,12 @@ export interface GuestIntakeSession {
   patientId: number;
   encounterId: number | null;
   hospitalSlug: string | null;
+  firstName?: string;
+  lastName?: string;
+  age?: number;
+  gender?: string;
+  chiefComplaint?: string;
+  details?: string;
 }
 
 export interface EncounterMessage {
@@ -98,6 +129,25 @@ export interface EncounterMessage {
   createdByUserId?: number | null;
   createdByPatientId?: number | null;
   attachments: AssetSummary[];
+}
+
+export interface PriageSummaryQuestionAnswer {
+  question: string;
+  answer: string;
+  phase: string;
+  answeredAt: string;
+}
+
+export interface PriageSummary {
+  briefing: string;
+  recommendedCtasLevel: number | null;
+  caseSummary: string;
+  questionAnswers: PriageSummaryQuestionAnswer[];
+  progressionRisks: string[];
+  redFlags: string[];
+  recommendedAction: string;
+  generatedAt: string;
+  generationMode: 'ai' | 'fallback';
 }
 
 export interface Encounter {
@@ -111,6 +161,7 @@ export interface Encounter {
   arrivedAt: string | null;
   messages: EncounterMessage[];
   intakeImages: AssetSummary[];
+  priageSummary?: PriageSummary | null;
 }
 
 export interface EncounterSummary {
@@ -165,13 +216,13 @@ export interface CreateIntentPayload {
   lastName?: string;
   phone: string;
   age?: number;
+  gender?: string;
   chiefComplaint: string;
   details?: string;
   preferredLanguage?: string;
 }
 
 export interface CreateIntentResponse {
-  sessionToken: string;
   patientId: number;
   encounterId: number | null;
 }
@@ -184,6 +235,7 @@ export interface UpdateIntakeDetailsPayload {
   age?: number;
   allergies?: string;
   conditions?: string;
+  customQuestionAnswers?: Record<string, string | number | boolean | null | undefined>;
 }
 
 export interface UpdateIntakeDetailsResponse {
@@ -194,6 +246,50 @@ export interface UpdateIntakeDetailsResponse {
 export interface ConfirmIntentPayload {
   hospitalId?: number;
   hospitalSlug?: string;
+}
+
+export type InterviewPhase = 'urgent' | 'emergent' | 'history';
+export type InterviewInputType = 'text' | 'textarea' | 'number' | 'boolean' | 'single_select';
+export type InterviewStatus = 'in_progress' | 'emergency_ack_required' | 'complete';
+
+export interface InterviewQuestion {
+  publicId: string;
+  phase: InterviewPhase;
+  inputType: InterviewInputType;
+  prompt: string;
+  helpText?: string;
+  placeholder?: string;
+  required: boolean;
+  choices: string[];
+  clinicalReason?: string;
+  askIfAmbiguous: boolean;
+}
+
+export interface InterviewEmergencyAlert {
+  title: string;
+  body: string;
+  recommendation: string;
+}
+
+export interface InterviewState {
+  interviewPublicId: string;
+  status: InterviewStatus;
+  phase: InterviewPhase;
+  askedCount: number;
+  maxQuestions: number;
+  currentQuestion: InterviewQuestion | null;
+  cachedQuestions: InterviewQuestion[];
+  emergencyAlert: InterviewEmergencyAlert | null;
+  summaryPreview: string;
+}
+
+export interface AdvanceInterviewPayload {
+  questionPublicId?: string;
+  valueText?: string;
+  valueNumber?: number;
+  valueBoolean?: boolean;
+  valueChoice?: string;
+  action?: 'acknowledge_emergency';
 }
 
 export interface LocationPingPayload {
@@ -235,6 +331,15 @@ export interface Hospital {
   id: number;
   name: string;
   slug: string;
+  address: string | null;
+  phone: string | null;
+  checkInInstructions: string | null;
+  parkingNotes: string | null;
+  coordinates: {
+    latitude: number;
+    longitude: number;
+  } | null;
+  customIntakeQuestions: HospitalCustomIntakeQuestion[];
 }
 
 export type EncounterWorkspaceTab = 'current' | 'chat' | 'profile';

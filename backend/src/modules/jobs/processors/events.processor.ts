@@ -4,12 +4,14 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { randomUUID } from 'crypto';
 
 import { EventsService } from '../../events/events.service';
 import { LoggingService } from '../../logging/logging.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const IMMEDIATE_DISPATCH_GRACE_MS = 10_000;
+const CLAIM_TTL_MS = 60_000;
 
 @Processor('events')
 export class EventsProcessor extends WorkerHost {
@@ -113,14 +115,9 @@ export class EventsProcessor extends WorkerHost {
 
     try {
       const fallbackCutoff = new Date(Date.now() - IMMEDIATE_DISPATCH_GRACE_MS);
-      const events = await this.prisma.encounterEvent.findMany({
-        where: {
-          processedAt: null,
-          createdAt: { lt: fallbackCutoff },
-        },
-        orderBy: { createdAt: 'asc' },
-        take: 50,
-      });
+      const batchSize = this.readPositiveIntEnv('EVENT_DISPATCH_BATCH_SIZE', 100);
+      const claimToken = randomUUID();
+      const events = await this.claimEvents(claimToken, fallbackCutoff, batchSize);
 
       if (events.length === 0) {
         // Silently return when no events - reduces log noise
@@ -155,13 +152,28 @@ export class EventsProcessor extends WorkerHost {
 
       for (const event of events) {
         try {
-          const dispatched = await this.events.dispatchEncounterEventAndMarkProcessed(event);
+          const dispatched = await this.events.dispatchEncounterEvent(event);
           if (dispatched) {
+            await this.prisma.encounterEvent.updateMany({
+              where: { id: event.id, claimToken, processedAt: null },
+              data: {
+                processedAt: new Date(),
+                claimedAt: null,
+                claimToken: null,
+                lastError: null,
+              },
+            });
             successCount++;
           } else {
+            await this.releaseFailedClaim(event.id, claimToken, 'Realtime dispatch returned false');
             failureCount++;
           }
         } catch (error) {
+          await this.releaseFailedClaim(
+            event.id,
+            claimToken,
+            error instanceof Error ? error.message : String(error),
+          );
           failureCount++;
           await this.loggingService.error(
             'Failed to dispatch event during poll',
@@ -254,5 +266,58 @@ export class EventsProcessor extends WorkerHost {
       );
       throw error;
     }
+  }
+
+  private async claimEvents(claimToken: string, fallbackCutoff: Date, take: number) {
+    return this.prisma.$transaction(async (tx) => {
+      const staleClaimCutoff = new Date(Date.now() - CLAIM_TTL_MS);
+      const rows = await tx.$queryRaw<Array<{ id: number }>>`
+        SELECT "id"
+        FROM "EncounterEvent"
+        WHERE "processedAt" IS NULL
+          AND "deadLetteredAt" IS NULL
+          AND "createdAt" < ${fallbackCutoff}
+          AND ("claimedAt" IS NULL OR "claimedAt" < ${staleClaimCutoff})
+        ORDER BY "createdAt" ASC
+        LIMIT ${take}
+        FOR UPDATE SKIP LOCKED
+      `;
+      const ids = rows.map((row) => row.id);
+      if (ids.length === 0) return [];
+      await tx.encounterEvent.updateMany({
+        where: { id: { in: ids }, processedAt: null, deadLetteredAt: null },
+        data: {
+          claimedAt: new Date(),
+          claimToken,
+          attemptCount: { increment: 1 },
+        },
+      });
+      return tx.encounterEvent.findMany({
+        where: { id: { in: ids }, claimToken },
+        orderBy: { createdAt: 'asc' },
+      });
+    });
+  }
+
+  private async releaseFailedClaim(eventId: number, claimToken: string, error: string): Promise<void> {
+    const event = await this.prisma.encounterEvent.findFirst({
+      where: { id: eventId, claimToken },
+      select: { attemptCount: true },
+    });
+    const maxAttempts = this.readPositiveIntEnv('EVENT_DISPATCH_MAX_ATTEMPTS', 10);
+    await this.prisma.encounterEvent.updateMany({
+      where: { id: eventId, claimToken, processedAt: null },
+      data: {
+        claimedAt: null,
+        claimToken: null,
+        lastError: error.slice(0, 2000),
+        deadLetteredAt: event && event.attemptCount >= maxAttempts ? new Date() : null,
+      },
+    });
+  }
+
+  private readPositiveIntEnv(name: string, fallback: number): number {
+    const parsed = Number.parseInt(process.env[name] || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 }

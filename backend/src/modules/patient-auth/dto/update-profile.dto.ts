@@ -50,4 +50,9 @@ export class UpdatePatientProfileDto {
   @IsString()
   @MaxLength(5)
   preferredLanguage?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  currentPassword?: string;
 }

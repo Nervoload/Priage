@@ -37,7 +37,15 @@ export function saveGuestSession(session: GuestIntakeSession | null) {
   saveJson(GUEST_SESSION_KEY, session);
 }
 
-export function clearAllPatientSessions() {
+export function clearAuthSession() {
   localStorage.removeItem(AUTH_SESSION_KEY);
+}
+
+export function clearGuestSessionStorage() {
   localStorage.removeItem(GUEST_SESSION_KEY);
+}
+
+export function clearAllPatientSessions() {
+  clearAuthSession();
+  clearGuestSessionStorage();
 }

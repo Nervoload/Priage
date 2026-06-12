@@ -5,6 +5,7 @@ import { panelBorder, patientTheme } from '../../shared/ui/theme';
 interface QuestionPageProps {
   step: number;
   totalSteps: number;
+  progressLabel?: string;
   question: string;
   description?: string;
   value: string;
@@ -25,6 +26,7 @@ interface QuestionPageProps {
 export function QuestionPage({
   step,
   totalSteps,
+  progressLabel,
   question,
   description,
   value,
@@ -54,7 +56,7 @@ export function QuestionPage({
     <main style={styles.page}>
       <section style={styles.card}>
         <header style={styles.header}>
-          <p style={styles.stepLabel}>Step {step} of {totalSteps}</p>
+          <p style={styles.stepLabel}>{progressLabel ?? `Step ${step} of ${totalSteps}`}</p>
           <div style={styles.progressTrack}>
             <div style={{ ...styles.progressFill, width: `${(step / totalSteps) * 100}%` }} />
           </div>

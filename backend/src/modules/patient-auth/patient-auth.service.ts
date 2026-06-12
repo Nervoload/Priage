@@ -5,16 +5,34 @@
 import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
+import {
+  ContextSourceType,
+  EncounterStatus,
+  Prisma,
+  ReviewState,
+  TrustTier,
+  VisibilityScope,
+} from '@prisma/client';
 
 import { PATIENT_SESSION_TTL_MS } from '../../common/http/auth-cookie.util';
+import { PatientContext } from '../auth/guards/patient.guard';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterPatientDto } from './dto/register-patient.dto';
 import { LoginPatientDto } from './dto/login-patient.dto';
 import { UpdatePatientProfileDto } from './dto/update-profile.dto';
 import { UpgradeGuestDto } from './dto/upgrade-guest.dto';
+import { SubmitPatientFeedbackDto } from './dto/submit-feedback.dto';
+import { DeletePatientAccountDto } from './dto/delete-account.dto';
+import { hashPatientPassword } from './patient-password.util';
+import { generatePatientSessionToken, hashPatientSessionToken } from './patient-session-token.util';
 
-const BCRYPT_ROUNDS = 10;
+const ACTIVE_SESSION_ENCOUNTER_STATUSES: EncounterStatus[] = [
+  EncounterStatus.EXPECTED,
+  EncounterStatus.ADMITTED,
+  EncounterStatus.TRIAGE,
+  EncounterStatus.WAITING,
+];
 
 @Injectable()
 export class PatientAuthService {
@@ -42,8 +60,8 @@ export class PatientAuthService {
       throw new ConflictException('An account with this email already exists');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
-    const token = randomUUID();
+    const hashedPassword = await hashPatientPassword(dto.password);
+    const token = generatePatientSessionToken();
 
     const patient = await this.prisma.patientProfile.create({
       data: {
@@ -59,7 +77,7 @@ export class PatientAuthService {
 
     await this.prisma.patientSession.create({
       data: {
-        token,
+        token: hashPatientSessionToken(token),
         patientId: patient.id,
         expiresAt: this.buildSessionExpiry(),
       },
@@ -102,17 +120,33 @@ export class PatientAuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    const token = randomUUID();
+    const token = generatePatientSessionToken();
 
-    // Find the most recent session to carry over encounterId
+    // Only carry over an encounter when it is still active. Historical visits
+    // must not block the patient from signing back in or starting a new visit.
     const latestSession = await this.prisma.patientSession.findFirst({
-      where: { patientId: patient.id },
+      where: {
+        patientId: patient.id,
+        OR: [
+          { encounterId: null },
+          {
+            encounter: {
+              status: {
+                in: ACTIVE_SESSION_ENCOUNTER_STATUSES,
+              },
+            },
+          },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
+      select: {
+        encounterId: true,
+      },
     });
 
     await this.prisma.patientSession.create({
       data: {
-        token,
+        token: hashPatientSessionToken(token),
         patientId: patient.id,
         encounterId: latestSession?.encounterId ?? null,
         expiresAt: this.buildSessionExpiry(),
@@ -158,6 +192,21 @@ export class PatientAuthService {
       patientId,
     });
 
+    const existingPatient = await this.prisma.patientProfile.findUnique({
+      where: { id: patientId },
+    });
+
+    if (!existingPatient) {
+      throw new UnauthorizedException('Patient not found');
+    }
+
+    if (dto.currentPassword?.trim()) {
+      const valid = await bcrypt.compare(dto.currentPassword, existingPatient.password);
+      if (!valid) {
+        throw new UnauthorizedException('Incorrect password');
+      }
+    }
+
     const patient = await this.prisma.patientProfile.update({
       where: { id: patientId },
       data: {
@@ -175,6 +224,114 @@ export class PatientAuthService {
     });
 
     return this.sanitizePatient(patient);
+  }
+
+  async submitFeedback(patient: PatientContext, dto: SubmitPatientFeedbackDto, correlationId?: string) {
+    const trimmedMessage = dto.message.trim();
+
+    const profile = await this.prisma.patientProfile.findUnique({
+      where: { id: patient.patientId },
+      select: {
+        email: true,
+        firstName: true,
+        lastName: true,
+      },
+    });
+
+    if (!profile) {
+      throw new UnauthorizedException('Patient not found');
+    }
+
+    await this.prisma.contextItem.create({
+      data: {
+        publicId: randomUUID(),
+        itemType: dto.type === 'bug' ? 'patient_bug_report' : 'patient_feedback',
+        payload: {
+          channel: 'patient_app_settings',
+          category: dto.type,
+          message: trimmedMessage,
+          submittedAt: new Date().toISOString(),
+          patientEmail: profile.email,
+          patientName: [profile.firstName, profile.lastName].filter(Boolean).join(' ') || null,
+        },
+        sourceType: ContextSourceType.PATIENT,
+        trustTier: TrustTier.UNTRUSTED,
+        reviewState: ReviewState.UNREVIEWED,
+        visibilityScope: VisibilityScope.STORED_ONLY,
+        patientId: patient.patientId,
+        encounterId: patient.encounterId,
+        hospitalId: patient.hospitalId,
+      },
+    });
+
+    this.loggingService.info('Patient feedback stored', {
+      service: 'PatientAuthService',
+      operation: 'submitFeedback',
+      correlationId,
+      patientId: patient.patientId,
+    }, {
+      type: dto.type,
+      encounterId: patient.encounterId,
+      hospitalId: patient.hospitalId,
+    });
+
+    return { ok: true };
+  }
+
+  async deleteAccount(patientId: number, dto: DeletePatientAccountDto, correlationId?: string) {
+    const patient = await this.prisma.patientProfile.findUnique({
+      where: { id: patientId },
+    });
+
+    if (!patient) {
+      throw new UnauthorizedException('Patient not found');
+    }
+
+    if (dto.email.trim().toLowerCase() !== patient.email.trim().toLowerCase()) {
+      throw new BadRequestException('Enter the exact account email to confirm deletion');
+    }
+
+    const valid = await bcrypt.compare(dto.password, patient.password);
+    if (!valid) {
+      throw new UnauthorizedException('Incorrect password');
+    }
+
+    const replacementPassword = await hashPatientPassword(randomUUID());
+    const deletedEmail = `deleted+${patient.id}-${Date.now()}@deleted.local`;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.patientSession.deleteMany({
+        where: { patientId },
+      });
+
+      await tx.patientProfile.update({
+        where: { id: patientId },
+        data: {
+          email: deletedEmail,
+          password: replacementPassword,
+          firstName: null,
+          lastName: null,
+          phone: null,
+          age: null,
+          gender: null,
+          heightCm: null,
+          weightKg: null,
+          allergies: null,
+          conditions: null,
+          preferredLanguage: 'en',
+          optionalHealthInfo: Prisma.JsonNull,
+        },
+      });
+    });
+
+    this.loggingService.info('Patient account deleted from app access', {
+      service: 'PatientAuthService',
+      operation: 'deleteAccount',
+      correlationId,
+      patientId,
+    });
+
+    return { ok: true };
   }
 
   /**
@@ -223,7 +380,7 @@ export class PatientAuthService {
       throw new ConflictException('An account with this email already exists');
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    const hashedPassword = await hashPatientPassword(dto.password);
 
     const updated = await this.prisma.patientProfile.update({
       where: { id: patientId },
@@ -241,18 +398,33 @@ export class PatientAuthService {
     });
 
     // Create a fresh session token for the upgraded account
-    const token = randomUUID();
+    const token = generatePatientSessionToken();
 
     // Carry over encounterId from the current session
     const currentSession = await this.prisma.patientSession.findUnique({
       where: { id: sessionId },
+      select: {
+        encounterId: true,
+        encounter: {
+          select: {
+            status: true,
+          },
+        },
+      },
     });
+
+    const reusableEncounterId =
+      currentSession?.encounterId && currentSession.encounter
+        ? ACTIVE_SESSION_ENCOUNTER_STATUSES.includes(currentSession.encounter.status)
+          ? currentSession.encounterId
+          : null
+        : currentSession?.encounterId ?? null;
 
     await this.prisma.patientSession.create({
       data: {
-        token,
+        token: hashPatientSessionToken(token),
         patientId: patient.id,
-        encounterId: currentSession?.encounterId ?? null,
+        encounterId: reusableEncounterId,
         expiresAt: this.buildSessionExpiry(),
       },
     });

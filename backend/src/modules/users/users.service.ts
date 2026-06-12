@@ -1,11 +1,26 @@
 // backend/src/modules/users/users.service.ts
 // Hospital staff management service
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
+
+type UserWithHospital = {
+  id: number;
+  email: string;
+  role: Role;
+  hospitalId: number;
+  password?: string;
+  hospital: {
+    id: number;
+    name: string;
+    slug: string;
+  };
+};
 
 @Injectable()
 export class UsersService {
@@ -103,6 +118,117 @@ export class UsersService {
     return user;
   }
 
+  async updateProfile(
+    userId: number,
+    dto: UpdateUserProfileDto,
+    correlationId?: string,
+    currentSessionId?: number,
+  ) {
+    this.loggingService.info('Updating staff profile', {
+      service: 'UsersService',
+      operation: 'updateProfile',
+      correlationId,
+      userId,
+    }, {
+      isEmailChange: typeof dto.email === 'string',
+      isPasswordChange: typeof dto.newPassword === 'string' && dto.newPassword.length > 0,
+    });
+
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        hospital: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`User ${userId} not found`);
+    }
+
+    const updates: { email?: string; password?: string } = {};
+
+    if (dto.email && dto.email !== existing.email) {
+      const emailOwner = await this.prisma.user.findUnique({
+        where: { email: dto.email },
+        select: { id: true },
+      });
+
+      if (emailOwner && emailOwner.id !== userId) {
+        throw new ConflictException('That email address is already in use');
+      }
+
+      updates.email = dto.email;
+    }
+
+    if (dto.newPassword) {
+      if (!dto.currentPassword) {
+        throw new BadRequestException('Current password is required to change your password');
+      }
+
+      const isPasswordValid = await bcrypt.compare(dto.currentPassword, existing.password);
+      if (!isPasswordValid) {
+        throw new UnauthorizedException('Current password is incorrect');
+      }
+
+      updates.password = await bcrypt.hash(dto.newPassword, 10);
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return this.toAuthUser(existing);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const savedUser = await tx.user.update({
+        where: { id: userId },
+        data: updates,
+        include: {
+          hospital: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
+        },
+      });
+
+      if (typeof updates.password === 'string') {
+        await tx.staffSession.updateMany({
+          where: {
+            userId,
+            revokedAt: null,
+            ...(currentSessionId ? { id: { not: currentSessionId } } : {}),
+          },
+          data: {
+            revokedAt: new Date(),
+            revokedReason: 'password_changed',
+          },
+        });
+      }
+
+      return savedUser;
+    });
+
+    this.loggingService.info('Staff profile updated', {
+      service: 'UsersService',
+      operation: 'updateProfile',
+      correlationId,
+      userId,
+      hospitalId: updated.hospitalId,
+    }, {
+      isEmailChange: typeof updates.email === 'string',
+      isPasswordChange: typeof updates.password === 'string',
+    });
+
+    return this.toAuthUser(updated);
+  }
+
   // Phase 6.4: Add an updateProfile method here:
   //   async updateProfile(userId: number, dto: { displayName?, avatarUrl?, phone?, department?, specialization? })
   // The current getUser select list (id, email, role, createdAt, hospitalId) will
@@ -139,5 +265,19 @@ export class UsersService {
     });
 
     return users;
+  }
+
+  private toAuthUser(user: UserWithHospital) {
+    return {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      hospitalId: user.hospitalId,
+      hospital: {
+        id: user.hospital.id,
+        name: user.hospital.name,
+        slug: user.hospital.slug,
+      },
+    };
   }
 }

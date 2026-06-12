@@ -5,7 +5,7 @@
 // Last Edited: Feb 28 2026
 // WebSocket gateway (Socket.IO) for pushing live updates to patient + hospital apps.
 
-import { BadRequestException, ForbiddenException, Inject, Logger, NotFoundException, forwardRef } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Logger, NotFoundException, OnModuleDestroy, forwardRef } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -21,6 +21,7 @@ import { validate } from 'class-validator';
 import { randomUUID } from 'crypto';
 import { Role } from '@prisma/client';
 import type { Server, Socket } from 'socket.io';
+import type Redis from 'ioredis';
 
 import { readCookie, STAFF_AUTH_COOKIE } from '../../common/http/auth-cookie.util';
 import { getAllowedCorsOrigins } from '../../common/http/cors.util';
@@ -29,6 +30,8 @@ import { LoggingService } from '../logging/logging.service';
 import { CreateMessageDto } from '../messaging/dto/create-message.dto';
 import { MessagingService } from '../messaging/messaging.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { REDIS_CLIENT } from '../redis/redis.module';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
 import { SendMessageWsDto } from './dto/send-message.ws.dto';
 import { RealtimeAuthService, TrustedRealtimeUser } from './realtime-auth.service';
 import { RealtimeRedisAdapterService } from './realtime-redis-adapter.service';
@@ -41,18 +44,42 @@ import {
   MessageReadPayload,
   RealtimeEvents,
 } from './realtime.events';
-import { encounterRoomKey, hospitalRoomKey } from './realtime.rooms';
+import {
+  clinicalEncounterRoomKey,
+  clinicalHospitalRoomKey,
+  encounterRoomKey,
+  hospitalRoomKey,
+} from './realtime.rooms';
 
 type MessageSendAck =
   | { ok: true; message: unknown }
   | { ok: false; error: { code: string; message: string } };
 
+type EncounterSubscribeAck =
+  | { ok: true; subscribedEncounterIds: number[] }
+  | { ok: false; error: { code: string; message: string } };
+
+const RESERVE_SOCKET_SCRIPT = `
+local now = tonumber(ARGV[1])
+local staleBefore = now - tonumber(ARGV[2])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', staleBefore)
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[3]) then return 0 end
+redis.call('ZADD', KEYS[1], now, ARGV[4])
+redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]) * 2)
+return 1
+`;
+
 @WebSocketGateway({
   cors: { origin: getAllowedCorsOrigins(), credentials: true },
 })
-export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
   private readonly logger = new Logger(RealtimeGateway.name);
   private static readonly MESSAGE_SEND_ALLOWED_ROLES = new Set<Role>([
+    Role.NURSE,
+    Role.DOCTOR,
+    Role.ADMIN,
+  ]);
+  private static readonly CLINICAL_EVENT_ROLES = new Set<Role>([
     Role.NURSE,
     Role.DOCTOR,
     Role.ADMIN,
@@ -61,13 +88,22 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   @WebSocketServer()
   private readonly server!: Server;
 
-  private connectedClients = new Map<string, { userId: number; hospitalId: number; connectedAt: Date }>();
+  private connectedClients = new Map<string, {
+    userId: number;
+    hospitalId: number;
+    connectedAt: Date;
+    connectionKey: string;
+    connectionMember: string;
+  }>();
+  private socketHeartbeatTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly loggingService: LoggingService,
     private readonly realtimeRedisAdapter: RealtimeRedisAdapterService,
     private readonly realtimeAuthService: RealtimeAuthService,
+    private readonly clinicalAccess: ClinicalAccessService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
     @Inject(forwardRef(() => MessagingService))
     private readonly messagingService: MessagingService,
   ) {}
@@ -77,9 +113,12 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       await this.realtimeRedisAdapter.attach(server);
     } catch (error) {
       this.logger.error(
-        'Failed to attach Redis adapter, falling back to default in-memory adapter',
+        'Failed to attach Redis adapter',
         error instanceof Error ? error.stack : undefined,
       );
+      if ((process.env.NODE_ENV || '').trim().toLowerCase() === 'production') {
+        throw error;
+      }
     }
     this.logger.log('WebSocket Gateway initialized');
     this.logger.log('WebSocket CORS configured for explicit origins');
@@ -104,10 +143,25 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         operation: 'serverError',
       }, error);
     });
+
+    this.socketHeartbeatTimer = setInterval(() => {
+      const now = Date.now();
+      const staleMs = this.readPositiveIntEnv('SOCKET_CONNECTION_STALE_MS', 120_000);
+      for (const client of this.connectedClients.values()) {
+        void this.redis
+          .zadd(client.connectionKey, now, client.connectionMember)
+          .then(() => this.redis.pexpire(client.connectionKey, staleMs * 2))
+          .catch(() => undefined);
+      }
+    }, 30_000);
   }
 
   async handleConnection(client: Socket): Promise<void> {
     const clientId = client.id;
+    if (!await this.consumeSocketAttempt(client)) {
+      client.disconnect();
+      return;
+    }
 
     // Demo gate: reject WebSocket connections when DEMO_ACCESS_CODE is set
     // and the client doesn't carry a valid demo cookie.
@@ -148,16 +202,26 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         return;
       }
 
-      const trustedUser = await this.realtimeAuthService.validateStaffToken(token);
+      const trustedUser = await this.realtimeAuthService.validateStaffToken(token, client.handshake.headers?.cookie);
+      const connectionKey = `socket:user:${trustedUser.userId}:connections`;
+      if (!await this.reserveSocketConnection(connectionKey, clientId)) {
+        client.disconnect();
+        return;
+      }
       client.data.user = trustedUser;
 
       this.connectedClients.set(clientId, {
         userId: trustedUser.userId,
         hospitalId: trustedUser.hospitalId,
         connectedAt: new Date(),
+        connectionKey,
+        connectionMember: clientId,
       });
 
       await client.join(hospitalRoomKey(trustedUser.hospitalId));
+      if (this.canReceiveHospitalClinicalEvents(trustedUser.role as Role)) {
+        await client.join(clinicalHospitalRoomKey(trustedUser.hospitalId));
+      }
 
       this.loggingService.info('Client joined hospital room', {
         service: 'RealtimeGateway',
@@ -182,6 +246,12 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
           for (const encounter of encounters) {
             await client.join(encounterRoomKey(encounter.id));
+            if (
+              this.canReceiveClinicalEvents(trustedUser.role as Role)
+              && await this.canAccessEncounter(trustedUser, encounter.id)
+            ) {
+              await client.join(clinicalEncounterRoomKey(encounter.id));
+            }
           }
 
           this.loggingService.info('Client subscribed to encounter rooms', {
@@ -249,6 +319,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       });
 
       this.connectedClients.delete(clientId);
+      void this.redis.zrem(clientInfo.connectionKey, clientInfo.connectionMember).catch(() => undefined);
     } else {
       this.loggingService.debug('Unknown client disconnected', {
         service: 'RealtimeGateway',
@@ -259,16 +330,21 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
+  onModuleDestroy(): void {
+    if (this.socketHeartbeatTimer) {
+      clearInterval(this.socketHeartbeatTimer);
+      this.socketHeartbeatTimer = undefined;
+    }
+  }
+
   @SubscribeMessage('message.send')
   async handleMessageSend(
     @ConnectedSocket() client: Socket,
     @MessageBody() rawPayload: unknown,
   ): Promise<MessageSendAck> {
-    let trustedUser = this.getTrustedUser(client);
+    const trustedUser = await this.revalidateTrustedUser(client);
     if (!trustedUser) {
-      trustedUser = await this.hydrateTrustedUser(client);
-    }
-    if (!trustedUser) {
+      client.disconnect();
       return {
         ok: false,
         error: { code: 'UNAUTHORIZED', message: 'Socket is not authenticated' },
@@ -329,6 +405,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     };
 
     try {
+      await this.clinicalAccess.assertClinicalEncounterAccess({
+        userId: trustedUser.userId,
+        hospitalId: trustedUser.hospitalId,
+        role: trustedUser.role as Role,
+      }, payload.encounterId);
       const message = await this.messagingService.createMessage(
         payload.encounterId,
         trustedUser.hospitalId,
@@ -397,6 +478,68 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
+  @SubscribeMessage('encounters.subscribe')
+  async handleEncounterSubscribe(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() rawPayload: unknown,
+  ): Promise<EncounterSubscribeAck> {
+    const trustedUser = await this.revalidateTrustedUser(client);
+    if (!trustedUser) {
+      client.disconnect();
+      return { ok: false, error: { code: 'UNAUTHORIZED', message: 'Socket is not authenticated' } };
+    }
+
+    const requestedIds = this.normalizeEncounterIds(
+      rawPayload && typeof rawPayload === 'object'
+        ? (rawPayload as { encounterIds?: unknown }).encounterIds
+        : undefined,
+    );
+    const maxSubscriptions = this.readPositiveIntEnv('SOCKET_ENCOUNTER_SUBSCRIPTION_CAP', 250);
+    if (requestedIds.length > maxSubscriptions) {
+      return {
+        ok: false,
+        error: { code: 'LIMIT_EXCEEDED', message: 'Too many encounter subscriptions requested' },
+      };
+    }
+
+    const encounters = await this.prisma.encounter.findMany({
+      where: {
+        id: { in: requestedIds },
+        hospitalId: trustedUser.hospitalId,
+      },
+      select: { id: true },
+    });
+    const sameHospitalIds = encounters.map((encounter) => encounter.id);
+    const accessible = await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
+      {
+        userId: trustedUser.userId,
+        hospitalId: trustedUser.hospitalId,
+        role: trustedUser.role as Role,
+      },
+      sameHospitalIds,
+    );
+    const existingClinicalRooms = new Set(
+      [...client.rooms].filter((room) => room.startsWith('encounter:') && room.endsWith(':clinical')),
+    );
+    const newClinicalSubscriptions = [...accessible]
+      .filter((encounterId) => !existingClinicalRooms.has(clinicalEncounterRoomKey(encounterId)));
+    if (existingClinicalRooms.size + newClinicalSubscriptions.length > maxSubscriptions) {
+      return {
+        ok: false,
+        error: { code: 'LIMIT_EXCEEDED', message: 'Encounter subscription cap reached' },
+      };
+    }
+
+    for (const encounterId of sameHospitalIds) {
+      await client.join(encounterRoomKey(encounterId));
+      if (accessible.has(encounterId)) {
+        await client.join(clinicalEncounterRoomKey(encounterId));
+      }
+    }
+
+    return { ok: true, subscribedEncounterIds: [...accessible] };
+  }
+
   async emitEncounterUpdated(
     hospitalId: number,
     encounterId: number,
@@ -405,8 +548,12 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
       const encounterRoom = encounterRoomKey(encounterId);
+      const clinicalHospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const clinicalEncounterRoom = clinicalEncounterRoomKey(encounterId);
+      const operationalPayload = this.toOperationalEncounterUpdatePayload(payload);
 
-      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.EncounterUpdated, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.EncounterUpdated, operationalPayload);
+      this.server.to(clinicalHospitalRoom).to(clinicalEncounterRoom).emit(RealtimeEvents.EncounterUpdated, operationalPayload);
 
       this.loggingService.debug('Encounter update emitted', {
         service: 'RealtimeGateway',
@@ -432,10 +579,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: MessageCreatedPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageCreated, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageCreated, {
+        ...payload,
+        metadata: { messageId: payload.metadata.messageId },
+      });
 
       this.loggingService.debug('Message created event emitted', {
         service: 'RealtimeGateway',
@@ -461,10 +611,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: AlertCreatedPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertCreated, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertCreated, {
+        ...payload,
+        metadata: { alertId: payload.metadata.alertId },
+      });
     } catch (error) {
       await this.loggingService.error(
         'Failed to emit alert created',
@@ -485,10 +638,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: MessageReadPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageRead, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageRead, {
+        ...payload,
+        metadata: { messageId: payload.metadata.messageId },
+      });
 
       this.loggingService.debug('Message read event emitted', {
         service: 'RealtimeGateway',
@@ -514,10 +670,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: AlertAcknowledgedPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertAcknowledged, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertAcknowledged, {
+        ...payload,
+        metadata: { alertId: payload.metadata.alertId },
+      });
     } catch (error) {
       await this.loggingService.error(
         'Failed to emit alert acknowledged',
@@ -538,10 +697,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     payload: AlertResolvedPayload,
   ): Promise<void> {
     try {
-      const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
+      const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+      const encounterRoom = clinicalEncounterRoomKey(encounterId);
 
-      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertResolved, payload);
+      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertResolved, {
+        ...payload,
+        metadata: { alertId: payload.metadata.alertId },
+      });
     } catch (error) {
       await this.loggingService.error(
         'Failed to emit alert resolved',
@@ -590,58 +752,93 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   }
 
   private getEncounterIdsFromHandshake(client: Socket): number[] {
-    const ids = client.handshake.auth?.encounterIds;
-    if (Array.isArray(ids)) {
-      return ids.map((value) => Number(value)).filter((value) => Number.isFinite(value));
-    }
-    return [];
+    return this.normalizeEncounterIds(client.handshake.auth?.encounterIds);
   }
 
-  private getTrustedUser(client: Socket): TrustedRealtimeUser | null {
-    const user = client.data.user as TrustedRealtimeUser | undefined;
-    return user?.userId && user?.hospitalId ? user : null;
+  private normalizeEncounterIds(rawIds: unknown): number[] {
+    if (!Array.isArray(rawIds)) return [];
+    return [...new Set(rawIds
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0))];
   }
 
-  private async hydrateTrustedUser(client: Socket): Promise<TrustedRealtimeUser | null> {
-    const existing = this.getTrustedUser(client);
-    if (existing) {
-      return existing;
-    }
+  private canReceiveClinicalEvents(role: Role): boolean {
+    return RealtimeGateway.CLINICAL_EVENT_ROLES.has(role);
+  }
 
-    const token = this.extractToken(client);
-    if (!token) {
-      return null;
-    }
+  private toOperationalEncounterUpdatePayload(payload: EncounterUpdatedPayload): EncounterUpdatedPayload {
+    const metadata = payload.metadata ?? {};
+    return {
+      ...payload,
+      metadata: {
+        status: metadata.status,
+        fromStatus: metadata.fromStatus,
+        toStatus: metadata.toStatus,
+        transition: metadata.transition,
+        intake: metadata.intake,
+        timestamps: metadata.timestamps,
+      },
+    };
+  }
 
+  private canReceiveHospitalClinicalEvents(role: Role): boolean {
+    const careTeamRequired = ['1', 'true', 'yes', 'on'].includes(
+      (process.env.CARE_TEAM_ACCESS_REQUIRED || '').trim().toLowerCase(),
+    );
+    return this.canReceiveClinicalEvents(role) && !careTeamRequired;
+  }
+
+  private async canAccessEncounter(user: TrustedRealtimeUser, encounterId: number): Promise<boolean> {
     try {
-      const trustedUser = await this.realtimeAuthService.validateStaffToken(token);
+      await this.clinicalAccess.assertClinicalEncounterAccess({
+        userId: user.userId,
+        hospitalId: user.hospitalId,
+        role: user.role as Role,
+      }, encounterId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async consumeSocketAttempt(client: Socket): Promise<boolean> {
+    const key = `socket:attempt:${client.handshake.address || 'unknown'}`;
+    const limit = Number.parseInt(process.env.SOCKET_CONNECTION_ATTEMPTS_PER_MINUTE || '30', 10);
+    try {
+      const count = await this.redis.incr(key);
+      if (count === 1) await this.redis.expire(key, 60);
+      return count <= limit;
+    } catch {
+      return false;
+    }
+  }
+
+  private async reserveSocketConnection(key: string, member: string): Promise<boolean> {
+    const limit = this.readPositiveIntEnv('SOCKET_CONNECTIONS_PER_USER', 5);
+    const staleMs = this.readPositiveIntEnv('SOCKET_CONNECTION_STALE_MS', 120_000);
+    const result = await this.redis.eval(
+      RESERVE_SOCKET_SCRIPT,
+      1,
+      key,
+      Date.now(),
+      staleMs,
+      limit,
+      member,
+    );
+    return Number(result) === 1;
+  }
+
+  private readPositiveIntEnv(name: string, fallback: number): number {
+    const parsed = Number.parseInt(process.env[name] || '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private async revalidateTrustedUser(client: Socket): Promise<TrustedRealtimeUser | null> {
+    const token = this.extractToken(client);
+    if (!token) return null;
+    try {
+      const trustedUser = await this.realtimeAuthService.validateStaffToken(token, client.handshake.headers?.cookie);
       client.data.user = trustedUser;
-
-      if (!this.connectedClients.has(client.id)) {
-        this.connectedClients.set(client.id, {
-          userId: trustedUser.userId,
-          hospitalId: trustedUser.hospitalId,
-          connectedAt: new Date(),
-        });
-      }
-
-      await client.join(hospitalRoomKey(trustedUser.hospitalId));
-
-      const requestedEncounterIds = this.getEncounterIdsFromHandshake(client);
-      if (requestedEncounterIds.length > 0) {
-        const encounters = await this.prisma.encounter.findMany({
-          where: {
-            id: { in: requestedEncounterIds },
-            hospitalId: trustedUser.hospitalId,
-          },
-          select: { id: true },
-        });
-
-        for (const encounter of encounters) {
-          await client.join(encounterRoomKey(encounter.id));
-        }
-      }
-
       return trustedUser;
     } catch {
       return null;

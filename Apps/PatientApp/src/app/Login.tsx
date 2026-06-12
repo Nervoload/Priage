@@ -14,7 +14,10 @@ export function Login() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState('');
   const [chiefComplaint, setChiefComplaint] = useState('');
+  const [details, setDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
@@ -25,6 +28,14 @@ export function Login() {
     }
     if (!phone.trim()) {
       showToast('Please enter your phone number.');
+      return;
+    }
+    if (!age.trim()) {
+      showToast('Please enter your age.');
+      return;
+    }
+    if (!gender.trim()) {
+      showToast('Please select your sex.');
       return;
     }
     if (!chiefComplaint.trim()) {
@@ -38,15 +49,24 @@ export function Login() {
         firstName: firstName.trim(),
         lastName: lastName.trim() || undefined,
         phone: phone.trim(),
+        age: Number.parseInt(age, 10),
+        gender: gender.trim(),
         chiefComplaint: chiefComplaint.trim(),
+        details: details.trim() || undefined,
       });
 
       setSession({
         patientId: result.patientId,
         encounterId: result.encounterId,
         hospitalSlug: null,
+        firstName: firstName.trim(),
+        lastName: lastName.trim() || undefined,
+        age: Number.parseInt(age, 10),
+        gender: gender.trim(),
+        chiefComplaint: chiefComplaint.trim(),
+        details: details.trim() || undefined,
       });
-      navigate('/guest/routing');
+      navigate('/guest/chatbot');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not start guest check-in.');
     } finally {
@@ -69,7 +89,7 @@ export function Login() {
         </header>
 
         <form onSubmit={handleSubmit} style={styles.form}>
-          <div style={styles.twoCol}>
+          <div style={styles.nameRow}>
             <label style={styles.fieldLabel}>
               First name *
               <input
@@ -81,28 +101,56 @@ export function Login() {
               />
             </label>
             <label style={styles.fieldLabel}>
-              Phone number *
+              Last name
               <input
                 style={styles.input}
-                value={phone}
-                onChange={(event) => setPhone(event.target.value)}
-                autoComplete="tel"
-                inputMode="tel"
-                placeholder="(555) 123-4567"
+                value={lastName}
+                onChange={(event) => setLastName(event.target.value)}
+                autoComplete="family-name"
+                placeholder="Last name"
               />
             </label>
           </div>
 
           <label style={styles.fieldLabel}>
-            Last name
+            Phone number *
             <input
               style={styles.input}
-              value={lastName}
-              onChange={(event) => setLastName(event.target.value)}
-              autoComplete="family-name"
-              placeholder="Last name"
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              autoComplete="tel"
+              inputMode="tel"
+              placeholder="(555) 123-4567"
             />
           </label>
+
+          <div style={styles.demographicsRow}>
+            <label style={styles.fieldLabel}>
+              Age *
+              <input
+                style={styles.input}
+                value={age}
+                onChange={(event) => setAge(event.target.value.replace(/[^\d]/g, ''))}
+                inputMode="numeric"
+                placeholder="e.g. 39"
+              />
+            </label>
+
+            <label style={styles.fieldLabel}>
+              Sex *
+              <select
+                style={styles.input}
+                value={gender}
+                onChange={(event) => setGender(event.target.value)}
+              >
+                <option value="">Select</option>
+                <option value="Female">Female</option>
+                <option value="Male">Male</option>
+                <option value="Intersex">Intersex</option>
+                <option value="Prefer not to say">Prefer not to say</option>
+              </select>
+            </label>
+          </div>
 
           <label style={styles.fieldLabel}>
             What brings you in today? *
@@ -115,13 +163,23 @@ export function Login() {
             />
           </label>
 
+          <label style={styles.fieldLabel}>
+            Briefly explain the situation
+            <textarea
+              style={styles.textArea}
+              value={details}
+              onChange={(event) => setDetails(event.target.value)}
+              placeholder="Share timing, triggers, what changed, or anything else staff should know."
+            />
+          </label>
+
           <button style={styles.primaryButton} type="submit" disabled={submitting}>
-            {submitting ? 'Starting check-in…' : 'Choose hospital'}
+            {submitting ? 'Starting check-in…' : 'Next'}
           </button>
         </form>
 
         <footer style={styles.footer}>
-          <strong>What happens next:</strong> choose your hospital, notify the care team, then fill in any optional health details while you are on the way.
+          <strong>What happens next:</strong> complete a short safety check, answer a few dynamic intake questions, then choose your hospital and notify the care team.
         </footer>
       </section>
     </main>
@@ -219,6 +277,16 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '0.68rem',
   },
   twoCol: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '0.5rem',
+  },
+  nameRow: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '0.5rem',
+  },
+  demographicsRow: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
     gap: '0.5rem',

@@ -1,11 +1,22 @@
 const bcrypt = require('bcrypt');
 const { randomUUID } = require('crypto');
+const {
+  generatePatientSessionToken,
+  hashPatientSessionToken,
+} = require('./session-cookies');
 
 const DEFAULT_HOSPITAL_CONFIG = {
   triageReassessmentMinutes: 30,
   features: {
     messaging: true,
     alerts: true,
+  },
+  patientExperience: {
+    address: null,
+    phone: null,
+    checkInInstructions: null,
+    parkingNotes: null,
+    coordinates: null,
   },
 };
 
@@ -160,14 +171,16 @@ class TestFixtureTracker {
   }
 
   async createPatientSession(options) {
-    return this.prisma.patientSession.create({
+    const token = options.token || generatePatientSessionToken();
+    const session = await this.prisma.patientSession.create({
       data: {
-        token: options.token || randomUUID(),
+        token: hashPatientSessionToken(token),
         patientId: options.patientId,
         encounterId: options.encounterId || null,
         expiresAt: options.expiresAt || new Date(Date.now() + 24 * 60 * 60_000),
       },
     });
+    return { ...session, token };
   }
 
   async cleanup() {

@@ -2,7 +2,7 @@
 // admittance staff care about. Returns a structured result so the UI can
 // show exactly what's incomplete and generate a targeted reminder message.
 
-import type { Encounter } from '../types/domain';
+import type { Encounter, HospitalCustomIntakeQuestion } from '../types/domain';
 
 export interface CompletenessIssue {
   field: string;
@@ -17,8 +17,21 @@ export interface CompletenessResult {
   isComplete: boolean;
 }
 
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'boolean') return true;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return false;
+}
+
 /** Fields we expect every encounter to have before triage can begin. */
-export function checkFormCompleteness(encounter: Encounter): CompletenessResult {
+export function checkFormCompleteness(
+  encounter: Encounter,
+  customQuestions: HospitalCustomIntakeQuestion[] = [],
+): CompletenessResult {
   const issues: CompletenessIssue[] = [];
   const p = encounter.patient;
 
@@ -36,11 +49,25 @@ export function checkFormCompleteness(encounter: Encounter): CompletenessResult 
 
   // Pre-triage health info
   const healthInfo = p.optionalHealthInfo as Record<string, unknown> | null;
-  if (!healthInfo || Object.keys(healthInfo).length === 0) {
+  const applicableCustomQuestions = customQuestions.filter((question) => question.appliesTo !== 'triage');
+
+  if (applicableCustomQuestions.length > 0) {
+    applicableCustomQuestions.forEach((question) => {
+      const answer = healthInfo?.[question.fieldKey];
+      if (!hasMeaningfulValue(answer)) {
+        issues.push({
+          field: `custom:${question.fieldKey}`,
+          label: question.label,
+          severity: question.required ? 'required' : 'recommended',
+        });
+      }
+    });
+  } else if (!healthInfo || Object.keys(healthInfo).length === 0) {
     issues.push({ field: 'optionalHealthInfo', label: 'Pre-triage questionnaire', severity: 'recommended' });
   }
 
-  const totalChecks = 9; // 3 required + 6 recommended
+  const questionnaireChecks = applicableCustomQuestions.length > 0 ? applicableCustomQuestions.length : 1;
+  const totalChecks = 8 + questionnaireChecks;
   const score = Math.round(((totalChecks - issues.length) / totalChecks) * 100);
 
   return {

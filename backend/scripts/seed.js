@@ -22,6 +22,10 @@ const { PrismaClient } = require('@prisma/client');
 const { Pool } = require('pg');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { resolveHospitalActors, resolveTargetHospital } = require('./lib/seed-support');
+const {
+  generatePatientSessionToken,
+  hashPatientSessionToken,
+} = require('./lib/session-cookies');
 
 const connectionString =
   process.env.DATABASE_URL || 'postgresql://priage:priage@localhost:5432/priage';
@@ -271,28 +275,30 @@ async function seed() {
       orderBy: { createdAt: 'desc' },
     });
 
+    const rawSessionToken = generatePatientSessionToken();
     if (!demoSession) {
       const session = await prisma.patientSession.create({
         data: {
-          token: randomUUID(),
+          token: hashPatientSessionToken(rawSessionToken),
           patientId: patient.id,
           encounterId: encounter?.id ?? null,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         },
       });
       console.log(`✅ Created patient session for ${p.firstName} (session id=${session.id})`);
-      patientSessionSummaries.push({ ...p, sessionToken: session.token });
+      patientSessionSummaries.push({ ...p, sessionToken: rawSessionToken });
     } else {
       await prisma.patientSession.update({
         where: { id: demoSession.id },
         data: {
+          token: hashPatientSessionToken(rawSessionToken),
           patientId: patient.id,
           encounterId: encounter?.id ?? null,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         },
       });
-      console.log(`⏭️  Patient session exists for ${p.firstName} (session id=${demoSession.id})`);
-      patientSessionSummaries.push({ ...p, sessionToken: demoSession.token });
+      console.log(`⏭️  Rotated patient session for ${p.firstName} (session id=${demoSession.id})`);
+      patientSessionSummaries.push({ ...p, sessionToken: rawSessionToken });
     }
 
     if (encounter && p.starterMessages.length > 0) {

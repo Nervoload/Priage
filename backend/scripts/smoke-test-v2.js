@@ -16,9 +16,13 @@ const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
-const jwt = require('jsonwebtoken');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader } = require('./lib/demo-gate');
+const {
+  extractPatientCookieHeader,
+  hashPatientCookie,
+} = require('./lib/session-cookies');
+const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 // ============================================================================
 // CONFIGURATION
@@ -113,7 +117,7 @@ const testState = {
   staffToken: null,
   nurseToken: null,
   doctorToken: null,
-  patientToken: null,    // x-patient-token from intake intent
+  patientToken: null,    // patient session cookie from intake intent
   
   // Tracking
   correlationId: null,
@@ -176,12 +180,34 @@ function logSubSection(message) {
   log(`─── ${message} ───`, CONFIG.colors.cyan);
 }
 
+function looksLikeJwt(value) {
+  return typeof value === 'string' && value.split('.').length === 3;
+}
+
+function extractStaffSessionToken(headers) {
+  const setCookies = typeof headers?.getSetCookie === 'function'
+    ? headers.getSetCookie()
+    : [];
+  const rawCookies = setCookies.length > 0
+    ? setCookies
+    : (headers?.get?.('set-cookie') ? [headers.get('set-cookie')] : []);
+
+  for (const cookie of rawCookies) {
+    const match = String(cookie).match(new RegExp(`${STAFF_AUTH_COOKIE}=([^;]+)`));
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+
+  return null;
+}
+
 function generateCorrelationId() {
   return `smoke-test-${randomUUID()}`;
 }
 
 /**
- * Make an HTTP request. Supports both staff (Bearer) and patient (x-patient-token) auth.
+ * Make an HTTP request. Supports staff and cookie-backed patient auth.
  */
 async function makeRequest(method, path, opts = {}) {
   const url = `${CONFIG.baseUrl}${path}`;
@@ -189,12 +215,24 @@ async function makeRequest(method, path, opts = {}) {
   testState.correlationId = correlationId;
   
   const demoCookie = demoCookieHeader();
+  const staffHeaders = opts.headers || {};
   const headers = {
     'Content-Type': 'application/json',
     'X-Correlation-ID': correlationId,
-    ...(demoCookie ? { Cookie: demoCookie } : {}),
-    ...(opts.headers || {}),
+    ...(!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? { Origin: CONFIG.baseUrl } : {}),
+    ...(staffHeaders && staffHeaders.Authorization ? { Authorization: staffHeaders.Authorization } : {}),
   };
+  const cookieParts = [demoCookie, staffHeaders.Cookie];
+  const cookieHeader = cookieParts.filter(Boolean).join('; ');
+  if (cookieHeader) {
+    headers.Cookie = cookieHeader;
+  }
+  for (const [key, value] of Object.entries(staffHeaders)) {
+    if (key === 'Cookie' || key === 'Authorization') {
+      continue;
+    }
+    headers[key] = value;
+  }
   
   logVerbose(`${method} ${path}`);
   
@@ -217,17 +255,33 @@ async function makeRequest(method, path, opts = {}) {
   }
   
   logVerbose(`  → ${response.status} ${response.statusText}`);
-  return data;
+  if (data && typeof data === 'object') {
+    data._headers = response.headers;
+    return data;
+  }
+
+  return { data, _headers: response.headers };
 }
 
 /** Helper: staff auth header */
 function staffAuth(token) {
-  return { Authorization: `Bearer ${token}` };
+  if (!token) {
+    return {};
+  }
+
+  if (looksLikeJwt(token)) {
+    return { Authorization: `Bearer ${token}` };
+  }
+
+  return { Cookie: `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}` };
 }
 
-/** Helper: patient auth header */
-function patientAuth(token) {
-  return { 'x-patient-token': token };
+/** Helper: patient auth and retry-safety headers */
+function patientAuth(patientCookie) {
+  return {
+    Cookie: patientCookie,
+    'Idempotency-Key': `smoke-patient-${randomUUID()}`,
+  };
 }
 
 function pushUnique(list, value) {
@@ -250,23 +304,6 @@ function buildIntentPayload(overrides = {}) {
   };
 }
 
-function createExpiredJwt(user) {
-  if (!process.env.JWT_SECRET) {
-    throw new Error('JWT_SECRET environment variable is not set');
-  }
-
-  return jwt.sign(
-    {
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      hospitalId: user.hospitalId,
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: -10 },
-  );
-}
-
 async function expectRequestFailure(requestFactory, expectedFragments, unexpectedSuccessMessage) {
   try {
     await requestFactory();
@@ -285,6 +322,10 @@ async function createTrackedGuestEncounter(intentOverrides = {}) {
   const intent = await makeRequest('POST', '/intake/intent', {
     body: buildIntentPayload(intentOverrides),
   });
+  const patientCookie = extractPatientCookieHeader(intent._headers);
+  if (!patientCookie) {
+    throw new Error('Guest intake intent did not set a patient session cookie');
+  }
   fixtures.trackPatient(intent.patientId);
   const patient = await prisma.patientProfile.findUnique({
     where: { id: intent.patientId },
@@ -293,12 +334,69 @@ async function createTrackedGuestEncounter(intentOverrides = {}) {
     pushUnique(testState.extraPatientIds, patient.id);
   }
 
+  await completeInterviewForPatient(patientCookie);
+
   const encounter = await makeRequest('POST', '/intake/confirm', {
-    headers: patientAuth(intent.sessionToken),
+    headers: patientAuth(patientCookie),
     body: { hospitalId: testState.hospital.id },
   });
 
-  return { intent, patient, encounter };
+  return { intent, patient, encounter, patientCookie };
+}
+
+function buildInterviewAnswer(question) {
+  const payload = { questionPublicId: question.publicId };
+
+  switch (question.inputType) {
+    case 'boolean':
+      payload.valueBoolean = false;
+      return payload;
+    case 'number':
+      payload.valueNumber = 3;
+      return payload;
+    case 'single_select':
+      payload.valueChoice = question.choices?.[0] ?? 'No';
+      return payload;
+    case 'textarea':
+    case 'text':
+    default:
+      payload.valueText = `Smoke answer for ${question.publicId}`;
+      return payload;
+  }
+}
+
+async function completeInterviewForPatient(patientCookie) {
+  let interview = await makeRequest('POST', '/intake/interview/start', {
+    headers: patientAuth(patientCookie),
+  });
+
+  for (let index = 0; index < 12; index += 1) {
+    if (interview.status === 'complete') {
+      if (!interview.summaryPreview) {
+        throw new Error('Interview completed without a summary preview');
+      }
+      return interview;
+    }
+
+    if (interview.status === 'emergency_ack_required') {
+      interview = await makeRequest('POST', '/intake/interview/advance', {
+        headers: patientAuth(patientCookie),
+        body: { action: 'acknowledge_emergency' },
+      });
+      continue;
+    }
+
+    if (!interview.currentQuestion) {
+      throw new Error(`Interview is ${interview.status} but has no currentQuestion`);
+    }
+
+    interview = await makeRequest('POST', '/intake/interview/advance', {
+      headers: patientAuth(patientCookie),
+      body: buildInterviewAnswer(interview.currentQuestion),
+    });
+  }
+
+  throw new Error(`Interview did not complete after repeated answers; last status=${interview.status}`);
 }
 
 async function createStaffReadyPatient(overrides = {}) {
@@ -509,17 +607,18 @@ async function testAuthentication() {
     const staffLogin = await makeRequest('POST', '/auth/login', {
       body: { email: testState.staffUser.email, password: CONFIG.testPassword },
     });
-    if (!staffLogin.access_token) throw new Error('No access token returned');
-    testState.staffToken = staffLogin.access_token;
+    const staffSessionToken = extractStaffSessionToken(staffLogin._headers) ?? staffLogin.access_token ?? null;
+    if (!staffSessionToken) throw new Error('No staff session returned');
+    testState.staffToken = staffSessionToken;
     logSuccess('Staff user authenticated');
-    logVerbose(`  Token: ${staffLogin.access_token.substring(0, 30)}...`);
+    logVerbose(`  Session token: ${String(staffSessionToken).substring(0, 30)}...`);
     
     // 1B: Nurse login
     logSubSection('1B: Nurse User Login');
     const nurseLogin = await makeRequest('POST', '/auth/login', {
       body: { email: testState.nurseUser.email, password: CONFIG.testPassword },
     });
-    testState.nurseToken = nurseLogin.access_token;
+    testState.nurseToken = extractStaffSessionToken(nurseLogin._headers) ?? nurseLogin.access_token ?? null;
     logSuccess('Nurse user authenticated');
     
     // 1C: Doctor login
@@ -527,7 +626,7 @@ async function testAuthentication() {
     const doctorLogin = await makeRequest('POST', '/auth/login', {
       body: { email: testState.doctorUser.email, password: CONFIG.testPassword },
     });
-    testState.doctorToken = doctorLogin.access_token;
+    testState.doctorToken = extractStaffSessionToken(doctorLogin._headers) ?? doctorLogin.access_token ?? null;
     logSuccess('Doctor user authenticated');
     
     // 1D: Protected route
@@ -558,16 +657,16 @@ async function testAuthentication() {
     );
     logSuccess('Unauthenticated request correctly rejected');
 
-    logSubSection('1G: Expired JWT Request (Expected 401)');
-    const expiredToken = createExpiredJwt(testState.staffUser);
+    logSubSection('1G: Invalid Staff Session Request (Expected 401)');
+    const invalidToken = 'expired.invalid.token';
     await expectRequestFailure(
       () => makeRequest('GET', '/encounters', {
-        headers: staffAuth(expiredToken),
+        headers: staffAuth(invalidToken),
       }),
-      ['401', 'Unauthorized', 'jwt expired'],
-      'Expired JWT unexpectedly succeeded',
+      ['401', 'Unauthorized', 'Invalid staff session'],
+      'Invalid staff session unexpectedly succeeded',
     );
-    logSuccess('Expired JWT correctly rejected');
+    logSuccess('Invalid staff session correctly rejected');
     
   } catch (error) {
     logError('Authentication test failed', error);
@@ -603,21 +702,23 @@ async function testPatientIntake() {
       body: buildIntentPayload(),
     });
     
-    if (!intent.sessionToken) throw new Error('No sessionToken returned');
+    if (intent.sessionToken !== undefined) throw new Error('Patient intent exposed a sessionToken');
     if (!intent.patientId) throw new Error('No patientId returned');
+    const patientCookie = extractPatientCookieHeader(intent._headers);
+    if (!patientCookie) throw new Error('No patient session cookie returned');
     
-    testState.patientToken = intent.sessionToken;
+    testState.patientToken = patientCookie;
     fixtures.trackPatient(intent.patientId);
     testState.intakePatient = await prisma.patientProfile.findUnique({
       where: { id: intent.patientId },
     });
     
     logSuccess(`Intent created — patientId: ${intent.patientId}, encounterId: ${intent.encounterId ?? 'null (expected)'}`);
-    logVerbose(`  Token: ${intent.sessionToken.substring(0, 30)}...`);
+    logVerbose('  Patient session established through an HttpOnly cookie');
     
     logSubSection('2C: Verify Patient Session Token');
     testState.patientSession = await prisma.patientSession.findFirst({
-      where: { token: testState.patientToken },
+      where: { token: hashPatientCookie(testState.patientToken) },
     });
     if (!testState.patientSession) throw new Error('No patient session found');
     logSuccess('Patient session token verified in database');
@@ -626,7 +727,7 @@ async function testPatientIntake() {
     logSubSection('2D: Invalid Patient Token (Expected 401)');
     await expectRequestFailure(
       () => makeRequest('POST', '/intake/confirm', {
-        headers: patientAuth('invalid-patient-token'),
+        headers: patientAuth('priage_patient_session=invalid-patient-token'),
         body: { hospitalId: testState.hospital.id },
       }),
       ['401', 'Invalid patient session token', 'Unauthorized'],
@@ -634,7 +735,25 @@ async function testPatientIntake() {
     );
     logSuccess('Invalid patient token correctly rejected');
 
-    logSubSection('2E: Invalid Hospital Slug (Expected 404)');
+    logSubSection('2E: Confirm Before Interview Complete (Expected 400)');
+    await expectRequestFailure(
+      () => makeRequest('POST', '/intake/confirm', {
+        headers: patientAuth(testState.patientToken),
+        body: { hospitalSlug: 'does-not-exist' },
+      }),
+      ['400', 'Please complete the intake interview before selecting a hospital.'],
+      'Intent confirmation unexpectedly succeeded before interview completion',
+    );
+    logSuccess('Interview completion is required before hospital selection');
+
+    logSubSection('2F: Complete Intake Interview');
+    const completedInterview = await completeInterviewForPatient(testState.patientToken);
+    if (completedInterview.status !== 'complete') {
+      throw new Error(`Expected interview to complete, got ${completedInterview.status}`);
+    }
+    logSuccess('Patient intake interview completed');
+
+    logSubSection('2G: Invalid Hospital Slug After Interview (Expected 404)');
     await expectRequestFailure(
       () => makeRequest('POST', '/intake/confirm', {
         headers: patientAuth(testState.patientToken),
@@ -643,9 +762,9 @@ async function testPatientIntake() {
       ['404', 'Hospital not found'],
       'Intent confirmation unexpectedly succeeded with invalid hospital slug',
     );
-    logSuccess('Invalid hospital slug correctly rejected');
+    logSuccess('Invalid hospital slug correctly rejected after interview completion');
 
-    logSubSection('2F: Expired Patient Token (Expected 401)');
+    logSubSection('2H: Expired Patient Token (Expected 401)');
     const expiredIntent = await makeRequest('POST', '/intake/intent', {
       body: buildIntentPayload({
         firstName: 'Expired',
@@ -653,15 +772,18 @@ async function testPatientIntake() {
         chiefComplaint: 'Dizziness',
       }),
     });
+    const expiredPatientCookie = extractPatientCookieHeader(expiredIntent._headers);
+    if (!expiredPatientCookie) throw new Error('Expired-session fixture did not receive a patient cookie');
     fixtures.trackPatient(expiredIntent.patientId);
     pushUnique(testState.extraPatientIds, expiredIntent.patientId);
+    await completeInterviewForPatient(expiredPatientCookie);
     await prisma.patientSession.update({
-      where: { token: expiredIntent.sessionToken },
+      where: { token: hashPatientCookie(expiredPatientCookie) },
       data: { expiresAt: new Date(Date.now() - 60_000) },
     });
     await expectRequestFailure(
       () => makeRequest('POST', '/intake/confirm', {
-        headers: patientAuth(expiredIntent.sessionToken),
+        headers: patientAuth(expiredPatientCookie),
         body: { hospitalId: testState.hospital.id },
       }),
       ['401', 'expired', 'Unauthorized'],
@@ -669,7 +791,7 @@ async function testPatientIntake() {
     );
     logSuccess('Expired patient token correctly rejected');
 
-    logSubSection('2G: Confirm Intent (POST /intake/confirm)');
+    logSubSection('2I: Confirm Intent (POST /intake/confirm)');
     const confirmedEncounter = await makeRequest('POST', '/intake/confirm', {
       headers: patientAuth(testState.patientToken),
       body: { hospitalId: testState.hospital.id },
@@ -683,7 +805,7 @@ async function testPatientIntake() {
     testState.encounter = confirmedEncounter;
     logSuccess(`Intent confirmed — Encounter ID: ${confirmedEncounter.id}, status: ${confirmedEncounter.status}`);
     
-    logSubSection('2H: Update Intake Details (PATCH /intake/details)');
+    logSubSection('2J: Update Intake Details (PATCH /intake/details)');
     await makeRequest('PATCH', '/intake/details', {
       headers: patientAuth(testState.patientToken),
       body: {
@@ -693,14 +815,14 @@ async function testPatientIntake() {
     });
     logSuccess('Intake details updated');
     
-    logSubSection('2I: Record Patient Location (POST /intake/location)');
+    logSubSection('2K: Record Patient Location (POST /intake/location)');
     await makeRequest('POST', '/intake/location', {
       headers: patientAuth(testState.patientToken),
       body: { latitude: 43.6532, longitude: -79.3832 },
     });
     logSuccess('Patient location recorded');
 
-    logSubSection('2J: Patient Lists Own Encounters');
+    logSubSection('2L: Patient Lists Own Encounters');
     const patientEncounters = await makeRequest('GET', '/patient/encounters', {
       headers: patientAuth(testState.patientToken),
     });
@@ -709,7 +831,7 @@ async function testPatientIntake() {
     }
     logSuccess('Patient encounter list includes the active encounter');
 
-    logSubSection('2K: Patient Reads Encounter Detail');
+    logSubSection('2M: Patient Reads Encounter Detail');
     const patientEncounterDetail = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}`, {
       headers: patientAuth(testState.patientToken),
     });
@@ -719,9 +841,12 @@ async function testPatientIntake() {
     if (patientEncounterDetail.details !== 'Pain started 2 hours ago, radiating to left arm. No previous heart issues.') {
       throw new Error('Patient encounter detail did not reflect updated details');
     }
+    if (!patientEncounterDetail.priageSummary) {
+      throw new Error('Patient encounter detail is missing the AI priage summary');
+    }
     logSuccess('Patient encounter detail matches the confirmed visit');
 
-    logSubSection('2L: Patient Queue Before Waiting');
+    logSubSection('2N: Patient Queue Before Waiting');
     const initialQueue = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}/queue`, {
       headers: patientAuth(testState.patientToken),
     });
@@ -730,7 +855,7 @@ async function testPatientIntake() {
     }
     logSuccess('Patient queue is empty before WAITING');
 
-    logSubSection('2M: Patient Cancel Flow on Fresh Encounter');
+    logSubSection('2O: Patient Cancel Flow on Fresh Encounter');
     const cancelFlow = await createTrackedGuestEncounter({
       firstName: 'Cancel',
       lastName: 'Flow',
@@ -738,7 +863,7 @@ async function testPatientIntake() {
       details: 'Temporary encounter to verify cancel flow.',
     });
     const cancelledEncounter = await makeRequest('POST', `/patient/encounters/${cancelFlow.encounter.id}/cancel`, {
-      headers: patientAuth(cancelFlow.intent.sessionToken),
+      headers: patientAuth(cancelFlow.patientCookie),
     });
     if (cancelledEncounter.status !== 'CANCELLED' || !cancelledEncounter.cancelledAt) {
       throw new Error('Patient cancel flow did not persist CANCELLED state');
@@ -746,7 +871,7 @@ async function testPatientIntake() {
     testState.cancelledEncounter = cancelledEncounter;
     logSuccess('Patient cancel flow works on a fresh encounter');
 
-    logSubSection('2N: Patient Ownership Enforcement');
+    logSubSection('2P: Patient Ownership Enforcement');
     const intruderFlow = await createTrackedGuestEncounter({
       firstName: 'Other',
       lastName: 'Guest',

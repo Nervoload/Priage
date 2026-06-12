@@ -1,7 +1,7 @@
 // backend/src/modules/users/users.controller.ts
 // Hospital staff endpoints
 
-import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Query, Req, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Request } from 'express';
 
@@ -9,6 +9,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
 import { UsersService } from './users.service';
 
 @Controller('users')
@@ -20,6 +21,16 @@ export class UsersController {
   @Get('me')
   async getMe(@Req() req: Request, @CurrentUser() user: any) {
     return this.usersService.getUser(user.userId, req.correlationId);
+  }
+
+  // PATCH /users/me - Update current staff account
+  @Patch('me')
+  async updateMe(
+    @Body() dto: UpdateUserProfileDto,
+    @Req() req: Request,
+    @CurrentUser() user: any,
+  ) {
+    return this.usersService.updateProfile(user.userId, dto, req.correlationId, user.sessionId);
   }
 
   // GET /users - List hospital staff (ADMIN, NURSE, DOCTOR only)

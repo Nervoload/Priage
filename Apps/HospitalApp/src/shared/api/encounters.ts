@@ -3,7 +3,13 @@
 // Uses the authenticated fetch wrapper from client.ts.
 
 import { client } from './client';
-import type { Encounter, EncounterListResponse, EncounterStatus } from '../types/domain';
+import type {
+  CreateAdmittanceEncounterPayload,
+  EncounterDetail,
+  EncounterListItem,
+  EncounterListResponse,
+  EncounterStatus,
+} from '../types/domain';
 
 // ─── List encounters (with optional status filter) ─────────────────────────
 
@@ -11,6 +17,7 @@ export interface ListEncountersParams {
   status?: EncounterStatus[];
   since?: string;
   limit?: number;
+  cursor?: number;
 }
 
 export async function listEncounters(
@@ -22,6 +29,7 @@ export async function listEncounters(
   }
   if (params.since) query.set('since', params.since);
   if (params.limit) query.set('limit', String(params.limit));
+  if (params.cursor) query.set('cursor', String(params.cursor));
 
   const qs = query.toString();
   return client<EncounterListResponse>(`/encounters${qs ? `?${qs}` : ''}`);
@@ -29,8 +37,8 @@ export async function listEncounters(
 
 // ─── Get a single encounter (with relations) ───────────────────────────────
 
-export async function getEncounter(id: number): Promise<Encounter> {
-  return client<Encounter>(`/encounters/${id}`);
+export async function getEncounter(id: number): Promise<EncounterDetail> {
+  return client<EncounterDetail>(`/encounters/${id}`);
 }
 
 // ─── Create encounter ──────────────────────────────────────────────────────
@@ -43,8 +51,17 @@ export interface CreateEncounterPayload {
 
 export async function createEncounter(
   payload: CreateEncounterPayload,
-): Promise<Encounter> {
-  return client<Encounter>('/encounters', {
+): Promise<EncounterListItem> {
+  return client<EncounterListItem>('/encounters', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createAdmittanceEncounter(
+  payload: CreateAdmittanceEncounterPayload,
+): Promise<EncounterDetail> {
+  return client<EncounterDetail>('/encounters/admit', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -52,26 +69,26 @@ export async function createEncounter(
 
 // ─── Status transitions ────────────────────────────────────────────────────
 
-export async function confirmEncounter(id: number): Promise<Encounter> {
-  return client<Encounter>(`/encounters/${id}/confirm`, { method: 'POST' });
+export async function confirmEncounter(id: number): Promise<EncounterListItem> {
+  return client<EncounterListItem>(`/encounters/${id}/confirm`, { method: 'POST' });
 }
 
-export async function markArrived(id: number): Promise<Encounter> {
-  return client<Encounter>(`/encounters/${id}/arrived`, { method: 'POST' });
+export async function markArrived(id: number): Promise<EncounterListItem> {
+  return client<EncounterListItem>(`/encounters/${id}/arrived`, { method: 'POST' });
 }
 
-export async function startExam(id: number): Promise<Encounter> {
-  return client<Encounter>(`/encounters/${id}/start-exam`, { method: 'POST' });
+export async function startExam(id: number): Promise<EncounterListItem> {
+  return client<EncounterListItem>(`/encounters/${id}/start-exam`, { method: 'POST' });
 }
 
-export async function moveToWaiting(id: number): Promise<Encounter> {
-  return client<Encounter>(`/encounters/${id}/waiting`, { method: 'POST' });
+export async function moveToWaiting(id: number): Promise<EncounterListItem> {
+  return client<EncounterListItem>(`/encounters/${id}/waiting`, { method: 'POST' });
 }
 
-export async function dischargeEncounter(id: number): Promise<Encounter> {
-  return client<Encounter>(`/encounters/${id}/discharge`, { method: 'POST' });
+export async function dischargeEncounter(id: number): Promise<EncounterListItem> {
+  return client<EncounterListItem>(`/encounters/${id}/discharge`, { method: 'POST' });
 }
 
-export async function cancelEncounter(id: number): Promise<Encounter> {
-  return client<Encounter>(`/encounters/${id}/cancel`, { method: 'POST' });
+export async function cancelEncounter(id: number): Promise<EncounterListItem> {
+  return client<EncounterListItem>(`/encounters/${id}/cancel`, { method: 'POST' });
 }

@@ -12,6 +12,8 @@ const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader } = require('./lib/demo-gate');
+const { extractPatientCookieHeader } = require('./lib/session-cookies');
+const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 // Initialize Prisma with pg-adapter (Prisma 7 approach)
 const pool = new Pool({
@@ -119,6 +121,41 @@ async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function looksLikeJwt(value) {
+  return typeof value === 'string' && value.split('.').length === 3;
+}
+
+function extractStaffSessionToken(headers) {
+  const rawCookies = Array.isArray(headers?.['set-cookie'])
+    ? headers['set-cookie']
+    : (headers?.['set-cookie']
+      ? [headers['set-cookie']]
+      : (typeof headers?.getSetCookie === 'function'
+        ? headers.getSetCookie()
+        : (headers?.get?.('set-cookie') ? [headers.get('set-cookie')] : [])));
+
+  for (const cookie of rawCookies) {
+    const match = String(cookie).match(new RegExp(`${STAFF_AUTH_COOKIE}=([^;]+)`));
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function buildStaffAuthHeaders(token) {
+  if (!token) {
+    return {};
+  }
+
+  if (looksLikeJwt(token)) {
+    return { Authorization: `Bearer ${token}` };
+  }
+
+  return { Cookie: `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}` };
+}
+
 // ============================================================================
 // HTTP Request Wrapper
 // ============================================================================
@@ -167,6 +204,9 @@ function makeRequest(options, body = null) {
 function buildRequestOptions(path, method = 'GET', includeAuth = false) {
   const url = new URL(CONFIG.baseUrl + path);
   const demoCookie = demoCookieHeader();
+  const authHeaders = includeAuth && testState.accessToken
+    ? buildStaffAuthHeaders(testState.accessToken)
+    : {};
   
   const options = {
     protocol: url.protocol,
@@ -176,15 +216,92 @@ function buildRequestOptions(path, method = 'GET', includeAuth = false) {
     method: method,
     headers: {
       'Content-Type': 'application/json',
-      ...(demoCookie ? { Cookie: demoCookie } : {}),
+      ...(!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? { Origin: CONFIG.baseUrl } : {}),
+      ...(authHeaders.Authorization ? { Authorization: authHeaders.Authorization } : {}),
     },
   };
-  
-  if (includeAuth && testState.accessToken) {
-    options.headers['Authorization'] = `Bearer ${testState.accessToken}`;
+  const cookieParts = [demoCookie, authHeaders.Cookie];
+  const cookieHeader = cookieParts.filter(Boolean).join('; ');
+  if (cookieHeader) {
+    options.headers.Cookie = cookieHeader;
   }
   
   return options;
+}
+
+function buildPatientRequestOptions(path, method, patientCookie, idempotencyKey) {
+  const options = buildRequestOptions(path, method, false);
+  options.headers.Cookie = [options.headers.Cookie, patientCookie].filter(Boolean).join('; ');
+  if (idempotencyKey) {
+    options.headers['Idempotency-Key'] = idempotencyKey;
+  }
+  return options;
+}
+
+function buildInterviewAnswer(question) {
+  const payload = { questionPublicId: question.publicId };
+
+  switch (question.inputType) {
+    case 'boolean':
+      payload.valueBoolean = false;
+      return payload;
+    case 'number':
+      payload.valueNumber = 3;
+      return payload;
+    case 'single_select':
+      payload.valueChoice = question.choices?.[0] ?? 'No';
+      return payload;
+    case 'textarea':
+    case 'text':
+    default:
+      payload.valueText = `Logging test answer for ${question.publicId}`;
+      return payload;
+  }
+}
+
+async function completeInterviewForPatient(patientCookie) {
+  let options = buildPatientRequestOptions('/intake/interview/start', 'POST', patientCookie);
+  let response = await makeRequest(options);
+  let interview = response.data;
+
+  if (response.statusCode !== 200 && response.statusCode !== 201) {
+    throw new Error(`Interview start failed with status ${response.statusCode}`);
+  }
+
+  for (let index = 0; index < 12; index += 1) {
+    if (interview?.status === 'complete') {
+      if (!interview.summaryPreview) {
+        throw new Error('Interview completed without a summary preview');
+      }
+      return interview;
+    }
+
+    options = buildPatientRequestOptions(
+      '/intake/interview/advance',
+      'POST',
+      patientCookie,
+      `logging-interview-${randomUUID()}`,
+    );
+
+    if (interview?.status === 'emergency_ack_required') {
+      response = await makeRequest(options, { action: 'acknowledge_emergency' });
+      interview = response.data;
+      continue;
+    }
+
+    if (!interview?.currentQuestion) {
+      throw new Error(`Interview is ${interview?.status ?? 'unknown'} but has no currentQuestion`);
+    }
+
+    response = await makeRequest(options, buildInterviewAnswer(interview.currentQuestion));
+    interview = response.data;
+
+    if (response.statusCode !== 200 && response.statusCode !== 201) {
+      throw new Error(`Interview advance failed with status ${response.statusCode}`);
+    }
+  }
+
+  throw new Error(`Interview did not complete after repeated answers; last status=${interview?.status ?? 'unknown'}`);
 }
 
 // ============================================================================
@@ -367,7 +484,7 @@ async function testAuthenticationLogging() {
     testState.correlationId = correlationId;
     
     if (response.statusCode === 200 || response.statusCode === 201) {
-      testState.accessToken = response.data.access_token;
+      testState.accessToken = extractStaffSessionToken(response.headers) ?? response.data.access_token ?? null;
       testState.userId = response.data.user.id;
       testState.hospitalId = response.data.user.hospitalId;
       
@@ -387,17 +504,17 @@ async function testAuthenticationLogging() {
   
   await sleep(1000);
   
-  // Test 1C: JWT validation (accessing protected route)
-  logInfo('Test 1C: Testing JWT validation...');
+  // Test 1C: Staff session validation (accessing protected route)
+  logInfo('Test 1C: Testing staff session validation...');
   try {
     const options = buildRequestOptions('/auth/me', 'GET', true);
     const response = await makeRequest(options);
     
     if (response.statusCode === 200) {
-      logSuccess('Test 1C: JWT validation successful');
-      logInfo('Test 1C: JWT validation logs written (check DEBUG level)');
+      logSuccess('Test 1C: Staff session validation successful');
+      logInfo('Test 1C: Staff session validation logs written (check DEBUG level)');
     } else {
-      logError(`Test 1C: JWT validation failed with status ${response.statusCode}`);
+      logError(`Test 1C: Staff session validation failed with status ${response.statusCode}`);
     }
   } catch (error) {
     logError(`Test 1C: Failed - ${error.message}`);
@@ -442,7 +559,6 @@ async function testEncounterWorkflowLogging() {
     const options = buildRequestOptions('/encounters', 'POST', true);
     const response = await makeRequest(options, {
       patientId: testState.patientId,
-      hospitalId: testState.hospitalId,
       chiefComplaint: 'Test logging complaint',
       details: 'Testing comprehensive logging system',
     });
@@ -662,7 +778,7 @@ async function testErrorLogging() {
     
     if (response.statusCode === 401) {
       logSuccess('Test 4C: Authorization error triggered correctly');
-      logInfo('Test 4C: Auth errors logged by JWT guard');
+      logInfo('Test 4C: Auth errors logged by staff session guard');
     } else {
       logWarning(`Test 4C: Expected 401, got ${response.statusCode}`);
     }
@@ -894,8 +1010,6 @@ async function testAdditionalServicesLogging() {
       true
     );
     const response = await makeRequest(options, {
-      senderType: 'USER',
-      createdByUserId: testState.userId,
       content: 'Test message for logging verification',
       isInternal: true,
     });
@@ -921,10 +1035,8 @@ async function testAdditionalServicesLogging() {
     const options = buildRequestOptions('/alerts', 'POST', true);
     const response = await makeRequest(options, {
       encounterId: testState.encounterId,
-      hospitalId: testState.hospitalId,
       type: 'TEST_ALERT',
       severity: 'LOW',
-      actorUserId: testState.userId,
     });
     
     const correlationId = response.headers['x-correlation-id'];
@@ -948,10 +1060,8 @@ async function testAdditionalServicesLogging() {
     const options = buildRequestOptions('/triage/assessments', 'POST', true);
     const response = await makeRequest(options, {
       encounterId: testState.encounterId,
-      hospitalId: testState.hospitalId,
       ctasLevel: 3,
       note: 'Test triage for logging verification',
-      createdByUserId: testState.userId,
     });
     
     const correlationId = response.headers['x-correlation-id'];
@@ -983,7 +1093,7 @@ async function testNewServicesLogging() {
   
   // Test 8A: Intake service - Create intent
   logInfo('Test 8A: Testing intake service logging - create intent...');
-  let sessionToken = null;
+  let patientCookie = null;
   try {
     const options = buildRequestOptions('/intake/intent', 'POST', false);
     const response = await makeRequest(options, {
@@ -998,8 +1108,11 @@ async function testNewServicesLogging() {
     const correlationId = response.headers['x-correlation-id'];
 
     if (response.statusCode === 200 || response.statusCode === 201) {
-      sessionToken = response.data.sessionToken;
+      patientCookie = extractPatientCookieHeader(response.headers);
       testState.intakePatientId = response.data.patientId;
+      if (!patientCookie || response.data.sessionToken !== undefined) {
+        throw new Error('Patient intent did not use the expected cookie-only session response');
+      }
       logSuccess('Test 8A: Patient intent created');
       
       logPromotedCorrelationNote('Test 8A');
@@ -1013,11 +1126,17 @@ async function testNewServicesLogging() {
   await sleep(1000);
   
   // Test 8B: Intake service - Confirm intent
-  if (sessionToken) {
+  if (patientCookie) {
     logInfo('Test 8B: Testing intake service logging - confirm intent...');
     try {
-      const options = buildRequestOptions('/intake/confirm', 'POST', false);
-      options.headers['x-patient-token'] = sessionToken;
+      await completeInterviewForPatient(patientCookie);
+
+      const options = buildPatientRequestOptions(
+        '/intake/confirm',
+        'POST',
+        patientCookie,
+        `logging-confirm-${randomUUID()}`,
+      );
       
       const response = await makeRequest(options, {
         hospitalId: testState.hospitalId,
@@ -1036,18 +1155,22 @@ async function testNewServicesLogging() {
       logError(`Test 8B: Failed - ${error.message}`);
     }
   } else {
-    logWarning('Test 8B: Skipped (no session token)');
+    logWarning('Test 8B: Skipped (no patient session cookie)');
     testState.testsSkipped++;
   }
   
   await sleep(1000);
   
   // Test 8C: Intake service - Update details
-  if (sessionToken) {
+  if (patientCookie) {
     logInfo('Test 8C: Testing intake service logging - update details...');
     try {
-      const options = buildRequestOptions('/intake/details', 'PATCH', false);
-      options.headers['x-patient-token'] = sessionToken;
+      const options = buildPatientRequestOptions(
+        '/intake/details',
+        'PATCH',
+        patientCookie,
+        `logging-details-${randomUUID()}`,
+      );
       
       const response = await makeRequest(options, {
         firstName: 'Updated',

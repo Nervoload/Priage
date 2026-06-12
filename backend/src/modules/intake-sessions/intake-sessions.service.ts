@@ -28,6 +28,7 @@ import { randomUUID } from 'crypto';
 
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
+import { buildGuestPlaceholderPasswordHash } from '../patient-auth/patient-password.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
@@ -539,6 +540,17 @@ export class IntakeSessionsService {
       },
     });
 
+    await tx.summaryProjection.updateMany({
+      where: {
+        intakeSessionId,
+        kind: SummaryProjectionKind.AI_DERIVED,
+        active: true,
+      },
+      data: {
+        encounterId: encounter.id,
+      },
+    });
+
     const refreshedProjection = await this.buildOperationalProjectionTx(tx, intakeSessionId);
     await this.refreshOperationalSummaryTx(tx, intakeSessionId, encounter.id, refreshedProjection);
     await this.syncEncounterProjectionTx(tx, encounter.id, refreshedProjection);
@@ -712,10 +724,11 @@ export class IntakeSessionsService {
       return patientId;
     }
 
+    const placeholderPasswordHash = await buildGuestPlaceholderPasswordHash();
     const created = await tx.patientProfile.create({
       data: {
         email: `${randomUUID()}@intake.local`,
-        password: randomUUID(),
+        password: placeholderPasswordHash,
         preferredLanguage: 'en',
       },
       select: { id: true },

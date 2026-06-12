@@ -21,7 +21,7 @@ const STATUS_STYLES: Record<EncounterStatus, string> = {
 const STATUS_LABELS: Record<EncounterStatus, string> = {
   EXPECTED: 'Expected',
   ADMITTED: 'Admitted',
-  TRIAGE: 'In Triage',
+  TRIAGE: 'Triage',
   WAITING: 'Waiting',
   COMPLETE: 'Complete',
   UNRESOLVED: 'Unresolved',

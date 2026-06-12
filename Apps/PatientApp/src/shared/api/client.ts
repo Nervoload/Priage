@@ -1,6 +1,9 @@
 export const API_BASE_URL: string =
   import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 
+export const DEMO_ACCESS_REQUIRED_EVENT = 'demo-access-required';
+export const PATIENT_SESSION_EXPIRED_EVENT = 'patient-session-expired';
+
 /**
  * Authenticated fetch wrapper for patient endpoints.
  * Browser auth is carried by an HttpOnly patient-session cookie.
@@ -22,12 +25,13 @@ export async function client<T = unknown>(
     headers,
   });
 
-  if (response.status === 401 || response.status === 403) {
-    window.dispatchEvent(new CustomEvent('patient-session-expired'));
-  }
-
   if (!response.ok) {
     const body = await response.text().catch(() => '');
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent(PATIENT_SESSION_EXPIRED_EVENT));
+    } else if (response.status === 403 && body.includes('Demo access required')) {
+      window.dispatchEvent(new CustomEvent(DEMO_ACCESS_REQUIRED_EVENT));
+    }
     throw new ApiError(response.status, body, endpoint);
   }
 

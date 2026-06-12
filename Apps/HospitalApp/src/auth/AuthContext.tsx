@@ -1,12 +1,13 @@
 // HospitalApp/src/auth/AuthContext.tsx
-// Global auth context — stores JWT user info and provides login/logout.
+// Global auth context — stores staff session user info and provides login/logout.
 // Wraps the app so any component can access the current user + hospitalId.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AuthUser, LoginResponse } from '../shared/types/domain';
 import { login as apiLogin, getMe, logout as apiLogout } from '../shared/api/auth';
-import { connectSocket, disconnectSocket } from '../shared/realtime/socket';
+import { ApiError, AUTH_EXPIRED_EVENT } from '../shared/api/client';
+import { disconnectSocket } from '../shared/realtime/socket';
 
 // ─── Context shape ──────────────────────────────────────────────────────────
 
@@ -19,8 +20,10 @@ interface AuthContextValue {
   initializing: boolean;
   /** True while a login request is in flight. */
   loggingIn: boolean;
+  /** Refresh the current user from the backend session. */
+  refreshUser: () => Promise<AuthUser | null>;
   /** Log in with email + password. Throws on failure. */
-  login: (email: string, password: string) => Promise<LoginResponse>;
+  login: (email: string, password: string, mfaCode?: string) => Promise<LoginResponse>;
   /** Log out and clear all auth state. */
   logout: () => void;
 }
@@ -34,7 +37,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [initializing, setInitializing] = useState(true);
   const [loggingIn, setLoggingIn] = useState(false);
 
-  // On mount: if there's a stored token, validate it via GET /auth/me
+  const logout = useCallback(() => {
+    disconnectSocket();
+    void apiLogout().catch(() => undefined);
+    setUser(null);
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    try {
+      const me = await getMe();
+      setUser(me);
+      return me;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        disconnectSocket();
+        setUser(null);
+        return null;
+      }
+      throw error;
+    }
+  }, []);
+
+  // On mount: if there's a stored session cookie, validate it via GET /auth/me
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -42,7 +66,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const me = await getMe();
         if (!cancelled) {
           setUser(me);
-          connectSocket();
         }
       } catch {
         // No active cookie-backed session.
@@ -53,10 +76,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string, mfaCode?: string) => {
     setLoggingIn(true);
     try {
-      const result = await apiLogin(email, password);
+      const result = await apiLogin(email, password, mfaCode);
       // Map the login response user shape → AuthUser shape
       setUser({
         userId: result.user.id,
@@ -65,17 +88,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hospitalId: result.user.hospitalId,
         hospital: result.user.hospital,
       });
-      connectSocket();
       return result;
     } finally {
       setLoggingIn(false);
     }
-  }, []);
-
-  const logout = useCallback(() => {
-    disconnectSocket();
-    void apiLogout().catch(() => undefined);
-    setUser(null);
   }, []);
 
   // Listen for 401 responses from the API client and auto-logout
@@ -83,8 +99,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleAuthExpired = () => {
       if (user) logout();
     };
-    window.addEventListener('auth-expired', handleAuthExpired);
-    return () => window.removeEventListener('auth-expired', handleAuthExpired);
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
   }, [user, logout]);
 
   const value = useMemo<AuthContextValue>(
@@ -93,10 +109,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       hospitalId: user?.hospitalId ?? 0,
       initializing,
       loggingIn,
+      refreshUser,
       login,
       logout,
     }),
-    [user, initializing, loggingIn, login, logout],
+    [user, initializing, loggingIn, refreshUser, login, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

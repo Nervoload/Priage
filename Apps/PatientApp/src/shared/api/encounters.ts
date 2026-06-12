@@ -8,6 +8,7 @@ import type {
   Message,
   QueueInfo,
 } from '../types/domain';
+import { sendDurablePatientCommand } from '../patientCommandOutbox';
 
 // ─── Encounters ─────────────────────────────────────────────────────────────
 
@@ -28,26 +29,44 @@ export async function getQueueInfo(id: number): Promise<QueueInfo> {
 
 /** POST /patient/encounters/:id/cancel — cancel own encounter */
 export async function cancelMyEncounter(id: number): Promise<Encounter> {
-  return client<Encounter>(`/patient/encounters/${id}/cancel`, {
-    method: 'POST',
-  });
+  return sendDurablePatientCommand<Encounter>(`/patient/encounters/${id}/cancel`, 'POST', {});
 }
 
 // ─── Messaging ──────────────────────────────────────────────────────────────
 
+export interface ListMyMessagesParams {
+  afterMessageId?: number;
+  limit?: number;
+}
+
 /** GET /patient/encounters/:encounterId/messages */
-export async function listMyMessages(encounterId: number): Promise<Message[]> {
-  return client<Message[]>(`/patient/encounters/${encounterId}/messages`);
+export async function listMyMessages(
+  encounterId: number,
+  params: ListMyMessagesParams = {},
+): Promise<Message[]> {
+  const query = new URLSearchParams();
+
+  if (params.afterMessageId != null) {
+    query.set('afterMessageId', String(params.afterMessageId));
+  }
+  if (params.limit != null) {
+    query.set('limit', String(params.limit));
+  }
+
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return client<Message[]>(`/patient/encounters/${encounterId}/messages${suffix}`);
 }
 
 /** POST /patient/encounters/:encounterId/messages */
 export async function sendPatientMessage(
   encounterId: number,
   content: string,
-  isWorsening = false,
+  isWorsening: boolean,
+  idempotencyKey: string,
 ): Promise<Message> {
   return client<Message>(`/patient/encounters/${encounterId}/messages`, {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({ content, isWorsening }),
   });
 }

@@ -4,14 +4,14 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Req,
   Res,
-  StreamableFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { FilesInterceptor } from '@nestjs/platform-express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -23,11 +23,15 @@ import {
   ASSET_MAX_FILES_PER_REQUEST,
 } from './assets.constants';
 import { AssetsService } from './assets.service';
+import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
 
 @Controller('assets')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AssetsController {
-  constructor(private readonly assetsService: AssetsService) {}
+  constructor(
+    private readonly assetsService: AssetsService,
+    private readonly clinicalAccess: ClinicalAccessService,
+  ) {}
 
   @Post('encounters/:encounterId/message-images')
   @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
@@ -37,8 +41,9 @@ export class AssetsController {
   async uploadMessageImages(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @UploadedFiles() files: Array<{ buffer: Buffer; mimetype: string; size: number; originalname: string }>,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, encounterId);
     return this.assetsService.uploadMessageImagesForStaff(
       encounterId,
       user.hospitalId,
@@ -48,27 +53,46 @@ export class AssetsController {
   }
 
   @Get('encounters/:encounterId')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async listForEncounter(
     @Param('encounterId', ParseIntPipe) encounterId: number,
-    @CurrentUser() user: { hospitalId: number },
+    @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
-    return this.assetsService.listEncounterAssets(encounterId, user.hospitalId);
+    await this.clinicalAccess.assertClinicalEncounterAccess(user, encounterId);
+    return this.assetsService.listEncounterAssets(
+      encounterId,
+      user.hospitalId,
+      user.userId,
+      req.correlationId,
+    );
   }
 
   @Get(':assetId/content')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
   async streamStaffAsset(
     @Param('assetId', ParseIntPipe) assetId: number,
-    @CurrentUser() user: { hospitalId: number },
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<StreamableFile> {
-    const file = await this.assetsService.streamAssetForStaff(assetId, user.hospitalId);
+    @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    await this.clinicalAccess.assertClinicalAssetAccess(user, assetId);
+    const file = await this.assetsService.streamAssetForStaff(
+      assetId,
+      user.hospitalId,
+      user.userId,
+      req.correlationId,
+    );
 
     res.setHeader('Content-Type', file.mimeType);
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.setHeader('ETag', file.etag);
 
-    return new StreamableFile(file.stream);
+    if (file.kind === 'redirect') {
+      res.redirect(302, file.url);
+      return;
+    }
+
+    file.stream.pipe(res);
   }
 }

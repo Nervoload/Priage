@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { API_BASE_URL } from '../shared/api/client';
+import { API_BASE_URL, DEMO_ACCESS_REQUIRED_EVENT } from '../shared/api/client';
 
 interface DemoGateState {
   /** True while the initial probe is in flight */
@@ -42,6 +42,15 @@ export function useDemoGate(): DemoGateState {
     })();
 
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    function handleDemoAccessRequired() {
+      setGateActive(true);
+    }
+
+    window.addEventListener(DEMO_ACCESS_REQUIRED_EVENT, handleDemoAccessRequired);
+    return () => window.removeEventListener(DEMO_ACCESS_REQUIRED_EVENT, handleDemoAccessRequired);
   }, []);
 
   const verify = useCallback(async (code: string) => {

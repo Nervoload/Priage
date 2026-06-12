@@ -31,7 +31,7 @@ function DemoGateWrapper({ children }: { children: ReactNode }) {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <DemoGateWrapper>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ToastProvider>
           <AuthProvider>
             <GuestSessionProvider>

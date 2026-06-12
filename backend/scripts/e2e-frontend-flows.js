@@ -24,6 +24,7 @@ const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader, demoSocketHeaders } = require('./lib/demo-gate');
+const { buildPatientCookieHeader, extractPatientCookieHeader } = require('./lib/session-cookies');
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const VERBOSE = process.argv.includes('--verbose');
@@ -45,13 +46,51 @@ let failed = 0;
 let token = null;
 let socket = null;
 let fixtureContext = null;
+const STAFF_AUTH_COOKIE = 'priage_staff_auth';
 
 if (!SEED && (!testEmail || !testPassword)) {
   throw new Error('E2E_TEST_EMAIL/E2E_TEST_PASSWORD or PRIAGE_DEV_ADMIN_EMAIL/PRIAGE_DEV_ADMIN_PASSWORD must be set when not using --seed');
 }
 
-function patientHeaders(sessionToken) {
-  return { 'x-patient-token': sessionToken };
+function patientHeaders(patientCookie, idempotencyKey) {
+  return {
+    Cookie: patientCookie,
+    ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+  };
+}
+
+function looksLikeJwt(value) {
+  return typeof value === 'string' && value.split('.').length === 3;
+}
+
+function extractStaffSessionToken(headers) {
+  const setCookies = typeof headers?.getSetCookie === 'function'
+    ? headers.getSetCookie()
+    : [];
+  const rawCookies = setCookies.length > 0
+    ? setCookies
+    : (headers?.get?.('set-cookie') ? [headers.get('set-cookie')] : []);
+
+  for (const cookie of rawCookies) {
+    const match = String(cookie).match(new RegExp(`${STAFF_AUTH_COOKIE}=([^;]+)`));
+    if (match?.[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function buildStaffAuthHeaders(staffToken) {
+  if (!staffToken) {
+    return {};
+  }
+
+  if (looksLikeJwt(staffToken)) {
+    return { Authorization: `Bearer ${staffToken}` };
+  }
+
+  return { Cookie: `${STAFF_AUTH_COOKIE}=${encodeURIComponent(staffToken)}` };
 }
 
 function deriveCriticalComplaint(encounter) {
@@ -68,8 +107,24 @@ function deriveCriticalComplaint(encounter) {
 
 async function api(method, path, body, auth = true, extraHeaders = {}) {
   const demoCookie = demoCookieHeader();
-  const headers = { 'Content-Type': 'application/json', ...(demoCookie ? { Cookie: demoCookie } : {}), ...extraHeaders };
-  if (auth && token && !extraHeaders['x-patient-token']) headers['Authorization'] = `Bearer ${token}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) ? { Origin: BASE } : {}),
+    ...extraHeaders,
+  };
+  const cookieParts = [demoCookie, extraHeaders.Cookie];
+  if (auth && token && !extraHeaders.Cookie) {
+    const staffAuthHeaders = buildStaffAuthHeaders(token);
+    if (staffAuthHeaders.Cookie) {
+      cookieParts.push(staffAuthHeaders.Cookie);
+    } else if (staffAuthHeaders.Authorization) {
+      headers.Authorization = staffAuthHeaders.Authorization;
+    }
+  }
+  const cookieHeader = cookieParts.filter(Boolean).join('; ');
+  if (cookieHeader) {
+    headers.Cookie = cookieHeader;
+  }
   const opts = { method, headers };
   if (body) opts.body = JSON.stringify(body);
 
@@ -83,7 +138,7 @@ async function api(method, path, body, auth = true, extraHeaders = {}) {
     if (json) console.log(`  ${C.dim}${JSON.stringify(json).slice(0, 200)}${C.reset}`);
   }
 
-  return { status: res.status, json, text };
+  return { status: res.status, json, text, headers: res.headers };
 }
 
 function assert(label, condition) {
@@ -100,14 +155,84 @@ function section(name) {
   console.log(`\n${C.cyan}${C.bold}── ${name} ──${C.reset}`);
 }
 
+function buildInterviewAnswer(question) {
+  const payload = { questionPublicId: question.publicId };
+
+  switch (question.inputType) {
+    case 'boolean':
+      payload.valueBoolean = false;
+      return payload;
+    case 'number':
+      payload.valueNumber = 3;
+      return payload;
+    case 'single_select':
+      payload.valueChoice = question.choices?.[0] ?? 'No';
+      return payload;
+    case 'textarea':
+    case 'text':
+    default:
+      payload.valueText = `E2E answer for ${question.publicId}`;
+      return payload;
+  }
+}
+
+async function completeInterviewForPatient(patientCookie) {
+  let interviewResponse = await api('POST', '/intake/interview/start', null, false, patientHeaders(patientCookie));
+  let interview = interviewResponse.json;
+
+  assert('Interview start returns 201/200', interviewResponse.status === 201 || interviewResponse.status === 200);
+
+  for (let index = 0; index < 12; index += 1) {
+    if (interview?.status === 'complete') {
+      assert('Interview reaches complete state', true);
+      assert('Interview includes summary preview', typeof interview?.summaryPreview === 'string' && interview.summaryPreview.length > 0);
+      return interview;
+    }
+
+    if (interview?.status === 'emergency_ack_required') {
+      interviewResponse = await api('POST', '/intake/interview/advance', {
+        action: 'acknowledge_emergency',
+      }, false, patientHeaders(patientCookie, `e2e-interview-${randomUUID()}`));
+      interview = interviewResponse.json;
+      continue;
+    }
+
+    if (!interview?.currentQuestion) {
+      throw new Error(`Interview is ${interview?.status ?? 'unknown'} but has no currentQuestion`);
+    }
+
+    interviewResponse = await api(
+      'POST',
+      '/intake/interview/advance',
+      buildInterviewAnswer(interview.currentQuestion),
+      false,
+      patientHeaders(patientCookie, `e2e-interview-${randomUUID()}`),
+    );
+    interview = interviewResponse.json;
+  }
+
+  throw new Error(`Interview did not complete after repeated answers; last status=${interview?.status ?? 'unknown'}`);
+}
+
 async function connectSocket() {
   if (socket?.connected) {
     return socket;
   }
 
+  const socketAuth = looksLikeJwt(token) ? { token } : {};
+  const demoSocketCookie = demoSocketHeaders().cookie;
+  const socketHeaders = {
+    ...(looksLikeJwt(token)
+      ? demoSocketHeaders()
+      : {
+          cookie: [demoSocketCookie, token ? `${STAFF_AUTH_COOKIE}=${encodeURIComponent(token)}` : null]
+            .filter(Boolean)
+            .join('; '),
+        }),
+  };
   socket = io(BASE, {
-    auth: { token },
-    extraHeaders: demoSocketHeaders(),
+    auth: socketAuth,
+    extraHeaders: socketHeaders,
     transports: ['websocket'],
     autoConnect: false,
   });
@@ -181,23 +306,23 @@ async function seedTestUser() {
 async function flowLogin() {
   section('1. Login (POST /auth/login)');
   console.log(`  ${C.dim}Using: ${testEmail}${C.reset}`);
-  const { status, json } = await api('POST', '/auth/login', {
+  const { status, json, headers } = await api('POST', '/auth/login', {
     email: testEmail,
     password: testPassword,
   }, false);
 
   assert('Returns 201/200', status === 201 || status === 200);
-  assert('Has access_token', !!json?.access_token);
+  assert('Returns staff session cookie or bearer token', !!extractStaffSessionToken(headers) || !!json?.access_token);
   assert('Has user.id', typeof json?.user?.id === 'number');
   assert('Has user.hospitalId', typeof json?.user?.hospitalId === 'number');
   assert('Has user.hospital.name', typeof json?.user?.hospital?.name === 'string');
 
-  token = json?.access_token;
+  token = extractStaffSessionToken(headers) ?? json?.access_token ?? null;
   return json?.user;
 }
 
 async function flowGetMe() {
-  section('2. Token rehydration (GET /auth/me)');
+  section('2. Staff session rehydration (GET /auth/me)');
   const { status, json } = await api('GET', '/auth/me');
   assert('Returns 200', status === 200);
   assert('Has userId', typeof json?.userId === 'number');
@@ -217,7 +342,7 @@ async function flowListEncounters() {
 async function flowCreatePatientAndEncounter(hospitalSlug) {
   section('4. Create patient via intake (POST /intake/intent)');
   const phone = `+1555${Date.now().toString().slice(-7)}`;
-  const { status: s1, json: intent } = await api('POST', '/intake/intent', {
+  const { status: s1, json: intent, headers: intentHeaders } = await api('POST', '/intake/intent', {
     phone,
     firstName: 'E2E',
     lastName: 'TestPatient',
@@ -228,16 +353,20 @@ async function flowCreatePatientAndEncounter(hospitalSlug) {
 
   assert('Intent returns 201', s1 === 201);
   assert('Has patientId', typeof intent?.patientId === 'number');
-  assert('Has sessionToken', typeof intent?.sessionToken === 'string');
+  assert('Does not expose sessionToken', intent?.sessionToken === undefined);
+  const patientCookie = extractPatientCookieHeader(intentHeaders);
+  assert('Sets patient session cookie', typeof patientCookie === 'string');
   if (fixtureContext && typeof intent?.patientId === 'number') {
     fixtureContext.fixtures.trackPatient(intent.patientId);
   }
 
-  // Confirm the encounter using the patient session token (x-patient-token header)
+  section('4B. Complete intake interview');
+  await completeInterviewForPatient(patientCookie);
+
   section('5. Confirm encounter (POST /intake/confirm)');
   const { status: s2, json: confirm } = await api('POST', '/intake/confirm', {
     hospitalSlug,
-  }, false, { 'x-patient-token': intent?.sessionToken });
+  }, false, patientHeaders(patientCookie, `e2e-confirm-${randomUUID()}`));
 
   assert('Confirm returns 201', s2 === 201);
   assert('Has encounter id', typeof confirm?.id === 'number');
@@ -245,14 +374,14 @@ async function flowCreatePatientAndEncounter(hospitalSlug) {
 
   return {
     encounter: confirm,
-    patientToken: intent?.sessionToken,
+    patientCookie,
   };
 }
 
-async function flowPatientEncounterApis(encounterId, patientToken) {
+async function flowPatientEncounterApis(encounterId, patientCookie) {
   section('5A. Patient encounter APIs');
 
-  const headers = patientHeaders(patientToken);
+  const headers = patientHeaders(patientCookie);
   const { status: listStatus, json: encounters } = await api('GET', '/patient/encounters', null, false, headers);
   assert('Patient encounter list returns 200', listStatus === 200);
   assert('Patient encounter list is an array', Array.isArray(encounters));
@@ -262,6 +391,7 @@ async function flowPatientEncounterApis(encounterId, patientToken) {
   assert('Patient encounter detail returns 200', detailStatus === 200);
   assert('Patient encounter detail matches encounter id', encounter?.id === encounterId);
   assert('Patient encounter detail includes non-internal messages array', Array.isArray(encounter?.messages));
+  assert('Patient encounter detail exposes clinical AI summary', encounter?.priageSummary != null);
 
   const { status: queueStatus, json: queue } = await api('GET', `/patient/encounters/${encounterId}/queue`, null, false, headers);
   assert('Patient queue returns 200', queueStatus === 200);
@@ -302,7 +432,7 @@ async function flowPatientCancel(hospitalId) {
   assert('Cancel-flow fixture encounter created', typeof encounter?.id === 'number');
   assert('Cancel-flow fixture session created', typeof session?.token === 'string');
 
-  const headers = patientHeaders(session.token);
+  const headers = patientHeaders(buildPatientCookieHeader(session.token), `e2e-cancel-${randomUUID()}`);
   const { status: cancelStatus, json: cancelled } = await api('POST', `/patient/encounters/${encounter.id}/cancel`, null, false, headers);
   assert('Patient cancel returns 200/201', cancelStatus === 200 || cancelStatus === 201);
   assert('Cancelled encounter is terminal', cancelled?.status === 'CANCELLED');
@@ -461,12 +591,11 @@ async function flowDischarge(encounterId) {
 }
 
 async function flowTokenExpired() {
-  section('17. Token expiration handling (GET /auth/me with bad token)');
-  const savedToken = token;
-  token = 'expired.invalid.token';
-  const { status } = await api('GET', '/auth/me');
+  section('17. Invalid staff session handling (GET /auth/me with bad cookie)');
+  const { status } = await api('GET', '/auth/me', null, false, {
+    Cookie: `${STAFF_AUTH_COOKIE}=expired.invalid.token`,
+  });
   assert('Returns 401', status === 401);
-  token = savedToken;
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -493,13 +622,13 @@ async function main() {
     await flowGetMe();
     await flowListEncounters();
 
-    const { encounter, patientToken } = await flowCreatePatientAndEncounter(user.hospital.slug);
-    if (!encounter?.id || !patientToken) {
+    const { encounter, patientCookie } = await flowCreatePatientAndEncounter(user.hospital.slug);
+    if (!encounter?.id || !patientCookie) {
       console.log(`\n${C.red}${C.bold}Could not create encounter — cannot continue.${C.reset}`);
       throw new Error('Could not create encounter — cannot continue');
     }
 
-    await flowPatientEncounterApis(encounter.id, patientToken);
+    await flowPatientEncounterApis(encounter.id, patientCookie);
     await flowDerivedAlertRule(encounter.id);
     await flowPatientCancel(user.hospitalId);
     await flowConfirmArrival(encounter.id);

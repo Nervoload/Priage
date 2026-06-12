@@ -8,5 +8,5 @@ export function ChatPage() {
     return <Navigate to="/messages" replace />;
   }
 
-  return <Navigate to={`/encounters/${encounterId}/chat`} replace />;
+  return <Navigate to={`/messages?encounter=${encounterId}`} replace />;
 }

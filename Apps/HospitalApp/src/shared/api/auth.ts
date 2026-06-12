@@ -6,18 +6,18 @@ import type { LoginResponse, AuthUser } from '../types/domain';
 
 /**
  * POST /auth/login
- * Returns JWT + user info and relies on an HttpOnly auth cookie for browser auth.
+ * Returns session metadata + user info and relies on an HttpOnly auth cookie for browser auth.
  */
-export async function login(email: string, password: string): Promise<LoginResponse> {
+export async function login(email: string, password: string, mfaCode?: string): Promise<LoginResponse> {
   return client<LoginResponse>('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, mfaCode: mfaCode || undefined }),
   });
 }
 
 /**
  * GET /auth/me
- * Returns the currently authenticated user's info from the JWT.
+ * Returns the currently authenticated user's info from the active staff session.
  */
 export async function getMe(): Promise<AuthUser> {
   return client<AuthUser>('/auth/me');

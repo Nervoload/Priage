@@ -23,6 +23,7 @@ interface PaginatedMessages {
 export interface ListMessagesParams {
   page?: number;
   limit?: number;
+  afterMessageId?: number;
 }
 
 export async function listMessages(
@@ -32,6 +33,7 @@ export async function listMessages(
   const query = new URLSearchParams();
   if (params.page) query.set('page', String(params.page));
   if (params.limit) query.set('limit', String(params.limit));
+  if (params.afterMessageId != null) query.set('afterMessageId', String(params.afterMessageId));
 
   const qs = query.toString();
   return client<PaginatedMessages>(
@@ -59,7 +61,6 @@ export async function sendMessage(
     {
       method: 'POST',
       body: JSON.stringify({
-        senderType: 'USER',
         content: payload.content,
         isInternal: payload.isInternal ?? false,
       }),

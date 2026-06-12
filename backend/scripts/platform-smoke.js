@@ -7,6 +7,7 @@ const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
 const { createHash, randomUUID } = require('crypto');
 const { demoCookieHeader } = require('./lib/demo-gate');
+const { extractPatientCookieHeader, hashPatientCookie } = require('./lib/session-cookies');
 
 const CONFIG = {
   baseUrl: process.env.BASE_URL || 'http://localhost:3000',
@@ -37,6 +38,9 @@ function assert(condition, message) {
 }
 
 async function request(method, path, { headers = {}, body, expectJson = true } = {}) {
+  const unsafeHeaders = ['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())
+    ? {}
+    : { Origin: CONFIG.baseUrl };
   let response;
   try {
     response = await fetch(`${CONFIG.baseUrl}${path}`, {
@@ -44,6 +48,7 @@ async function request(method, path, { headers = {}, body, expectJson = true } =
       headers: {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         'X-Correlation-ID': `platform-smoke-${randomUUID()}`,
+        ...unsafeHeaders,
         ...(demoCookieHeader() ? { Cookie: demoCookieHeader() } : {}),
         ...headers,
       },
@@ -68,6 +73,7 @@ async function request(method, path, { headers = {}, body, expectJson = true } =
     status: response.status,
     ok: response.ok,
     body: parsed,
+    headers: response.headers,
   };
 }
 
@@ -78,9 +84,10 @@ function partnerHeaders(rawKey, idempotencyKey) {
   };
 }
 
-function patientHeaders(sessionToken) {
+function patientHeaders(patientCookie, idempotencyKey) {
   return {
-    'x-patient-token': sessionToken,
+    Cookie: patientCookie,
+    ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
   };
 }
 
@@ -359,10 +366,13 @@ async function run() {
     },
   });
   assert(patientIntent.status === 201 || patientIntent.status === 200, 'patient intent should succeed');
-  assert(patientIntent.body.sessionToken, 'patient intent should return session token');
+  assert(!patientIntent.body.sessionToken, 'patient intent should not return a session token');
+  const patientCookie = extractPatientCookieHeader(patientIntent.headers);
+  assert(patientCookie, 'patient intent should set a patient session cookie');
+  const patientTokenHash = hashPatientCookie(patientCookie);
 
   const patientSession = await prisma.patientSession.findUnique({
-    where: { token: patientIntent.body.sessionToken },
+    where: { token: patientTokenHash },
     select: { id: true, patientId: true },
   });
   assert(patientSession, 'patient session should exist');
@@ -381,7 +391,7 @@ async function run() {
   });
 
   const patientUpdate = await request('PATCH', '/intake/details', {
-    headers: patientHeaders(patientIntent.body.sessionToken),
+    headers: patientHeaders(patientCookie, `platform-patient-details-${randomUUID()}`),
     body: {
       details: 'Pain is worse tonight',
     },

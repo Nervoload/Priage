@@ -1,17 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 
-import { cancelMyEncounter, getMyEncounter, listMyMessages, sendPatientMessage } from '../../shared/api/encounters';
+import { cancelMyEncounter, getMyEncounter, listMyMessages } from '../../shared/api/encounters';
+import { API_BASE_URL } from '../../shared/api/client';
 import { getMe, updateProfile } from '../../shared/api/auth';
+import { appendUniqueMessages, getLastMessageId } from '../../shared/messages';
+import {
+  isOutboxQueuedError,
+  sendPatientMessageReliable,
+} from '../../shared/patientOutbox';
 import { sendLocationPing, updateIntakeDetails } from '../../shared/api/intake';
 import { ENCOUNTER_STATUS_META } from '../../shared/encounters';
+import {
+  formatHospitalDistance,
+  getAppleMapsDirectionsUrl,
+  getGoogleMapsDirectionsUrl,
+  getHospitalDistanceKm,
+  type PatientCoordinates,
+} from '../../shared/hospitalDirectory';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
-import type { Encounter, Message, PatientProfile } from '../../shared/types/domain';
+import { useHospitalDirectory } from '../../shared/hooks/useHospitalDirectory';
+import type {
+  Encounter,
+  Hospital,
+  HospitalCustomIntakeQuestion,
+  Message,
+  PatientProfile,
+} from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
 
-const ENCOUNTER_POLL_MS = 10_000;
-const MESSAGES_POLL_MS = 5_000;
+const ENCOUNTER_FALLBACK_POLL_MS = 60_000;
+const MESSAGES_FALLBACK_POLL_MS = 30_000;
 
 function formatHospitalName(slug: string | null | undefined): string {
   if (!slug) return 'Priage General Hospital';
@@ -33,11 +53,60 @@ function toGuestProfileState(profile: PatientProfile) {
   };
 }
 
+function toCustomAnswerInputValue(value: unknown, responseType: HospitalCustomIntakeQuestion['responseType']): string {
+  if (value == null) {
+    return '';
+  }
+
+  if (responseType === 'boolean') {
+    return value === true ? 'yes' : value === false ? 'no' : '';
+  }
+
+  if (responseType === 'number') {
+    return typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
+  }
+
+  return typeof value === 'string' ? value : '';
+}
+
+function serializeCustomQuestionAnswers(
+  answers: Record<string, string>,
+  questions: HospitalCustomIntakeQuestion[],
+): Record<string, string | number | boolean | null> | undefined {
+  const payload: Record<string, string | number | boolean | null> = {};
+
+  for (const question of questions) {
+    const rawValue = answers[question.fieldKey] ?? '';
+    const trimmedValue = rawValue.trim();
+
+    switch (question.responseType) {
+      case 'boolean':
+        payload[question.fieldKey] =
+          rawValue === 'yes' ? true : rawValue === 'no' ? false : null;
+        break;
+      case 'number':
+        payload[question.fieldKey] = trimmedValue && Number.isFinite(Number(trimmedValue))
+          ? Number(trimmedValue)
+          : null;
+        break;
+      case 'textarea':
+      case 'text':
+      case 'select':
+      default:
+        payload[question.fieldKey] = trimmedValue || null;
+        break;
+    }
+  }
+
+  return Object.keys(payload).length > 0 ? payload : undefined;
+}
+
 export function Enroute() {
   const { encounterId: encounterIdParam } = useParams<{ encounterId: string }>();
   const navigate = useNavigate();
   const { session, clearSession } = useGuestSession();
   const { showToast } = useToast();
+  const { findHospitalById, findHospitalBySlug } = useHospitalDirectory();
 
   const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -56,12 +125,23 @@ export function Enroute() {
     conditions: '',
     details: '',
   });
+  const [savedHealthInfo, setSavedHealthInfo] = useState<Record<string, unknown> | null>(null);
+  const [customQuestionAnswers, setCustomQuestionAnswers] = useState<Record<string, string>>({});
+  const [currentLocation, setCurrentLocation] = useState<PatientCoordinates | null>(null);
   const locationWatchRef = useRef<number | null>(null);
   const loadedEncounterId = useRef<number | null>(null);
+  const messageCursorRef = useRef<number | null>(null);
 
   const encounterId = Number(encounterIdParam);
-  const hospitalName = formatHospitalName(session?.hospitalSlug);
+  const fallbackHospitalName = formatHospitalName(session?.hospitalSlug);
   const statusMeta = ENCOUNTER_STATUS_META[encounter?.status ?? 'EXPECTED'];
+  const selectedHospital =
+    findHospitalBySlug(session?.hospitalSlug)
+    ?? findHospitalById(encounter?.hospitalId ?? null);
+  const applicableCustomQuestions = (selectedHospital?.customIntakeQuestions ?? []).filter(
+    (question) => question.appliesTo !== 'triage',
+  );
+  const hospitalName = selectedHospital?.name ?? fallbackHospitalName;
 
   const handleExpired = useCallback(() => {
     clearSession();
@@ -86,11 +166,29 @@ export function Enroute() {
     }
   }, [encounterId, handleExpired, navigate, showToast]);
 
-  const refreshMessages = useCallback(async () => {
+  const refreshMessages = useCallback(async (mode: 'replace' | 'append' = 'replace') => {
     if (!encounterId || Number.isNaN(encounterId)) return;
     try {
-      const next = await listMyMessages(encounterId);
-      setMessages(next);
+      const next = await listMyMessages(
+        encounterId,
+        mode === 'append' ? { afterMessageId: messageCursorRef.current ?? 0 } : {},
+      );
+
+      if (mode === 'replace') {
+        setMessages(next);
+        messageCursorRef.current = getLastMessageId(next);
+        return;
+      }
+
+      if (next.length === 0) {
+        return;
+      }
+
+      setMessages((prev) => {
+        const merged = appendUniqueMessages(prev, next);
+        messageCursorRef.current = getLastMessageId(merged);
+        return merged;
+      });
     } catch {
       // Keep polling failures silent.
     }
@@ -99,16 +197,24 @@ export function Enroute() {
   useEffect(() => {
     if (!encounterId || !session) return;
 
+    messageCursorRef.current = null;
+    setMessages([]);
     void refreshEncounter(true);
-    void refreshMessages();
+    void refreshMessages('replace');
+    const eventSource = new EventSource(`${API_BASE_URL}/patient/encounters/${encounterId}/events`, {
+      withCredentials: true,
+    });
+    eventSource.addEventListener('encounter.updated', () => void refreshEncounter());
+    eventSource.addEventListener('message.created', () => void refreshMessages('append'));
     const encounterTimer = setInterval(() => {
       void refreshEncounter();
-    }, ENCOUNTER_POLL_MS);
+    }, ENCOUNTER_FALLBACK_POLL_MS);
     const messageTimer = setInterval(() => {
-      void refreshMessages();
-    }, MESSAGES_POLL_MS);
+      void refreshMessages('append');
+    }, MESSAGES_FALLBACK_POLL_MS);
 
     return () => {
+      eventSource.close();
       clearInterval(encounterTimer);
       clearInterval(messageTimer);
     };
@@ -135,6 +241,7 @@ export function Enroute() {
           ...prev,
           ...toGuestProfileState(profile),
         }));
+        setSavedHealthInfo((profile.optionalHealthInfo as Record<string, unknown> | null) ?? null);
         setGuestInfoError(null);
       } catch {
         if (!cancelled) {
@@ -160,6 +267,22 @@ export function Enroute() {
       details: encounter.details ?? '',
     }));
   }, [encounter]);
+
+  useEffect(() => {
+    if (applicableCustomQuestions.length === 0) {
+      setCustomQuestionAnswers({});
+      return;
+    }
+
+    setCustomQuestionAnswers((previous) => {
+      const nextAnswers: Record<string, string> = {};
+      for (const question of applicableCustomQuestions) {
+        nextAnswers[question.fieldKey] = previous[question.fieldKey]
+          ?? toCustomAnswerInputValue(savedHealthInfo?.[question.fieldKey], question.responseType);
+      }
+      return nextAnswers;
+    });
+  }, [applicableCustomQuestions, savedHealthInfo]);
 
   if (!session) {
     return <Navigate to="/guest/start" replace />;
@@ -204,11 +327,26 @@ export function Enroute() {
 
       const result = await updateIntakeDetails({
         details: guestProfile.details.trim() || undefined,
+        customQuestionAnswers: serializeCustomQuestionAnswers(customQuestionAnswers, applicableCustomQuestions),
       });
 
       if (result && typeof result === 'object' && 'id' in result) {
         setEncounter(result as Encounter);
       }
+
+      setSavedHealthInfo((previous) => {
+        const next = { ...(previous ?? {}) };
+        const serialized = serializeCustomQuestionAnswers(customQuestionAnswers, applicableCustomQuestions) ?? {};
+        for (const question of applicableCustomQuestions) {
+          const nextValue = serialized[question.fieldKey];
+          if (nextValue == null || nextValue === '') {
+            delete next[question.fieldKey];
+          } else {
+            next[question.fieldKey] = nextValue;
+          }
+        }
+        return next;
+      });
 
       setGuestInfoError(null);
       showToast('Guest information saved.', 'success');
@@ -228,11 +366,20 @@ export function Enroute() {
       const note = transportNote.trim()
         ? `I have arrived at the hospital entrance. Note: ${transportNote.trim()}`
         : 'I have arrived at the hospital entrance and am heading inside now.';
-      await sendPatientMessage(encounter.id, note, false);
-      await refreshMessages();
+      const sentMessage = await sendPatientMessageReliable(encounter.id, note, false);
+      setMessages((prev) => {
+        const merged = appendUniqueMessages(prev, [sentMessage]);
+        messageCursorRef.current = getLastMessageId(merged);
+        return merged;
+      });
       showToast('Arrival update sent to staff.', 'success');
-    } catch {
-      showToast('Could not send arrival update.');
+    } catch (error) {
+      showToast(
+        isOutboxQueuedError(error)
+          ? 'Arrival update saved. We will retry when the connection recovers.'
+          : 'Could not send arrival update.',
+        isOutboxQueuedError(error) ? 'info' : 'error',
+      );
     } finally {
       setArrivalSubmitting(false);
     }
@@ -257,6 +404,10 @@ export function Enroute() {
     const watchId = navigator.geolocation.watchPosition(
       async (position) => {
         try {
+          setCurrentLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
           await sendLocationPing({
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
@@ -324,6 +475,10 @@ export function Enroute() {
       </section>
 
       <section style={styles.grid}>
+        {selectedHospital && (
+          <HospitalArrivalCard hospital={selectedHospital} patientLocation={currentLocation} />
+        )}
+
         <article style={styles.card}>
           <h2 style={styles.cardTitle}>Complete your info</h2>
           <p style={styles.mutedText}>
@@ -390,15 +545,127 @@ export function Enroute() {
               placeholder="Symptoms started 90 minutes ago, took aspirin at home, pain is getting worse..."
             />
           </label>
+          {applicableCustomQuestions.length > 0 && (
+            <div style={styles.customQuestionSection}>
+              <h3 style={styles.customQuestionTitle}>Hospital intake questions</h3>
+              <p style={styles.mutedText}>
+                These questions come from {hospitalName} and help the admittance team review your chart before you arrive.
+              </p>
+              <div style={styles.customQuestionGrid}>
+                {applicableCustomQuestions.map((question) => (
+                  <label key={question.id} style={styles.fieldLabel}>
+                    {question.label}
+                    {question.required ? ' *' : ''}
+                    {question.responseType === 'textarea' ? (
+                      <textarea
+                        style={styles.textArea}
+                        value={customQuestionAnswers[question.fieldKey] ?? ''}
+                        onChange={(event) => setCustomQuestionAnswers((prev) => ({
+                          ...prev,
+                          [question.fieldKey]: event.target.value,
+                        }))}
+                        placeholder={question.helpText || undefined}
+                      />
+                    ) : question.responseType === 'boolean' ? (
+                      <select
+                        style={styles.input}
+                        value={customQuestionAnswers[question.fieldKey] ?? ''}
+                        onChange={(event) => setCustomQuestionAnswers((prev) => ({
+                          ...prev,
+                          [question.fieldKey]: event.target.value,
+                        }))}
+                      >
+                        <option value="">Select one</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    ) : (
+                      <input
+                        style={styles.input}
+                        type={question.responseType === 'number' ? 'number' : 'text'}
+                        value={customQuestionAnswers[question.fieldKey] ?? ''}
+                        onChange={(event) => setCustomQuestionAnswers((prev) => ({
+                          ...prev,
+                          [question.fieldKey]: event.target.value,
+                        }))}
+                        placeholder={question.helpText || undefined}
+                        inputMode={question.responseType === 'number' ? 'numeric' : undefined}
+                      />
+                    )}
+                    {question.helpText && (
+                      <span style={styles.fieldHelp}>{question.helpText}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           {guestInfoError && <p style={styles.errorText}>{guestInfoError}</p>}
           <button style={styles.primaryButton} onClick={handleSaveGuestInfo} disabled={savingGuestInfo}>
-            {savingGuestInfo ? 'Saving...' : 'Save optional details'}
+            {savingGuestInfo ? 'Saving...' : 'Save intake details'}
           </button>
         </article>
 
         <article style={styles.card}>
           <h2 style={styles.cardTitle}>Complaint summary</h2>
-          <p style={styles.bodyText}>{encounter.chiefComplaint ?? 'No complaint entered.'}</p>
+          {encounter.priageSummary ? (
+            <div style={styles.priageStack}>
+              <div style={styles.priageHero}>
+                <div style={styles.priageHeroHeader}>
+                  <span style={styles.priageBadge}>AI Briefing</span>
+                  {encounter.priageSummary.recommendedCtasLevel != null && (
+                    <span style={styles.priageCtasPill}>Provisional CTAS {encounter.priageSummary.recommendedCtasLevel}</span>
+                  )}
+                </div>
+                <p style={styles.priageHeroText}>{encounter.priageSummary.briefing}</p>
+              </div>
+
+              <div style={styles.priageBlock}>
+                <div style={styles.priageLabel}>Case summary</div>
+                <p style={styles.priageBody}>{encounter.priageSummary.caseSummary}</p>
+              </div>
+
+              {encounter.priageSummary.questionAnswers.length > 0 && (
+                <div style={styles.priageBlock}>
+                  <div style={styles.priageLabel}>Questions asked</div>
+                  <div style={styles.priageQuestionStack}>
+                    {encounter.priageSummary.questionAnswers.map((item, index) => (
+                      <div key={`${item.answeredAt}-${index}`} style={styles.priageQuestionCard}>
+                        <div style={styles.priageQuestionRow}>
+                          <div style={styles.priageQuestionHeading}>Question</div>
+                          <p style={styles.priageQuestionText}>{item.question}</p>
+                        </div>
+                        <div style={styles.priageQuestionRow}>
+                          <div style={styles.priageAnswerHeading}>Answer</div>
+                          <p style={styles.priageAnswerText}>{item.answer}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {encounter.priageSummary.progressionRisks.length > 0 && (
+                <div style={styles.priageBlock}>
+                  <div style={styles.priageLabel}>Watch for</div>
+                  <div style={styles.priageList}>
+                    {encounter.priageSummary.progressionRisks.map((risk) => (
+                      <div key={risk} style={styles.priageListItem}>{risk}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {encounter.priageSummary.recommendedAction && (
+                <div style={styles.priageBlock}>
+                  <div style={styles.priageLabel}>Recommended next step</div>
+                  <p style={styles.priageBody}>{encounter.priageSummary.recommendedAction}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p style={styles.bodyText}>{encounter.chiefComplaint ?? 'No complaint entered.'}</p>
+          )}
           <p style={styles.mutedText}>
             Expected arrival: {encounter.expectedAt ? new Date(encounter.expectedAt).toLocaleString() : 'Pending'}
           </p>
@@ -471,6 +738,59 @@ export function Enroute() {
         </ol>
       </section>
     </main>
+  );
+}
+
+function HospitalArrivalCard({
+  hospital,
+  patientLocation,
+}: {
+  hospital: Hospital;
+  patientLocation: PatientCoordinates | null;
+}) {
+  const distanceLabel = formatHospitalDistance(getHospitalDistanceKm(hospital, patientLocation));
+
+  return (
+    <article style={styles.card}>
+      <h2 style={styles.cardTitle}>Arrival info</h2>
+      <p style={styles.bodyText}>
+        {hospital.address ?? 'Hospital address is not configured yet. Directions will use the hospital name.'}
+      </p>
+      {distanceLabel && <p style={styles.mutedText}>{distanceLabel}</p>}
+      {hospital.checkInInstructions && (
+        <p style={styles.mutedText}>
+          <strong>Check-in:</strong> {hospital.checkInInstructions}
+        </p>
+      )}
+      {hospital.parkingNotes && (
+        <p style={styles.mutedText}>
+          <strong>Arrival notes:</strong> {hospital.parkingNotes}
+        </p>
+      )}
+      <div style={styles.linkRow}>
+        <a
+          href={getGoogleMapsDirectionsUrl(hospital, patientLocation)}
+          target="_blank"
+          rel="noreferrer"
+          style={styles.linkButton}
+        >
+          Google Maps
+        </a>
+        <a
+          href={getAppleMapsDirectionsUrl(hospital, patientLocation)}
+          target="_blank"
+          rel="noreferrer"
+          style={styles.linkButton}
+        >
+          Apple Maps
+        </a>
+        {hospital.phone && (
+          <a href={`tel:${hospital.phone}`} style={styles.linkButton}>
+            Call hospital
+          </a>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -586,11 +906,33 @@ const styles: Record<string, React.CSSProperties> = {
     gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
     gap: '0.6rem',
   },
+  customQuestionSection: {
+    display: 'grid',
+    gap: '0.65rem',
+    marginTop: '0.15rem',
+  },
+  customQuestionTitle: {
+    margin: 0,
+    fontFamily: patientTheme.fonts.heading,
+    fontSize: '0.98rem',
+    color: patientTheme.colors.ink,
+  },
+  customQuestionGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '0.7rem',
+  },
   fieldLabel: {
     display: 'grid',
     gap: '0.3rem',
     fontSize: '0.8rem',
     fontWeight: 700,
+  },
+  fieldHelp: {
+    fontSize: '0.78rem',
+    fontWeight: 500,
+    color: patientTheme.colors.inkMuted,
+    lineHeight: 1.45,
   },
   input: {
     width: '100%',
@@ -613,6 +955,132 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.45,
     fontSize: '0.9rem',
   },
+  priageStack: {
+    display: 'grid',
+    gap: '0.65rem',
+  },
+  priageHero: {
+    border: '1px solid #bfdbfe',
+    borderRadius: patientTheme.radius.sm,
+    background: '#eff6ff',
+    padding: '0.8rem 0.9rem',
+    display: 'grid',
+    gap: '0.4rem',
+  },
+  priageHeroHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.5rem',
+    flexWrap: 'wrap',
+  },
+  priageBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    background: '#dbeafe',
+    color: '#1d4ed8',
+    padding: '0.22rem 0.58rem',
+    fontSize: '0.7rem',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+  },
+  priageCtasPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    borderRadius: '999px',
+    background: '#fff',
+    color: '#1d4ed8',
+    border: '1px solid #bfdbfe',
+    padding: '0.22rem 0.58rem',
+    fontSize: '0.72rem',
+    fontWeight: 700,
+  },
+  priageHeroText: {
+    margin: 0,
+    fontSize: '0.9rem',
+    lineHeight: 1.5,
+    color: '#0f172a',
+  },
+  priageBlock: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    padding: '0.72rem 0.8rem',
+    display: 'grid',
+    gap: '0.38rem',
+  },
+  priageLabel: {
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    color: patientTheme.colors.inkMuted,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  priageBody: {
+    margin: 0,
+    fontSize: '0.88rem',
+    lineHeight: 1.48,
+    color: patientTheme.colors.ink,
+    whiteSpace: 'pre-line',
+  },
+  priageQuestionStack: {
+    display: 'grid',
+    gap: '0.55rem',
+  },
+  priageQuestionCard: {
+    border: '1px solid #e5e7eb',
+    borderRadius: patientTheme.radius.sm,
+    background: '#f8fafc',
+    padding: '0.7rem',
+    display: 'grid',
+    gap: '0.55rem',
+  },
+  priageQuestionRow: {
+    display: 'grid',
+    gap: '0.24rem',
+  },
+  priageQuestionHeading: {
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    color: '#475569',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  priageAnswerHeading: {
+    fontSize: '0.72rem',
+    fontWeight: 700,
+    color: '#0f766e',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  priageQuestionText: {
+    margin: 0,
+    fontSize: '0.86rem',
+    lineHeight: 1.45,
+    color: '#0f172a',
+    whiteSpace: 'pre-line',
+  },
+  priageAnswerText: {
+    margin: 0,
+    fontSize: '0.86rem',
+    lineHeight: 1.45,
+    color: '#134e4a',
+    whiteSpace: 'pre-line',
+  },
+  priageList: {
+    display: 'grid',
+    gap: '0.42rem',
+  },
+  priageListItem: {
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff1f2',
+    color: '#9f1239',
+    padding: '0.52rem 0.6rem',
+    fontSize: '0.84rem',
+    lineHeight: 1.42,
+  },
   mutedText: {
     margin: 0,
     color: patientTheme.colors.inkMuted,
@@ -622,6 +1090,22 @@ const styles: Record<string, React.CSSProperties> = {
   buttonStack: {
     display: 'grid',
     gap: '0.48rem',
+  },
+  linkRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '0.45rem',
+  },
+  linkButton: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.55rem 0.72rem',
+    fontWeight: 700,
+    fontSize: '0.78rem',
+    fontFamily: patientTheme.fonts.body,
+    textDecoration: 'none',
   },
   primaryButton: {
     border: 'none',
