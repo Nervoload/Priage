@@ -8,11 +8,12 @@
 
 import { Module } from '@nestjs/common';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
 import { GLOBAL_THROTTLE, shouldSkipThrottleForLoopback } from './common/http/throttle.util';
 import { OriginCsrfGuard } from './common/http/origin-csrf.guard';
 import { EdgeRateLimitGuard } from './common/http/edge-rate-limit.guard';
+import { RequestTelemetryInterceptor } from './common/telemetry/request-telemetry.interceptor';
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { DemoAccessModule } from './modules/demo-access/demo-access.module';
 import { DemoAccessGuard } from './modules/demo-access/demo-access.guard';
@@ -76,6 +77,10 @@ import { UsersModule } from './modules/users/users.module';
     HealthModule,
   ],
   providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestTelemetryInterceptor,
+    },
     {
       provide: APP_GUARD,
       useClass: DemoAccessGuard,

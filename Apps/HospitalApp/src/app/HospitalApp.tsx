@@ -46,7 +46,7 @@ const DEFAULT_HOSPITAL_CONFIG: HospitalOperationalConfig = {
   pageAccess: {
     ADMIN: ['admit', 'triage', 'waiting', 'analytics', 'settings'],
     NURSE: ['triage', 'waiting', 'analytics', 'settings'],
-    STAFF: ['admit', 'waiting', 'settings'],
+    STAFF: ['admit', 'settings'],
     DOCTOR: ['triage', 'waiting', 'analytics', 'settings'],
   },
   customIntakeQuestions: [],
@@ -269,7 +269,10 @@ export function HospitalApp() {
   }, []);
 
   useEffect(() => {
-    const encounterIds = encounters.map((encounter) => encounter.id).sort((left, right) => left - right);
+    const encounterIds = encounters
+      .filter((encounter) => !encounter.clinicalFieldsRedacted)
+      .map((encounter) => encounter.id)
+      .sort((left, right) => left - right);
     encounterIdsRef.current = encounterIds;
     const nextKey = encounterIds.join(',');
     if (!user || !waitingRoomRealtimeEnabled || nextKey === realtimeSubscriptionKey.current) {
@@ -282,7 +285,8 @@ export function HospitalApp() {
   }, [encounters, user, waitingRoomRealtimeEnabled]);
 
   const loadMessagesForEncounter = useCallback(async (encounterId: number, mode: 'replace' | 'append' = 'replace') => {
-    if (!clinicalMessagingEnabled) {
+    const encounter = encounters.find((item) => item.id === encounterId);
+    if (!clinicalMessagingEnabled || encounter?.clinicalFieldsRedacted) {
       return;
     }
 
@@ -343,7 +347,7 @@ export function HospitalApp() {
     } finally {
       loadingMessageEncounters.current.delete(encounterId);
     }
-  }, [clinicalMessagingEnabled, showToast]);
+  }, [clinicalMessagingEnabled, encounters, showToast]);
 
   // Fetch on login and only subscribe to staff-wide waiting-room realtime
   // after the user explicitly joins that workspace.
@@ -422,13 +426,15 @@ export function HospitalApp() {
 
   // Triage shows TRIAGE patients
   const triageEncounters = useMemo(
-    () => encounters.filter((e) => e.status === 'TRIAGE'),
+    () => encounters.filter((e) => e.status === 'TRIAGE' && !e.clinicalFieldsRedacted),
     [encounters],
   );
 
   // Waiting room shows patients that completed triage and are waiting or seen
   const waitingEncounters = useMemo(
-    () => encounters.filter((e) => e.status === 'WAITING' || e.status === 'COMPLETE'),
+    () => encounters.filter((e) =>
+      (e.status === 'WAITING' || e.status === 'COMPLETE') && !e.clinicalFieldsRedacted,
+    ),
     [encounters],
   );
 

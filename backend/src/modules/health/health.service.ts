@@ -1,5 +1,5 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { AssetStatus } from '@prisma/client';
+import { AssetStatus, LogRecordLevel } from '@prisma/client';
 import type Redis from 'ioredis';
 
 import { Inject } from '@nestjs/common';
@@ -72,7 +72,19 @@ export class HealthService {
 
   async getOperationalMetrics(hospitalId: number) {
     const now = Date.now();
-    const [pendingEvents, claimedEvents, deadLetterEvents, oldestPending, pendingAssetDeletes] = await Promise.all([
+    const recentWindow = new Date(now - 15 * 60 * 1000);
+    const [
+      pendingEvents,
+      claimedEvents,
+      deadLetterEvents,
+      oldestPending,
+      pendingAssetDeletes,
+      recentErrors,
+      recentWarnings,
+      sensitiveReads,
+      breakGlassReads,
+      pool,
+    ] = await Promise.all([
       this.prisma.encounterEvent.count({ where: { hospitalId, processedAt: null, deadLetteredAt: null } }),
       this.prisma.encounterEvent.count({ where: { hospitalId, processedAt: null, claimedAt: { not: null } } }),
       this.prisma.encounterEvent.count({ where: { hospitalId, deadLetteredAt: { not: null } } }),
@@ -82,7 +94,38 @@ export class HealthService {
         select: { createdAt: true },
       }),
       this.prisma.asset.count({ where: { hospitalId, status: AssetStatus.DELETE_PENDING } }),
+      this.prisma.logRecord.count({ where: { hospitalId, level: LogRecordLevel.ERROR, createdAt: { gte: recentWindow } } }),
+      this.prisma.logRecord.count({ where: { hospitalId, level: LogRecordLevel.WARN, createdAt: { gte: recentWindow } } }),
+      this.prisma.sensitiveReadAuditLog.count({ where: { hospitalId, createdAt: { gte: recentWindow } } }),
+      this.prisma.breakGlassAccess.count({ where: { hospitalId, createdAt: { gte: recentWindow } } }),
+      this.prisma.getPoolStats(),
     ]);
+    const oldestPendingAgeSeconds = oldestPending
+      ? Math.max(0, Math.floor((now - oldestPending.createdAt.getTime()) / 1000))
+      : 0;
+    const thresholds = {
+      eventLagWarningSeconds: readPositiveIntegerEnv('SLO_EVENT_LAG_WARN_SECONDS', 30),
+      eventLagCriticalSeconds: readPositiveIntegerEnv('SLO_EVENT_LAG_CRITICAL_SECONDS', 120),
+      errorLogWarningCount: readPositiveIntegerEnv('SLO_ERROR_LOG_WARN_COUNT', 10),
+      poolWaitingWarningCount: readPositiveIntegerEnv('SLO_POOL_WAITING_WARN_COUNT', 1),
+    };
+    const alerts = [
+      ...(deadLetterEvents > 0 ? [{ severity: 'critical', type: 'event_dead_letter', value: deadLetterEvents }] : []),
+      ...(oldestPendingAgeSeconds >= thresholds.eventLagCriticalSeconds
+        ? [{ severity: 'critical', type: 'event_lag', value: oldestPendingAgeSeconds }]
+        : oldestPendingAgeSeconds >= thresholds.eventLagWarningSeconds
+          ? [{ severity: 'warning', type: 'event_lag', value: oldestPendingAgeSeconds }]
+          : []),
+      ...(recentErrors >= thresholds.errorLogWarningCount
+        ? [{ severity: 'warning', type: 'recent_errors', value: recentErrors }]
+        : []),
+      ...(pool.waitingCount >= thresholds.poolWaitingWarningCount
+        ? [{ severity: 'warning', type: 'database_pool_waiting', value: pool.waitingCount }]
+        : []),
+      ...(breakGlassReads > 0
+        ? [{ severity: 'security', type: 'break_glass_access', value: breakGlassReads }]
+        : []),
+    ];
 
     return {
       checkedAt: new Date(now).toISOString(),
@@ -91,14 +134,56 @@ export class HealthService {
         pending: pendingEvents,
         claimed: claimedEvents,
         deadLetters: deadLetterEvents,
-        oldestPendingAgeSeconds: oldestPending
-          ? Math.max(0, Math.floor((now - oldestPending.createdAt.getTime()) / 1000))
-          : 0,
+        oldestPendingAgeSeconds,
       },
       assets: {
         pendingDeletes: pendingAssetDeletes,
       },
+      database: {
+        pool,
+      },
+      logs: {
+        windowMinutes: 15,
+        errors: recentErrors,
+        warnings: recentWarnings,
+      },
+      security: {
+        windowMinutes: 15,
+        sensitiveReads,
+        breakGlassReads,
+      },
+      slo: {
+        state: alerts.some((alert) => alert.severity === 'critical') ? 'critical'
+          : alerts.length > 0 ? 'warning' : 'healthy',
+        thresholds,
+        alerts,
+      },
     };
+  }
+
+  async getPrometheusMetrics(): Promise<string> {
+    const [pool, pendingEvents, deadLetters, pendingAssetDeletes] = await Promise.all([
+      this.prisma.getPoolStats(),
+      this.prisma.encounterEvent.count({ where: { processedAt: null, deadLetteredAt: null } }),
+      this.prisma.encounterEvent.count({ where: { deadLetteredAt: { not: null } } }),
+      this.prisma.asset.count({ where: { status: AssetStatus.DELETE_PENDING } }),
+    ]);
+
+    return [
+      '# HELP priage_database_pool_connections Database connections by state.',
+      '# TYPE priage_database_pool_connections gauge',
+      `priage_database_pool_connections{state="total"} ${pool.totalCount}`,
+      `priage_database_pool_connections{state="idle"} ${pool.idleCount}`,
+      `priage_database_pool_connections{state="waiting"} ${pool.waitingCount}`,
+      '# HELP priage_event_backlog Pending and dead-letter encounter events.',
+      '# TYPE priage_event_backlog gauge',
+      `priage_event_backlog{state="pending"} ${pendingEvents}`,
+      `priage_event_backlog{state="dead_letter"} ${deadLetters}`,
+      '# HELP priage_asset_deletion_backlog Assets waiting for storage deletion reconciliation.',
+      '# TYPE priage_asset_deletion_backlog gauge',
+      `priage_asset_deletion_backlog ${pendingAssetDeletes}`,
+      '',
+    ].join('\n');
   }
 
   private async checkDatabase(): Promise<DependencyStatus> {
@@ -158,4 +243,9 @@ export class HealthService {
       return { ok: false, latencyMs: Date.now() - startedAt, detail: 'event backlog unavailable' };
     }
   }
+}
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const parsed = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

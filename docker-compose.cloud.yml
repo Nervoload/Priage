@@ -1,0 +1,207 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: priage
+      POSTGRES_PASSWORD: priage
+      POSTGRES_DB: priage
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U priage -d priage"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - cloud-postgres:/var/lib/postgresql/data
+
+  pgbouncer:
+    build: ./infra/dev/pgbouncer
+    command: ["pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:6432:6432"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - ./infra/dev/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./infra/dev/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - cloud-redis:/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: priage
+      MINIO_ROOT_PASSWORD: priage-development-secret
+    ports:
+      - "127.0.0.1:9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - cloud-minio:/data
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        mc alias set local http://minio:9000 priage priage-development-secret &&
+        mc mb --ignore-existing local/priage-assets &&
+        mc anonymous set none local/priage-assets &&
+        mc version enable local/priage-assets &&
+        mc mb --ignore-existing --with-lock local/priage-audit-simulation
+
+  scanner:
+    build: ./infra/dev/scanner
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: ./backend
+    command: ["npx", "prisma", "migrate", "deploy"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://priage:priage@postgres:5432/priage?schema=public
+
+  backend:
+    build: ./backend
+    command: ["node", "dist/main.js"]
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      scanner:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://priage:priage@pgbouncer:6432/priage?schema=public
+      DATABASE_PROXY_MODE: pgbouncer
+      DATABASE_POOL_MAX: 15
+      DATABASE_POOL_MIN: 2
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CORS_ORIGINS: http://localhost:8081,http://localhost:8082
+      GATEWAY_SHARED_SECRET: dev-gateway-secret
+      JWT_SECRET: simulation-only-jwt-secret
+      STAFF_MFA_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      ASSET_STORAGE_PROVIDER: s3
+      ASSET_STORAGE_BUCKET: priage-assets
+      AUDIT_ARCHIVE_BUCKET: priage-audit-simulation
+      ASSET_STORAGE_REGION: us-east-1
+      ASSET_STORAGE_ENDPOINT: http://minio:9000
+      ASSET_STORAGE_FORCE_PATH_STYLE: "true"
+      ASSET_STORAGE_ENCRYPTION: none
+      ASSET_ACCESS_MODE: signed-url
+      ASSET_SCANNER_URL: http://scanner:8080/scan
+      AWS_ACCESS_KEY_ID: priage
+      AWS_SECRET_ACCESS_KEY: priage-development-secret
+      THROTTLE_SKIP_LOOPBACK: "false"
+      EDGE_PUBLIC_AUTH_LIMIT: 60
+      EDGE_GLOBAL_LIMIT: 100000
+      EDGE_WRITE_LIMIT: 100000
+      EDGE_TOKEN_ATTEMPT_LIMIT: 1000
+      CARE_TEAM_ACCESS_REQUIRED: "true"
+      STAFF_DEVICE_BINDING_REQUIRED: "true"
+      SENSITIVE_READ_AUDIT_FAIL_CLOSED: "true"
+      LOG_DB_MIN_LEVEL: info
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  edge:
+    image: nginx:1.27-alpine
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./infra/dev/edge/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  hospital-app:
+    build:
+      context: .
+      dockerfile: infra/dev/frontend.Dockerfile
+      args:
+        APP_DIR: Apps/HospitalApp
+        VITE_API_URL: http://localhost:8080
+    depends_on:
+      edge:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8081:80"
+
+  patient-app:
+    build:
+      context: .
+      dockerfile: infra/dev/frontend.Dockerfile
+      args:
+        APP_DIR: Apps/PatientApp
+        VITE_API_URL: http://localhost:8080
+    depends_on:
+      edge:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8082:80"
+
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    depends_on:
+      edge:
+        condition: service_started
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./infra/dev/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/dev/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+
+  grafana:
+    image: grafana/grafana:12.0.1
+    depends_on:
+      prometheus:
+        condition: service_started
+    environment:
+      GF_SECURITY_ADMIN_USER: priage
+      GF_SECURITY_ADMIN_PASSWORD: priage
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./infra/dev/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/dev/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  cloud-postgres:
+  cloud-redis:
+  cloud-minio:

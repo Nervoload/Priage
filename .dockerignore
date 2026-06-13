@@ -1,0 +1,7 @@
+.git
+.priage-dev
+**/node_modules
+**/dist
+**/.data
+**/.env
+**/*.log

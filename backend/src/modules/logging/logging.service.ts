@@ -96,6 +96,9 @@ const SAFE_NUMERIC_KEYS = new Set([
   'idleConnections',
   'waitingClients',
   'totalConnections',
+  'status',
+  'maxConnections',
+  'minConnections',
   'attachmentCount',
 ]);
 

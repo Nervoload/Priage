@@ -1,0 +1,26 @@
+{
+  "title": "Priage Operations",
+  "uid": "priage-operations",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Event backlog",
+      "targets": [{ "expr": "priage_event_backlog", "legendFormat": "{{state}}" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Database pool",
+      "targets": [{ "expr": "priage_database_pool_connections", "legendFormat": "{{state}}" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Pending asset deletions",
+      "targets": [{ "expr": "priage_asset_deletion_backlog" }],
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 }
+    }
+  ]
+}

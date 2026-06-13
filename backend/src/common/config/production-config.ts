@@ -8,6 +8,7 @@ const REQUIRED_PRODUCTION_VALUES = [
   'ASSET_STORAGE_BUCKET',
   'ASSET_S3_KMS_KEY_ID',
   'ASSET_SCANNER_URL',
+  'AUDIT_ARCHIVE_BUCKET',
 ] as const;
 
 export function assertProductionConfiguration(): void {
@@ -27,6 +28,13 @@ export function assertProductionConfiguration(): void {
   }
   if (!/[?&]sslmode=(require|verify-ca|verify-full)(?:&|$)/i.test(process.env.DATABASE_URL || '')) {
     throw new Error('DATABASE_URL must require TLS in production');
+  }
+  if (!['pgbouncer', 'rds-proxy'].includes((process.env.DATABASE_PROXY_MODE || '').trim().toLowerCase())) {
+    throw new Error('DATABASE_PROXY_MODE must be pgbouncer or rds-proxy in production');
+  }
+  const poolMax = Number.parseInt(process.env.DATABASE_POOL_MAX || '', 10);
+  if (!Number.isFinite(poolMax) || poolMax < 1 || poolMax > 100) {
+    throw new Error('DATABASE_POOL_MAX must be configured between 1 and 100 in production');
   }
   if (!isTrue(process.env.CARE_TEAM_ACCESS_REQUIRED)) {
     throw new Error('CARE_TEAM_ACCESS_REQUIRED must be true in production');

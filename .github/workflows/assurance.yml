@@ -1,0 +1,71 @@
+name: Assurance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  static-build-and-boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            Apps/HospitalApp/package-lock.json
+            Apps/PatientApp/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - run: npm run prisma:generate
+        working-directory: backend
+      - run: npx prisma validate
+        working-directory: backend
+      - run: npm run build
+        working-directory: backend
+      - run: npm run test:unit
+        working-directory: backend
+      - run: npm run test:security
+        working-directory: backend
+      - run: npm run test:load
+        working-directory: backend
+      - run: npm run test:assurance
+        working-directory: backend
+      - run: npm ci && npm run build
+        working-directory: Apps/HospitalApp
+      - run: npm ci && npm run build
+        working-directory: Apps/PatientApp
+
+  cloud-integration-idor-role-concurrency-chaos-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - run: node scripts/cloud-stack.mjs up
+      - run: npm run test:deployed-security
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://priage:priage@localhost:6432/priage?schema=public
+          DEPLOYED_TEST_BASE_URL: http://localhost:8080
+      - run: npm run test:deployed-stack
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://priage:priage@localhost:6432/priage?schema=public
+          DEPLOYED_TEST_BASE_URL: http://localhost:8080
+          DEPLOYED_TEST_PATIENT_COUNT: 100
+          DEPLOYED_TEST_STAFF_COUNT: 10
+          DEPLOYED_TEST_UPLOAD_COUNT: 10
+      - run: node scripts/chaos-drill.mjs
+      - run: node scripts/restore-drill.mjs
+      - if: always()
+        run: docker compose -f docker-compose.cloud.yml logs --tail=300
+      - if: always()
+        run: docker compose -f docker-compose.cloud.yml down -v

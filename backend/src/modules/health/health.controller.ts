@@ -45,4 +45,13 @@ export class HealthController {
   getOperationalMetrics(@CurrentUser() user: { hospitalId: number }) {
     return this.healthService.getOperationalMetrics(user.hospitalId);
   }
+
+  @Get('prometheus')
+  async getPrometheusMetrics(@Res() response: Response) {
+    const metrics = await this.healthService.getPrometheusMetrics();
+    return response
+      .status(HttpStatus.OK)
+      .type('text/plain; version=0.0.4; charset=utf-8')
+      .send(metrics);
+  }
 }

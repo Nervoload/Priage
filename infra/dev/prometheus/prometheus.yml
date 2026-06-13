@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: priage
+    metrics_path: /health/prometheus
+    static_configs:
+      - targets: ['edge:8080']

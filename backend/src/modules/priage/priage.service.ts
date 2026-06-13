@@ -22,6 +22,13 @@ interface ChatResponse {
     summary: string;
   };
   canAdmit: boolean;
+  governance?: {
+    version: string;
+    decisionSupportOnly: true;
+    humanReviewRequired: true;
+    emergencyEscalation: boolean;
+    emergencyContact: string | null;
+  };
 }
 
 type PatientFacingHospitalDirectory = {
@@ -43,6 +50,7 @@ type PatientFacingHospitalDirectory = {
 const EMERGENCY_KEYWORDS = ['chest pain', 'can\'t breathe', 'unconscious', 'seizure', 'stroke', 'heart attack', 'severe bleeding', 'choking'];
 const HIGH_KEYWORDS = ['broken', 'fracture', 'high fever', 'vomiting blood', 'head injury', 'allergic reaction', 'difficulty breathing', 'severe pain'];
 const MEDIUM_KEYWORDS = ['fever', 'vomiting', 'dizziness', 'sprain', 'burn', 'cut', 'infection', 'pain', 'swelling'];
+const CLINICAL_GOVERNANCE_VERSION = process.env.PRIAGE_CLINICAL_GOVERNANCE_VERSION?.trim() || '2026-06-13';
 
 @Injectable()
 export class PriageService {
@@ -109,6 +117,17 @@ export class PriageService {
     const urgency = this.detectUrgency(allUserText, lastMsg);
     const symptoms = userMessages[0]?.content ?? 'your symptoms';
     const assessment = this.buildAssessment(urgency, symptoms);
+    await this.loggingService.info('Priage recommendation generated', {
+      service: 'PriageService',
+      operation: 'recommendation',
+      correlationId,
+      patientId,
+    }, {
+      urgency,
+      governanceVersion: CLINICAL_GOVERNANCE_VERSION,
+      isEmergencyEscalation: urgency === 'emergency',
+      isHumanReviewRequired: true,
+    });
 
     return {
       reply: assessment.message,
@@ -119,6 +138,13 @@ export class PriageService {
         summary: assessment.summary,
       },
       canAdmit: true,
+      governance: {
+        version: CLINICAL_GOVERNANCE_VERSION,
+        decisionSupportOnly: true,
+        humanReviewRequired: true,
+        emergencyEscalation: urgency === 'emergency',
+        emergencyContact: urgency === 'emergency' ? '911' : null,
+      },
     };
   }
 
@@ -186,6 +212,9 @@ export class PriageService {
           severity: dto.severity ?? null,
           chiefComplaint: dto.chiefComplaint,
           details: dto.details ?? null,
+          governanceVersion: CLINICAL_GOVERNANCE_VERSION,
+          decisionSupportOnly: true,
+          humanReviewRequired: true,
         },
         sourceType: ContextSourceType.AI,
         trustTier: TrustTier.UNTRUSTED,
@@ -322,7 +351,7 @@ export class PriageService {
     switch (urgency) {
       case 'emergency':
         return {
-          message: `⚠️ **URGENT**: Based on your symptoms, this appears to be a potentially serious situation that requires immediate medical attention.\n\n**My recommendation**: Please proceed to the nearest emergency room immediately, or call 911 if you are unable to get there safely.\n\nWould you like me to check you into the nearest hospital now?`,
+          message: `**URGENT**: Your answers contain warning signs that require immediate medical attention. Priage is decision support, not a diagnosis. Call 911 now if you may be in immediate danger, cannot breathe safely, are unconscious, or cannot travel safely. Do not wait for this check-in or app response.\n\nWould you also like me to check you into the nearest hospital?`,
           action: 'Seek immediate emergency care',
           summary: `Patient reports symptoms consistent with an emergency situation: ${symptoms}`,
         };

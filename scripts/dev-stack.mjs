@@ -22,6 +22,16 @@ const wantsSmoke = args.has('test') || args.has('-t');
 const wantsLogs = args.has('logs') || args.has('-l');
 const wantsVerbose = args.has('--verbose') || args.has('-v');
 const wantsKill = args.has('kill') || args.has('-k') || args.has('--kill');
+const wantsCloud = args.has('cloud');
+
+if (wantsCloud) {
+  const cloudArgs = process.argv.slice(2).filter((value) => value !== 'cloud');
+  const result = spawnSync('node', [join(projectRoot, 'scripts', 'cloud-stack.mjs'), ...(cloudArgs.length > 0 ? cloudArgs : ['up'])], {
+    cwd: projectRoot,
+    stdio: 'inherit',
+  });
+  process.exit(result.status ?? 1);
+}
 
 const services = [
   {
@@ -169,6 +179,8 @@ function printUsage() {
   console.log(`Usage: ./priage-dev [newuser|-u] [reseed|fullseed] [test|-t] [logs|-l] [--verbose|-v]
 
 Options:
+  cloud [up|test|load|chaos|restore|down]
+            Run the Dockerized cloud-shaped developer environment
   kill, -k, --kill
             Stop Priage dev services and close their Terminal windows
   newuser, -u

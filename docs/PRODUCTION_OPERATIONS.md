@@ -5,8 +5,10 @@
 - Expose the backend only through a regional API Gateway or ALB associated with the WAF in `infra/aws/production.tf`.
 - Set `GATEWAY_SHARED_SECRET` on the backend and inject the same value as `x-priage-gateway-token` at the trusted gateway. The gateway must strip any client-supplied copy before injecting it, and security groups must deny direct public origin access.
 - Use managed PostgreSQL with encryption, automated PITR, Multi-AZ, and a connection proxy.
+- Set `DATABASE_PROXY_MODE=rds-proxy` or `pgbouncer`; size `DATABASE_POOL_MAX` per backend replica so the total remains below the proxy and database budgets.
 - Use managed Redis with encryption in transit/at rest and authentication.
 - Store application secrets in the configured secrets manager. Never place production credentials in `.env` files or container images.
+- Export sensitive-read and break-glass ledgers to the Object-Lock-enabled `AUDIT_ARCHIVE_BUCKET`; application credentials must not be able to delete those exports.
 - Keep `CARE_TEAM_ACCESS_REQUIRED=true`; nurses, doctors, and admins then need an active assignment or audited break-glass grant for clinical reads.
 - Treat Redis loss as a readiness failure. Production realtime and distributed limits intentionally fail closed instead of falling back to process-local state.
 
@@ -47,3 +49,4 @@ The drill fails if the measured RPO/RTO exceeds the hospital-approved targets or
 - successful restore drill within the approved RPO/RTO
 - successful live IDOR, role-matrix, and 500-user load tests
 - successful migration rehearsal with `pgcrypto` available so legacy patient sessions are hashed in place
+- successful `./priage-cloud test`, chaos drill, restore drill, and deployed managed-stack capacity run

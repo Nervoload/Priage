@@ -1,0 +1,24 @@
+groups:
+  - name: priage
+    rules:
+      - alert: PriageEventBacklogGrowing
+        expr: priage_event_backlog{state="pending"} > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Priage event backlog is above the simulation SLO.
+      - alert: PriageDeadLetterDetected
+        expr: priage_event_backlog{state="dead_letter"} > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Priage has dead-letter encounter events.
+      - alert: PriageDatabasePoolWaiting
+        expr: priage_database_pool_connections{state="waiting"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Priage requests are waiting for database connections.
