@@ -16,6 +16,7 @@ import {
   STAFF_AUTH_COOKIE,
   parseCookieHeader,
 } from './auth-cookie.util';
+import { shouldSkipThrottleForLoopback } from './throttle.util';
 
 const RATE_LIMIT_SCRIPT = `
 local current = redis.call('INCR', KEYS[1])
@@ -35,6 +36,10 @@ export class EdgeRateLimitGuard implements CanActivate {
     }
 
     this.assertGateway(req.headers?.['x-priage-gateway-token']);
+    if (shouldSkipThrottleForLoopback(context)) {
+      return true;
+    }
+
     const ip = String(req.ip || req.socket?.remoteAddress || 'unknown');
     const [limit, ttlMs, bucket] = this.resolvePolicy(path, String(req.method || 'GET'));
     try {

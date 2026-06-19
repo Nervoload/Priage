@@ -332,7 +332,7 @@ export function WaitingRoomView({
           </div>
         </div>
 
-        {loading ? (
+        {loading && encounters.length === 0 ? (
           <div className={WAITING_ROOM_CARD_GRID_CLASS}>
             {Array.from({ length: 8 }).map((_, index) => (
               <div

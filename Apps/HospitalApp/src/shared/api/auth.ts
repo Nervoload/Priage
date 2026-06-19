@@ -19,8 +19,10 @@ export async function login(email: string, password: string, mfaCode?: string): 
  * GET /auth/me
  * Returns the currently authenticated user's info from the active staff session.
  */
-export async function getMe(): Promise<AuthUser> {
-  return client<AuthUser>('/auth/me');
+export async function getMe(options: { suppressAuthExpired?: boolean } = {}): Promise<AuthUser> {
+  return client<AuthUser>('/auth/me', {
+    suppressAuthExpired: options.suppressAuthExpired,
+  });
 }
 
 /**

@@ -10,6 +10,10 @@ export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://loca
 export const AUTH_EXPIRED_EVENT = 'auth-expired';
 export const DEMO_ACCESS_REQUIRED_EVENT = 'demo-access-required';
 
+export type ClientRequestInit = RequestInit & {
+  suppressAuthExpired?: boolean;
+};
+
 export function notifyAuthExpired(): void {
   window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
 }
@@ -22,6 +26,27 @@ export function notifyDemoAccessRequired(): void {
   window.dispatchEvent(new CustomEvent(DEMO_ACCESS_REQUIRED_EVENT));
 }
 
+export function getRetryAfterSeconds(body: string): number | null {
+  const candidates: string[] = [body];
+  try {
+    const parsed = JSON.parse(body) as { message?: unknown };
+    if (typeof parsed.message === 'string') {
+      candidates.unshift(parsed.message);
+    }
+  } catch {
+    // Non-JSON bodies can still include a retry hint.
+  }
+
+  for (const candidate of candidates) {
+    const match = candidate.match(/retry after\s+(\d+)\s+seconds?/i);
+    if (match) {
+      return Number.parseInt(match[1], 10);
+    }
+  }
+
+  return null;
+}
+
 /**
  * Authenticated fetch wrapper.
  * Browser auth is carried by HttpOnly cookies; no token is stored in JS.
@@ -29,17 +54,18 @@ export function notifyDemoAccessRequired(): void {
  */
 export async function client<T = unknown>(
   endpoint: string,
-  options: RequestInit = {},
+  options: ClientRequestInit = {},
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
+  const { suppressAuthExpired = false, ...fetchOptions } = options;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> ?? {}),
+    ...(fetchOptions.headers as Record<string, string> ?? {}),
   };
 
   const response = await fetch(url, {
-    ...options,
+    ...fetchOptions,
     credentials: 'include',
     headers,
   });
@@ -47,7 +73,7 @@ export async function client<T = unknown>(
   // 401 → token expired or invalid → clear it and notify AuthContext
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    if (response.status === 401) {
+    if (response.status === 401 && !suppressAuthExpired) {
       notifyAuthExpired();
     }
     if (isDemoAccessRequiredResponse(response.status, body)) {

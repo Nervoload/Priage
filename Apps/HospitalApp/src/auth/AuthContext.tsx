@@ -29,6 +29,31 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const SESSION_HINT_KEY = 'priage:hospital-session';
+
+function hasSessionHint(): boolean {
+  try {
+    return window.localStorage.getItem(SESSION_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setSessionHint(): void {
+  try {
+    window.localStorage.setItem(SESSION_HINT_KEY, '1');
+  } catch {
+    // Storage can be unavailable in private or restricted browsing modes.
+  }
+}
+
+function clearSessionHint(): void {
+  try {
+    window.localStorage.removeItem(SESSION_HINT_KEY);
+  } catch {
+    // Storage can be unavailable in private or restricted browsing modes.
+  }
+}
 
 // ─── Provider ───────────────────────────────────────────────────────────────
 
@@ -40,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     disconnectSocket();
     void apiLogout().catch(() => undefined);
+    clearSessionHint();
     setUser(null);
   }, []);
 
@@ -51,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         disconnectSocket();
+        clearSessionHint();
         setUser(null);
         return null;
       }
@@ -61,13 +88,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // On mount: if there's a stored session cookie, validate it via GET /auth/me
   useEffect(() => {
     let cancelled = false;
+    if (!hasSessionHint()) {
+      setInitializing(false);
+      return () => { cancelled = true; };
+    }
+
     (async () => {
       try {
-        const me = await getMe();
+        const me = await getMe({ suppressAuthExpired: true });
         if (!cancelled) {
           setUser(me);
         }
       } catch {
+        clearSessionHint();
         // No active cookie-backed session.
       } finally {
         if (!cancelled) setInitializing(false);
@@ -88,6 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hospitalId: result.user.hospitalId,
         hospital: result.user.hospital,
       });
+      setSessionHint();
       return result;
     } finally {
       setLoggingIn(false);

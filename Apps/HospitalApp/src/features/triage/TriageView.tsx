@@ -108,7 +108,7 @@ export function TriageView({
           )}
         </div>
 
-        {loading ? (
+        {loading && encounters.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-xl border border-gray-200 text-gray-500 text-sm">
             Loading triage patients…
           </div>

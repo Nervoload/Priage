@@ -12,7 +12,7 @@ import { WaitingRoomView } from '../features/waitingroom/WaitingRoomView';
 import { AnalyticsPage } from '../features/analytics/AnalyticsPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { getEncounter, listEncounters, startExam, confirmEncounter, dischargeEncounter } from '../shared/api/encounters';
-import { ApiError } from '../shared/api/client';
+import { ApiError, getRetryAfterSeconds } from '../shared/api/client';
 import {
   connectSocket,
   disconnectSocket,
@@ -81,6 +81,23 @@ function appendUniqueChatMessages(existing: ChatMessage[], incoming: ChatMessage
   return next;
 }
 
+function buildEncounterSignature(encounters: EncounterListItem[]): string {
+  return JSON.stringify(
+    encounters.map((encounter) => [
+      encounter.id,
+      encounter.status,
+      encounter.patient.firstName,
+      encounter.patient.lastName,
+      encounter.chiefComplaint ?? '',
+      encounter.currentCtasLevel ?? null,
+      encounter.currentPriorityScore ?? null,
+      encounter.arrivedAt ?? '',
+      encounter.triagedAt ?? '',
+      encounter.waitingAt ?? '',
+    ]),
+  );
+}
+
 export function HospitalApp() {
   const { user, initializing, logout } = useAuth();
   const { showToast } = useToast();
@@ -99,6 +116,12 @@ export function HospitalApp() {
   const loadingMessageEncounters = useRef<Set<number>>(new Set());
   const messageRetryAt = useRef<Map<number, number>>(new Map());
   const encounterRefreshTimer = useRef<number | null>(null);
+  const encounterRateLimitToastAt = useRef(0);
+  const encounterFetchInFlight = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const lastEncounterFetch = useRef<{ key: string; completedAt: number } | null>(null);
+  const encounterDataSignature = useRef('');
+  const encountersRef = useRef<EncounterListItem[]>([]);
+  const encounterOwnerUserId = useRef<number | null>(null);
   const encounterIdsRef = useRef<number[]>([]);
   const realtimeSubscriptionKey = useRef('');
   const effectiveConfig = hospitalConfig ?? DEFAULT_HOSPITAL_CONFIG;
@@ -126,6 +149,10 @@ export function HospitalApp() {
 
     return Array.from(statuses);
   }, [availableViews]);
+  const visibleEncounterStatusesKey = useMemo(
+    () => visibleEncounterStatuses.join(','),
+    [visibleEncounterStatuses],
+  );
 
   // ─── Load hospital configuration ────────────────────────────────────────
 
@@ -149,6 +176,11 @@ export function HospitalApp() {
       .catch((error) => {
         console.error('[HospitalApp] Failed to load hospital config:', error);
         if (cancelled) return;
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          setHospitalConfig(null);
+          setConfigUpdatedAt(null);
+          return;
+        }
         setHospitalConfig(DEFAULT_HOSPITAL_CONFIG);
         setConfigUpdatedAt(null);
         showToast('Loaded fallback hospital settings. Admin configuration could not be refreshed.', 'error');
@@ -163,7 +195,7 @@ export function HospitalApp() {
   }, [user, showToast]);
 
   useEffect(() => {
-    if (!user || availableViews.length === 0) return;
+    if (!user || hospitalConfig === null || availableViews.length === 0) return;
 
     const preferredView = getPreferredLandingPage(user.userId, availableViews) ?? availableViews[0];
     if (activeUserId.current !== user.userId) {
@@ -173,10 +205,16 @@ export function HospitalApp() {
     }
 
     setCurrentView((existing) => (availableViews.includes(existing) ? existing : preferredView));
-  }, [availableViews, user]);
+  }, [availableViews, hospitalConfig, user]);
 
   useEffect(() => {
     if (!user) {
+      encounterOwnerUserId.current = null;
+      encounterFetchInFlight.current = null;
+      lastEncounterFetch.current = null;
+      encounterDataSignature.current = '';
+      encountersRef.current = [];
+      setEncounters([]);
       setWaitingRoomRealtimeEnabled(false);
       setChatMessages({});
       loadedMessageEncounters.current.clear();
@@ -190,29 +228,94 @@ export function HospitalApp() {
         encounterRefreshTimer.current = null;
       }
       disconnectSocket();
+      return;
+    }
+
+    if (encounterOwnerUserId.current !== user.userId) {
+      encounterOwnerUserId.current = user.userId;
+      encounterFetchInFlight.current = null;
+      lastEncounterFetch.current = null;
+      encounterDataSignature.current = '';
+      encountersRef.current = [];
+      setEncounters([]);
+      setChatMessages({});
+      loadedMessageEncounters.current.clear();
+      messageCursorByEncounter.current.clear();
+      loadingMessageEncounters.current.clear();
+      messageRetryAt.current.clear();
+      encounterIdsRef.current = [];
+      realtimeSubscriptionKey.current = '';
     }
   }, [user]);
 
   // ─── Fetch encounters from backend ──────────────────────────────────────
 
-  const fetchEncounters = useCallback(async () => {
-    if (!user || loadingConfig) return;
-    try {
-      setLoadingEncounters(true);
-      const visibleRes = visibleEncounterStatuses.length > 0
-        ? await listEncounters({ status: visibleEncounterStatuses })
-        : { data: [], total: 0 };
-      if (isMounted.current) {
-        setEncounters(visibleRes.data);
-      }
-    } catch (err) {
-      console.error('[HospitalApp] Failed to fetch encounters:', err);
-      if (err instanceof ApiError && err.status === 401) return; // handled by auth-expired
-      showToast('Failed to load encounters. Please try again.', 'error');
-    } finally {
-      if (isMounted.current) setLoadingEncounters(false);
+  const fetchEncounters = useCallback(async (options: { force?: boolean } = {}) => {
+    if (!user || hospitalConfig === null || loadingConfig) return;
+
+    const fetchKey = `${user.userId}:${visibleEncounterStatusesKey}`;
+    if (encounterFetchInFlight.current?.key === fetchKey) {
+      return encounterFetchInFlight.current.promise;
     }
-  }, [availableViews, loadingConfig, showToast, user, visibleEncounterStatuses]);
+    if (
+      !options.force
+      && lastEncounterFetch.current?.key === fetchKey
+      && Date.now() - lastEncounterFetch.current.completedAt < 1_000
+    ) {
+      return;
+    }
+
+    const request = (async () => {
+      try {
+        if (encountersRef.current.length === 0) {
+          setLoadingEncounters(true);
+        }
+        const visibleRes = visibleEncounterStatuses.length > 0
+          ? await listEncounters({ status: visibleEncounterStatuses })
+          : { data: [], total: 0 };
+        if (isMounted.current) {
+          const nextSignature = buildEncounterSignature(visibleRes.data);
+          if (nextSignature !== encounterDataSignature.current) {
+            encounterDataSignature.current = nextSignature;
+            encountersRef.current = visibleRes.data;
+            setEncounters(visibleRes.data);
+          }
+        }
+      } catch (err) {
+        console.error('[HospitalApp] Failed to fetch encounters:', err);
+        if (err instanceof ApiError && err.status === 401) return; // handled by auth-expired
+        if (err instanceof ApiError && err.status === 403) {
+          encounterDataSignature.current = '';
+          encountersRef.current = [];
+          setEncounters([]);
+          showToast('You do not have access to the encounter list for this session.', 'error');
+          return;
+        }
+        if (err instanceof ApiError && err.status === 429) {
+          const retryAfterSeconds = getRetryAfterSeconds(err.body);
+          const now = Date.now();
+          if (now >= encounterRateLimitToastAt.current) {
+            const retryText = retryAfterSeconds ? ` Retrying will be available in about ${retryAfterSeconds} seconds.` : '';
+            showToast(`Patient list is temporarily rate-limited. Existing cards will stay visible.${retryText}`, 'error');
+            encounterRateLimitToastAt.current = now + Math.max((retryAfterSeconds ?? 10) * 1000, 10_000);
+          }
+          return;
+        }
+        showToast('Failed to load encounters. Please try again.', 'error');
+      } finally {
+        if (encounterFetchInFlight.current?.key === fetchKey) {
+          encounterFetchInFlight.current = null;
+        }
+        lastEncounterFetch.current = { key: fetchKey, completedAt: Date.now() };
+        if (isMounted.current) {
+          setLoadingEncounters(false);
+        }
+      }
+    })();
+
+    encounterFetchInFlight.current = { key: fetchKey, promise: request };
+    return request;
+  }, [hospitalConfig, loadingConfig, showToast, user, visibleEncounterStatuses, visibleEncounterStatusesKey]);
 
   const scheduleFetchEncounters = useCallback((delayMs = 750) => {
     if (encounterRefreshTimer.current !== null) {
@@ -221,23 +324,32 @@ export function HospitalApp() {
 
     encounterRefreshTimer.current = window.setTimeout(() => {
       encounterRefreshTimer.current = null;
-      void fetchEncounters();
+      void fetchEncounters({ force: true });
     }, delayMs);
+  }, [fetchEncounters]);
+
+  const refreshEncounters = useCallback(() => {
+    void fetchEncounters({ force: true });
   }, [fetchEncounters]);
 
   const applyEncounterDelta = useCallback(async (encounterId: number) => {
     try {
       const encounter = await getEncounter(encounterId);
       setEncounters((current) => {
-        if (!visibleEncounterStatuses.includes(encounter.status)) {
-          return current.filter((item) => item.id !== encounter.id);
-        }
-        const existing = current.findIndex((item) => item.id === encounter.id);
-        if (existing < 0) {
-          return [...current, encounter];
-        }
-        const next = [...current];
-        next[existing] = encounter;
+        const next = !visibleEncounterStatuses.includes(encounter.status)
+          ? current.filter((item) => item.id !== encounter.id)
+          : (() => {
+              const existing = current.findIndex((item) => item.id === encounter.id);
+              if (existing < 0) {
+                return [...current, encounter];
+              }
+              const updated = [...current];
+              updated[existing] = encounter;
+              return updated;
+            })();
+
+        encountersRef.current = next;
+        encounterDataSignature.current = buildEncounterSignature(next);
         return next;
       });
     } catch {
@@ -449,7 +561,7 @@ export function HospitalApp() {
 
   // ─── Show loading spinner while checking stored token ───────────────────
 
-  if (initializing || (user && loadingConfig)) {
+  if (initializing || (user && hospitalConfig === null)) {
     return (
       <div style={{
         minHeight: '100vh',
@@ -491,7 +603,7 @@ export function HospitalApp() {
         await startExam(encounter.id);
         showToast(`Triage started for ${encounter.patient.firstName ?? 'patient'}`, 'success');
       }
-      await fetchEncounters();
+      await fetchEncounters({ force: true });
     } catch (err) {
       console.error('[HospitalApp] Failed to transition encounter:', err);
       if (err instanceof ApiError && err.status === 401) return;
@@ -504,7 +616,7 @@ export function HospitalApp() {
     try {
       await dischargeEncounter(encounterId);
       showToast('Patient removed from waiting room', 'success');
-      await fetchEncounters();
+      await fetchEncounters({ force: true });
     } catch (err) {
       console.error('[HospitalApp] Failed to remove patient:', err);
       if (err instanceof ApiError && err.status === 401) return;
@@ -528,7 +640,7 @@ export function HospitalApp() {
           encounters={admitEncounters}
           onAdmit={handleAdmit}
           loading={loadingEncounters}
-          onRefresh={fetchEncounters}
+          onRefresh={refreshEncounters}
           user={userInfo}
           availableViews={availableViews}
           customFormQuestions={effectiveConfig.customIntakeQuestions}
@@ -540,7 +652,7 @@ export function HospitalApp() {
           onNavigate={handleNavigate}
           encounters={triageEncounters}
           loading={loadingEncounters}
-          onRefresh={fetchEncounters}
+          onRefresh={refreshEncounters}
           user={userInfo}
           availableViews={availableViews}
         />
@@ -554,7 +666,7 @@ export function HospitalApp() {
           onSendMessage={handleSendMessage}
           onRemovePatient={handleRemovePatient}
           loading={loadingEncounters}
-          onRefresh={fetchEncounters}
+          onRefresh={refreshEncounters}
           user={userInfo}
           availableViews={availableViews}
           realtimeActive={waitingRoomRealtimeEnabled}

@@ -531,7 +531,7 @@ export function AdmitView({
           </div>
         </div>
 
-        {loading ? (
+        {loading && encounters.length === 0 ? (
           <div className={DASHBOARD_EMPTY_STATE_CLASS}>
             Loading encounters…
           </div>
