@@ -13,6 +13,7 @@ import { ContextSourceType, EncounterStatus, Prisma, ReviewState, TrustTier, Vis
 import Redis from 'ioredis';
 
 import { PATIENT_SESSION_TTL_MS } from '../../common/http/auth-cookie.util';
+import { isLegacyCompatibilityEnabled, legacyCompatibilityExpiry } from '../../common/config/legacy-compatibility';
 import { normalizeHospitalConfig, type HospitalIntakeResponseType } from '../hospitals/hospital-config';
 import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
@@ -389,10 +390,7 @@ export class IntakeService {
       return hashedSession;
     }
 
-    const allowLegacyRawToken = (process.env.NODE_ENV || '').trim().toLowerCase() !== 'production'
-      && ['1', 'true', 'yes', 'on'].includes(
-        (process.env.ALLOW_LEGACY_RAW_PATIENT_TOKENS || 'true').trim().toLowerCase(),
-      );
+    const allowLegacyRawToken = isLegacyCompatibilityEnabled('patient_raw_session_token');
     if (!allowLegacyRawToken) {
       return null;
     }
@@ -410,6 +408,15 @@ export class IntakeService {
         // If a parallel request already migrated the session token, the next
         // request will resolve by hash.
       });
+      void this.loggingService.warn('Legacy patient session token migrated', {
+        service: 'IntakeService',
+        operation: 'findSessionByToken',
+        patientId: legacySession.patientId,
+        encounterId: legacySession.encounterId ?? undefined,
+      }, {
+        type: 'legacy_patient_raw_session_token',
+        compatibilityUntil: legacyCompatibilityExpiry('patient_raw_session_token') || 'unknown',
+      }).catch(() => undefined);
     }
 
     return legacySession;

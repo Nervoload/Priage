@@ -1,5 +1,9 @@
 # Logging Test Script Documentation
 
+> **Historical detail.** Start with [TESTING.md](./TESTING.md) for supported
+> commands and prerequisites. This page remains as reference material for one
+> release while older links are updated.
+
 ## Overview
 
 The `test-logging.js` script is a comprehensive automated testing suite for the Priage logging system. It validates all aspects of logging implementation including authentication, business logic, error handling, and system health.

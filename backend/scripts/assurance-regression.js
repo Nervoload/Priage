@@ -47,12 +47,15 @@ check('deployed stack load covers distinct users, sockets, writes, SSE, and uplo
   includes(file, 'new FormData()');
   includes(file, 'io(config.baseUrl');
   includes(file, '/events');
+  includes(file, 'DEPLOYED_TEST_PATIENT_CONCURRENCY');
+  includes(file, 'DEPLOYED_TEST_STAFF_LOGIN_CONCURRENCY');
+  includes(file, 'status: 0');
 });
 
 check('CI enforces security, integration, role, concurrency, chaos, and restore gates', () => {
   const assurance = '.github/workflows/assurance.yml';
   const capacity = '.github/workflows/deployed-capacity.yml';
-  for (const value of ['test:unit', 'test:security', 'test:load', 'test:assurance', 'chaos', 'restore']) includes(assurance, value);
+  for (const value of ['audit:inventory', 'test:unit', 'test:event-lease', 'test:security', 'test:load', 'test:assurance', 'chaos', 'restore']) includes(assurance, value);
   includes(capacity, 'DEPLOYED_TEST_PATIENT_COUNT: 500');
   includes(capacity, 'test:deployed-stack');
 });

@@ -88,7 +88,7 @@ export function TriageView({
         availableViews={availableViews}
       />
 
-      <div className="p-6 max-w-[1200px] mx-auto">
+      <div data-showcase="hospital.triage.workspace" className="p-6 max-w-[1200px] mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>

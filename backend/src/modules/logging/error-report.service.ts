@@ -83,7 +83,7 @@ export class ErrorReportService {
       reportId,
       timestamp: new Date(),
       correlationId,
-      summary: this.generateSummary(logs, errorLogs),
+      summary: this.generateSummary(errorLogs),
       errorChain: this.buildErrorChain(errorLogs),
       affectedServices: this.getAffectedServices(logs),
       failurePoint: this.identifyFailurePoint(errorLogs),
@@ -181,7 +181,7 @@ export class ErrorReportService {
     return `ERR-${timestamp}-${random}`;
   }
 
-  private generateSummary(allLogs: LogEntry[], errorLogs: LogEntry[]): string {
+  private generateSummary(errorLogs: LogEntry[]): string {
     if (errorLogs.length === 0) {
       return 'No errors detected in this request chain';
     }

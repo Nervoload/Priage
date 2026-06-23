@@ -1,5 +1,9 @@
 # Smoke Test Documentation
 
+> **Historical detail.** Start with [TESTING.md](./TESTING.md) for the current
+> supported test sequence. This page remains as reference material for one
+> release while older links are updated.
+
 ## Overview
 
 The **smoke-test-v2.js** script is a comprehensive end-to-end testing suite for the Priage backend. It simulates a complete patient encounter lifecycle from initial intake through discharge, testing all major system components along the way.

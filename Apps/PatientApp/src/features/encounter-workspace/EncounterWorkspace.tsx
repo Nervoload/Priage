@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { cancelMyEncounter, getMyEncounter, getQueueInfo, listMyMessages } from '../../shared/api/encounters';
-import { API_BASE_URL } from '../../shared/api/client';
+import { API_BASE_URL, isPatientSessionInvalidError } from '../../shared/api/client';
 import { getMe, updateProfile } from '../../shared/api/auth';
 import { sendLocationPing, updateIntakeDetails } from '../../shared/api/intake';
 import { ENCOUNTER_STATUS_META, isTerminalEncounter } from '../../shared/encounters';
@@ -110,6 +110,7 @@ export function EncounterWorkspace() {
   const [queueInfo, setQueueInfo] = useState<QueueInfo | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [locationSharing, setLocationSharing] = useState(false);
   const [arrivalSubmitting, setArrivalSubmitting] = useState(false);
   const [savingGuestInfo, setSavingGuestInfo] = useState(false);
@@ -186,11 +187,19 @@ export function EncounterWorkspace() {
     try {
       const detail = await getMyEncounter(encounterId);
       setEncounter(detail);
-    } catch {
-      if (showFailureToast) {
-        showToast('Could not load this encounter anymore.');
+      setRefreshError(null);
+    } catch (error) {
+      if (isPatientSessionInvalidError(error)) {
+        // Never leave encounter data rendered after a confirmed access denial.
+        setEncounter(null);
+        setMessages([]);
+        handleSessionExpired();
+        return;
       }
-      handleSessionExpired();
+      setRefreshError('We could not refresh this visit. Your last confirmed information remains visible and we will retry.');
+      if (showFailureToast) {
+        showToast('Could not refresh this encounter. We will retry automatically.');
+      }
     } finally {
       setLoading(false);
     }
@@ -510,11 +519,22 @@ export function EncounterWorkspace() {
     showToast('Sharing your location with the hospital.', 'success');
   }
 
-  if (loading || !encounter) {
+  if (loading) {
     return (
       <div style={styles.loadingShell}>
         <div style={styles.spinner} />
         <p style={styles.loadingText}>Loading your encounter dashboard...</p>
+      </div>
+    );
+  }
+
+  if (!encounter) {
+    return (
+      <div style={styles.loadingShell}>
+        <p style={styles.errorText}>{refreshError || 'This encounter is no longer available.'}</p>
+        <button type="button" style={styles.primaryButton} onClick={() => void refreshEncounter(true)}>
+          Try again
+        </button>
       </div>
     );
   }
@@ -536,6 +556,7 @@ export function EncounterWorkspace() {
             ? 'This is the shared visit dashboard for both guests and account holders while the clinic prepares for your arrival.'
             : 'This encounter dashboard stays aligned for guests and signed-in patients, with only account-specific actions changing.'}
         </p>
+        {refreshError ? <p style={styles.errorText}>{refreshError}</p> : null}
 
         <div style={styles.statusRow}>
           <span style={{ ...styles.statusPill, color: statusMeta.color, background: statusMeta.bg, borderColor: statusMeta.border }}>

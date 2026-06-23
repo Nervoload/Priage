@@ -337,7 +337,7 @@ export function AnalyticsPage({
         availableViews={availableViews}
       />
 
-      <div className="p-6 max-w-[1400px] mx-auto space-y-5">
+      <div data-showcase="hospital.analytics.overview" className="p-6 max-w-[1400px] mx-auto space-y-5">
         {/* ── Header ────────────────────────────────────────────────────── */}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>

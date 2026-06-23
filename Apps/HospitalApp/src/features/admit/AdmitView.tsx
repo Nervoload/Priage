@@ -333,7 +333,10 @@ export function AdmitView({
         availableViews={availableViews}
       />
 
-      <div className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6">
+      <div
+        data-showcase="hospital.admit.queue"
+        className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6"
+      >
         <div
           className={`${DASHBOARD_GLASS_PANEL_CLASS} transition-all duration-300 ${filtersVisible ? 'mb-7 p-4 sm:p-5' : 'mb-5 p-4'}`}
         >

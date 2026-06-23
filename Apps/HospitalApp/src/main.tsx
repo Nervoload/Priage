@@ -6,6 +6,7 @@ import { AuthProvider } from './auth/AuthContext';
 import { DemoGatePage } from './auth/DemoGatePage';
 import { useDemoGate } from './auth/useDemoGate';
 import { ToastProvider } from './shared/ui/ToastContext';
+import { DemoRuntimeProvider } from './shared/demo-runtime/DemoRuntimeProvider';
 import { HospitalApp } from './app/HospitalApp';
 
 function DemoGateWrapper({ children }: { children: ReactNode }) {
@@ -31,7 +32,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <DemoGateWrapper>
       <AuthProvider>
         <ToastProvider>
-          <HospitalApp />
+          <DemoRuntimeProvider>
+            <HospitalApp />
+          </DemoRuntimeProvider>
         </ToastProvider>
       </AuthProvider>
     </DemoGateWrapper>

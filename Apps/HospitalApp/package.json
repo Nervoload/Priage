@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "check:unused": "../../backend/node_modules/.bin/knip --config knip.json --include files,exports,dependencies",
     "preview": "vite preview"
   },
   "dependencies": {
+    "driver.js": "^1.4.0",
     "jspdf": "^4.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

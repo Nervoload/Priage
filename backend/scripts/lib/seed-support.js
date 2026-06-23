@@ -74,7 +74,7 @@ async function resolveHospitalActors(prisma, hospitalId) {
 
 function parseTargetArgs(argv, env) {
   let hospitalId = env.TARGET_HOSPITAL_ID ? Number.parseInt(env.TARGET_HOSPITAL_ID, 10) : null;
-  let hospitalSlug = env.TARGET_HOSPITAL_SLUG || env.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG || null;
+  let hospitalSlug = env.TARGET_HOSPITAL_SLUG || env.DEMO_HOSPITAL_SLUG || env.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG || null;
 
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === '--hospital-id' && argv[index + 1]) {

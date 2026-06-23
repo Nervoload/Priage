@@ -8,6 +8,7 @@ const PROTECTED_MUTATION_PREFIXES = [
   '/alerts',
   '/analytics',
   '/assets',
+  '/demo-sessions',
   '/encounters',
   '/hospitals',
   '/intake',

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignoreDependencies": ["tailwindcss"],
+  "ignoreIssues": {
+    "src/app/HospitalApp.tsx": ["exports"],
+    "src/shared/api/client.ts": ["exports"],
+    "src/shared/api/encounters.ts": ["exports"],
+    "src/shared/api/messaging.ts": ["exports"],
+    "src/shared/api/triage.ts": ["exports"],
+    "src/shared/queue/queuePriority.ts": ["exports"],
+    "src/shared/showcase/showcaseRegistry.ts": ["exports"],
+    "src/shared/types/analytics.ts": ["exports"],
+    "src/shared/types/domain.ts": ["exports"],
+    "src/shared/ui/Badge.tsx": ["exports"],
+    "src/shared/ui/dashboardTheme.ts": ["exports"]
+  }
+}

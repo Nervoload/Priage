@@ -12,11 +12,15 @@
 // Usage:
 //   cd backend && node scripts/demo-seed.js
 //
-// Requires an existing target hospital. Pass --hospital-slug / --hospital-id
-// or set TARGET_HOSPITAL_SLUG / TARGET_HOSPITAL_ID.
+// Seeds `demo-hospital` by default. Pass --hospital-slug / --hospital-id or
+// set TARGET_HOSPITAL_SLUG / TARGET_HOSPITAL_ID to intentionally override it.
 // ──────────────────────────────────────────────────────────────────────
 
 require('dotenv').config();
+// `demo-seed` exclusively populates the sales-demo tenant. Keep its target
+// deterministic so it can safely coexist with private/local hospitals.
+process.env.TARGET_HOSPITAL_SLUG =
+  process.env.TARGET_HOSPITAL_SLUG || process.env.DEMO_HOSPITAL_SLUG || 'demo-hospital';
 const bcrypt = require('bcrypt');
 const { randomUUID } = require('crypto');
 const { PrismaClient } = require('@prisma/client');

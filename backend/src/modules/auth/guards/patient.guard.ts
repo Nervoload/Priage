@@ -8,6 +8,8 @@ import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from
 import { EncounterStatus } from '@prisma/client';
 
 import { PATIENT_SESSION_COOKIE, readCookie } from '../../../common/http/auth-cookie.util';
+import { isLegacyCompatibilityEnabled, legacyCompatibilityExpiry } from '../../../common/config/legacy-compatibility';
+import { LoggingService } from '../../logging/logging.service';
 import { hashPatientSessionToken } from '../../patient-auth/patient-session-token.util';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -26,7 +28,10 @@ const TERMINAL_SESSION_ENCOUNTER_STATUSES = new Set<EncounterStatus>([
 
 @Injectable()
 export class PatientGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly loggingService: LoggingService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -57,10 +62,7 @@ export class PatientGuard implements CanActivate {
       },
     });
 
-    const allowLegacyRawToken = (process.env.NODE_ENV || '').trim().toLowerCase() !== 'production'
-      && ['1', 'true', 'yes', 'on'].includes(
-        (process.env.ALLOW_LEGACY_RAW_PATIENT_TOKENS || 'true').trim().toLowerCase(),
-      );
+    const allowLegacyRawToken = isLegacyCompatibilityEnabled('patient_raw_session_token');
     if (!session && allowLegacyRawToken) {
       session = await this.prisma.patientSession.findUnique({
         where: { token },
@@ -85,6 +87,16 @@ export class PatientGuard implements CanActivate {
         }).catch(() => {
           // A parallel request may already have migrated this legacy session.
         });
+        void this.loggingService.warn('Legacy patient session token migrated', {
+          service: 'PatientGuard',
+          operation: 'canActivate',
+          patientId: session.patientId,
+          encounterId: session.encounterId ?? undefined,
+          hospitalId: session.encounter?.hospitalId,
+        }, {
+          type: 'legacy_patient_raw_session_token',
+          compatibilityUntil: legacyCompatibilityExpiry('patient_raw_session_token') || 'unknown',
+        }).catch(() => undefined);
       }
     }
 

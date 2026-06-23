@@ -26,7 +26,15 @@ jobs:
         working-directory: backend
       - run: npm run build
         working-directory: backend
-      - run: npm run test:unit
+      - run: npm run check:unused
+        working-directory: backend
+      - run: npm run check:docs
+        working-directory: backend
+      - run: npm run audit:inventory -- --summary
+        working-directory: backend
+      - run: npm run audit:migration-ledger -- --summary
+        working-directory: backend
+      - run: npm run test:unit:compiled
         working-directory: backend
       - run: npm run test:security
         working-directory: backend
@@ -36,7 +44,11 @@ jobs:
         working-directory: backend
       - run: npm ci && npm run build
         working-directory: Apps/HospitalApp
+      - run: npm run check:unused
+        working-directory: Apps/HospitalApp
       - run: npm ci && npm run build
+        working-directory: Apps/PatientApp
+      - run: npm run check:unused
         working-directory: Apps/PatientApp
 
   cloud-integration-idor-role-concurrency-chaos-restore:
@@ -55,6 +67,10 @@ jobs:
         env:
           DATABASE_URL: postgresql://priage:priage@localhost:6432/priage?schema=public
           DEPLOYED_TEST_BASE_URL: http://localhost:8080
+      - run: npm run test:event-lease:postgres
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://priage:priage@localhost:6432/priage?schema=public
       - run: npm run test:deployed-stack
         working-directory: backend
         env:

@@ -209,7 +209,7 @@ function normalizeSurveyArray(value: unknown): HospitalFeedbackSurveyQuestion[] 
     .filter((item): item is HospitalFeedbackSurveyQuestion => item !== null);
 }
 
-export function getDefaultHospitalConfig(): HospitalOperationalConfig {
+function getDefaultHospitalConfig(): HospitalOperationalConfig {
   return {
     version: 1,
     pageAccess: {

@@ -8,6 +8,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
+import { DemoSessionsModule } from '../demo-sessions/demo-sessions.module';
 import { MessagingModule } from '../messaging/messaging.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RedisModule } from '../redis/redis.module';
@@ -17,7 +18,7 @@ import { RealtimeRedisAdapterService } from './realtime-redis-adapter.service';
 
 @Module({
   providers: [RealtimeGateway, RealtimeAuthService, RealtimeRedisAdapterService],
-  imports: [AuthModule, PrismaModule, RedisModule, forwardRef(() => MessagingModule)],
+  imports: [AuthModule, DemoSessionsModule, PrismaModule, RedisModule, forwardRef(() => MessagingModule)],
   exports: [RealtimeGateway, RealtimeAuthService, RealtimeRedisAdapterService],
 })
 export class RealtimeModule {}

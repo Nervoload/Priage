@@ -5,12 +5,18 @@ require('dotenv/config');
 const { Pool } = require('pg');
 const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
+const { prepareDestructiveAction, printDestructiveManifest } = require('./lib/destructive-safety');
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+const connectionString = process.env.DATABASE_URL || 'postgresql://priage:priage@localhost:5432/priage';
 
 async function main() {
+  const action = prepareDestructiveAction({
+    scriptName: 'cleanup-orphaned-tests.js',
+    databaseUrl: connectionString,
+  });
+  const pool = new Pool({ connectionString });
+  const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+  try {
   const testHospitals = await prisma.hospital.findMany({
     where: {
       OR: [
@@ -29,6 +35,7 @@ async function main() {
 
   if (testHospitals.length === 0) {
     console.log('Nothing to clean up.');
+    printDestructiveManifest({ scriptName: 'cleanup-orphaned-tests.js', action, counts: { hospitals: 0 } });
     return;
   }
 
@@ -69,7 +76,16 @@ async function main() {
   });
   const patientSessionIds = patientSessions.map((ps) => ps.id);
 
-  console.log(`  Encounters: ${encounterIds.length}, Patients: ${patientIds.length}, Users: ${userIds.length}`);
+  const manifest = {
+    hospitals: hospitalIds.length,
+    encounters: encounterIds.length,
+    patients: patientIds.length,
+    staffUsers: userIds.length,
+    intakeSessions: intakeSessionIds.length,
+    patientSessions: patientSessionIds.length,
+  };
+  printDestructiveManifest({ scriptName: 'cleanup-orphaned-tests.js', action, counts: manifest });
+  if (action.mode === 'dry-run') return;
 
   // Delete in FK dependency order
   const orFilter = (conditions) => ({ OR: conditions.filter(Boolean) });
@@ -128,14 +144,14 @@ async function main() {
   }
 
   console.log(`\nDone — removed ${testHospitals.length} orphaned test hospitals and all related data.`);
+  } finally {
+    await prisma.$disconnect().catch(() => {});
+    await pool.end().catch(() => {});
+  }
 }
 
 main()
   .catch((err) => {
     console.error('Cleanup failed:', err.message);
     process.exitCode = 1;
-  })
-  .finally(async () => {
-    await prisma.$disconnect().catch(() => {});
-    await pool.end().catch(() => {});
   });

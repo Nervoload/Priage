@@ -4,7 +4,7 @@
 import { Transform } from 'class-transformer';
 import { IsIn, IsOptional } from 'class-validator';
 
-export const ANALYTICS_RANGES = ['day', 'week', 'month', 'year', 'all'] as const;
+const ANALYTICS_RANGES = ['day', 'week', 'month', 'year', 'all'] as const;
 export type AnalyticsRange = typeof ANALYTICS_RANGES[number];
 
 export class GetHospitalAnalyticsQueryDto {

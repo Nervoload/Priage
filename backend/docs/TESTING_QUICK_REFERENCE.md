@@ -1,5 +1,9 @@
 # Testing Scripts Quick Reference
 
+> **Superseded command index.** Use [TESTING.md](./TESTING.md) for supported
+> commands, safety gates, and cleanup checks. This page remains for one release
+> so existing repository links continue to resolve.
+
 This document provides a quick overview of all testing scripts available in the Priage backend.
 
 ## Available Test Scripts

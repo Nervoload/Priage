@@ -17,6 +17,7 @@ import { RequestTelemetryInterceptor } from './common/telemetry/request-telemetr
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { DemoAccessModule } from './modules/demo-access/demo-access.module';
 import { DemoAccessGuard } from './modules/demo-access/demo-access.guard';
+import { DemoSessionsModule } from './modules/demo-sessions/demo-sessions.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { EncountersModule } from './modules/encounters/encounters.module';
@@ -51,6 +52,7 @@ import { UsersModule } from './modules/users/users.module';
         },
       ],
     }),
+    DemoSessionsModule,
     DemoAccessModule,
     PrismaModule,
     RedisModule,   // Global Redis client for caching (location, sessions)

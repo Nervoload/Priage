@@ -218,6 +218,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
   return (
     <>
       <button
+        data-showcase="hospital.alerts.banner"
         onClick={() => setOpen((value) => !value)}
         className={`
           fixed right-0 z-40 cursor-pointer rounded-l-[20px] border border-r-0 px-3 py-4 shadow-[0_18px_42px_-24px_rgba(15,23,42,0.45)]
@@ -249,6 +250,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
       </button>
 
       <div
+        data-showcase="hospital.waiting.messaging"
         className={`fixed right-0 z-30 transition-transform duration-300 ease-out ${open ? 'translate-x-0' : 'translate-x-full'}`}
         style={{
           top: NAV_HEIGHT,

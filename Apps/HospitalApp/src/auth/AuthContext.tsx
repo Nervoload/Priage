@@ -47,6 +47,10 @@ function setSessionHint(): void {
   }
 }
 
+export function markHospitalSessionHint(): void {
+  setSessionHint();
+}
+
 function clearSessionHint(): void {
   try {
     window.localStorage.removeItem(SESSION_HINT_KEY);

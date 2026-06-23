@@ -162,7 +162,11 @@ export class PriageService {
       operation: 'admit',
       correlationId,
       patientId,
-    }, { chiefComplaint: dto.chiefComplaint, hospitalSlug: dto.hospitalSlug });
+    }, {
+      hasChiefComplaint: Boolean(dto.chiefComplaint?.trim()),
+      hasDetails: Boolean(dto.details?.trim()),
+      hasHospitalSelection: Boolean(dto.hospitalSlug),
+    });
 
     // Resolve hospital
     let hospitalId: number;

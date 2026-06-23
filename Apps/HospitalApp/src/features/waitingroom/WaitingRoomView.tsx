@@ -165,7 +165,10 @@ export function WaitingRoomView({
         availableViews={availableViews}
       />
 
-      <div className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6">
+      <div
+        data-showcase="hospital.waiting.list"
+        className="mx-auto max-w-[1840px] px-3 py-4 sm:px-4 sm:py-5 lg:px-5 lg:py-6"
+      >
         <div className={`${DASHBOARD_GLASS_PANEL_CLASS} transition-all duration-300 ${filtersVisible ? 'mb-7 p-4 sm:p-5' : 'mb-5 p-4'}`}>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className={`relative flex-1 transition-all duration-300 ${filtersVisible ? 'translate-y-0' : '-translate-y-0.5'}`}>

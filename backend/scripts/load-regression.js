@@ -182,13 +182,13 @@ check('hospital encounter realtime applies per-encounter deltas with full-refetc
   assert.ok(source.includes('window.clearTimeout'), 'Hospital app should clear stale refetch timers');
 });
 
-check('legacy enroute paths use SSE and do not retain 5/10 second polling', () => {
-  const enroute = read('Apps/PatientApp/src/features/enroute/Enroute.tsx');
-  const panel = read('Apps/PatientApp/src/features/enroute/MessagePanel.tsx');
-  assert.ok(enroute.includes('new EventSource'));
-  assert.ok(extractNumericConstant(enroute, 'ENCOUNTER_FALLBACK_POLL_MS') >= 60_000);
-  assert.ok(extractNumericConstant(enroute, 'MESSAGES_FALLBACK_POLL_MS') >= 30_000);
-  assert.ok(!panel.includes('}, 5000)'));
+check('legacy patient realtime surfaces are removed in favour of the active workspace', () => {
+  const workspace = read('Apps/PatientApp/src/features/encounter-workspace/EncounterWorkspace.tsx');
+  assert.ok(workspace.includes('new EventSource'));
+  assert.ok(extractNumericConstant(workspace, 'ENCOUNTER_FALLBACK_POLL_MS') >= 60_000);
+  assert.ok(extractNumericConstant(workspace, 'MESSAGE_FALLBACK_POLL_MS') >= 30_000);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'Apps/PatientApp/src/features/enroute/Enroute.tsx')), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, 'Apps/PatientApp/src/features/enroute/MessagePanel.tsx')), false);
 });
 
 check('patient realtime is Redis-distributed and event processing is claimed with a dead-letter path', () => {

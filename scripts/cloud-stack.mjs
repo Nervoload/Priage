@@ -21,6 +21,8 @@ const commands = {
   test: () => {
     waitForReady();
     runBackend('test:security');
+    runBackend('test:event-lease');
+    runBackend('test:event-lease:postgres');
     runBackend('test:load');
     runBackend('test:assurance');
     runBackend('test:deployed-security');

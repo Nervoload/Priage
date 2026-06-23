@@ -34,6 +34,7 @@ async function main() {
   const nurseB = await fixtures.createUser({ hospitalId: hospitalB.id, password, role: 'NURSE', emailPrefix: 'nurse-b' });
   const patientA = await fixtures.createPatient({ password, emailPrefix: 'patient-a' });
   const patientB = await fixtures.createPatient({ password, emailPrefix: 'patient-b' });
+  const expiredPatient = await fixtures.createPatient({ password, emailPrefix: 'patient-expired' });
   const encounterA = await fixtures.createEncounter({
     hospitalId: hospitalA.id,
     patientId: patientA.id,
@@ -48,8 +49,20 @@ async function main() {
     chiefComplaint: 'Sensitive complaint B',
     details: 'Sensitive detail B',
   });
+  const expiredEncounter = await fixtures.createEncounter({
+    hospitalId: hospitalA.id,
+    patientId: expiredPatient.id,
+    status: 'WAITING',
+    chiefComplaint: 'Expired session fixture',
+  });
   const patientSessionA = await fixtures.createPatientSession({ patientId: patientA.id, encounterId: encounterA.id });
+  const expiredPatientSession = await fixtures.createPatientSession({
+    patientId: expiredPatient.id,
+    encounterId: expiredEncounter.id,
+    expiresAt: new Date(Date.now() - 60_000),
+  });
   const patientCookieA = buildPatientCookieHeader(patientSessionA.token);
+  const expiredPatientCookie = buildPatientCookieHeader(expiredPatientSession.token);
   const [adminCookie, staffCookie, nurseACookie, nurseBCookie] = await Promise.all([
     login(adminA.email),
     login(staffA.email),
@@ -62,6 +75,12 @@ async function main() {
   });
   await check('patient IDOR is blocked across patient records', async () => {
     expectBlocked(await api(`/patient/encounters/${encounterB.id}`, { cookie: patientCookieA }));
+  });
+  await check('expired patient session cannot read a previously linked encounter', async () => {
+    assert.equal(
+      (await api(`/patient/encounters/${expiredEncounter.id}`, { cookie: expiredPatientCookie })).status,
+      401,
+    );
   });
   await check('staff tenant isolation blocks another hospital encounter', async () => {
     expectBlocked(await api(`/encounters/${encounterB.id}`, { cookie: staffCookie, staff: true }));
@@ -78,6 +97,35 @@ async function main() {
     expectBlocked(await api(`/messaging/encounters/${encounterA.id}/messages`, { cookie: staffCookie, staff: true }));
   });
   await check('unassigned nurse cannot read a clinical thread', async () => {
+    expectBlocked(await api(`/messaging/encounters/${encounterA.id}/messages`, { cookie: nurseACookie, staff: true }));
+  });
+
+  await check('break-glass access is specific, audited, and expires', async () => {
+    const opened = await api(`/clinical-access/encounters/${encounterA.id}/break-glass`, {
+      method: 'POST',
+      cookie: nurseACookie,
+      staff: true,
+      body: {
+        reason: 'Immediate clinical safety review is required for this patient.',
+        expiresInMinutes: 1,
+      },
+    });
+    assert.equal(opened.status, 201);
+    assert.equal(
+      (await api(`/messaging/encounters/${encounterA.id}/messages`, { cookie: nurseACookie, staff: true })).status,
+      200,
+    );
+    assert.equal(await prisma.sensitiveReadAuditLog.count({
+      where: { hospitalId: hospitalA.id, userId: nurseA.id, encounterId: encounterA.id, resource: 'BREAK_GLASS' },
+    }), 1);
+    assert.ok(await prisma.sensitiveReadAuditLog.count({
+      where: { hospitalId: hospitalA.id, userId: nurseA.id, encounterId: encounterA.id, resource: 'MESSAGE_THREAD' },
+    }) >= 1);
+
+    await prisma.breakGlassAccess.updateMany({
+      where: { id: opened.json.id, hospitalId: hospitalA.id },
+      data: { expiresAt: new Date(Date.now() - 1_000) },
+    });
     expectBlocked(await api(`/messaging/encounters/${encounterA.id}/messages`, { cookie: nurseACookie, staff: true }));
   });
 

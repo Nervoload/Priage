@@ -3,6 +3,7 @@ import { AssetStatus, LogRecordLevel } from '@prisma/client';
 import type Redis from 'ioredis';
 
 import { Inject } from '@nestjs/common';
+import { readPositiveIntegerEnv } from '../../common/config/env-value.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 
@@ -243,9 +244,4 @@ export class HealthService {
       return { ok: false, latencyMs: Date.now() - startedAt, detail: 'event backlog unavailable' };
     }
   }
-}
-
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const parsed = Number.parseInt(process.env[name] || '', 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }

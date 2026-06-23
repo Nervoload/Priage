@@ -1,0 +1,44 @@
+.priage-showcase-popover {
+  max-width: min(380px, calc(100vw - 32px));
+  border-radius: 8px;
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  box-shadow: 0 22px 60px -32px rgba(15, 23, 42, 0.55);
+  color: #0f172a;
+}
+
+.priage-showcase-popover .driver-popover-title {
+  font-family: "Avenir Next", "SF Pro Display", "Segoe UI", sans-serif;
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.priage-showcase-popover .driver-popover-description {
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.priage-showcase-popover .driver-popover-progress-text {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.priage-showcase-popover .driver-popover-next-btn,
+.priage-showcase-popover .driver-popover-prev-btn {
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  font-size: 13px;
+  font-weight: 700;
+  text-shadow: none;
+}
+
+.priage-showcase-popover .driver-popover-next-btn {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.priage-showcase-popover .driver-popover-prev-btn {
+  background: #ffffff;
+  color: #334155;
+}

@@ -44,7 +44,7 @@ export function hasClinicalCapability(role: Role, capability: ClinicalReadCapabi
   return ROLE_CAPABILITIES[role].has(capability);
 }
 
-export const STAFF_OPERATIONAL_ENCOUNTER_FIELDS = Object.freeze([
+const STAFF_OPERATIONAL_ENCOUNTER_FIELDS = Object.freeze([
   'id',
   'createdAt',
   'updatedAt',
@@ -63,7 +63,7 @@ export const STAFF_OPERATIONAL_ENCOUNTER_FIELDS = Object.freeze([
   'patient.lastName',
 ] as const);
 
-export const CLINICAL_ENCOUNTER_FIELDS = Object.freeze([
+const CLINICAL_ENCOUNTER_FIELDS = Object.freeze([
   'chiefComplaint',
   'details',
   'currentCtasLevel',
@@ -86,6 +86,8 @@ export const CLINICAL_ENCOUNTER_FIELDS = Object.freeze([
   'intakeImages',
 ] as const);
 
+// Deliberate export: this is the reviewable field-authorization matrix used by
+// security regression evidence, even though enforcement is capability based.
 export const ROLE_FIELD_AUTHORIZATION = Object.freeze({
   [Role.STAFF]: {
     operational: STAFF_OPERATIONAL_ENCOUNTER_FIELDS,

@@ -27,7 +27,7 @@ export async function client<T = unknown>(
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    if (response.status === 401) {
+    if (isPatientSessionInvalidResponse(response.status, body)) {
       window.dispatchEvent(new CustomEvent(PATIENT_SESSION_EXPIRED_EVENT));
     } else if (response.status === 403 && body.includes('Demo access required')) {
       window.dispatchEvent(new CustomEvent(DEMO_ACCESS_REQUIRED_EVENT));
@@ -42,6 +42,11 @@ export async function client<T = unknown>(
   return response.json() as Promise<T>;
 }
 
+/** A denied patient request clears protected state; an outage must not. */
+export function isPatientSessionInvalidResponse(status: number, body = ''): boolean {
+  return status === 401 || (status === 403 && !body.includes('Demo access required'));
+}
+
 /** Strongly-typed API error */
 export class ApiError extends Error {
   constructor(
@@ -52,4 +57,8 @@ export class ApiError extends Error {
     super(`API ${endpoint} failed with ${status}: ${body}`);
     this.name = 'ApiError';
   }
+}
+
+export function isPatientSessionInvalidError(error: unknown): error is ApiError {
+  return error instanceof ApiError && isPatientSessionInvalidResponse(error.status, error.body);
 }

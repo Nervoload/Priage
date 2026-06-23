@@ -24,6 +24,8 @@ const config = {
   uploadCount: readInt('DEPLOYED_TEST_UPLOAD_COUNT', 20),
   sseCount: readInt('DEPLOYED_TEST_SSE_COUNT', 50),
   reconnectRounds: readInt('DEPLOYED_TEST_RECONNECT_ROUNDS', 3),
+  patientConcurrency: readInt('DEPLOYED_TEST_PATIENT_CONCURRENCY', 50),
+  staffLoginConcurrency: readInt('DEPLOYED_TEST_STAFF_LOGIN_CONCURRENCY', 10),
   maxP95Ms: readInt('DEPLOYED_TEST_MAX_P95_MS', 2500),
   maxErrorRate: Number.parseFloat(process.env.DEPLOYED_TEST_MAX_ERROR_RATE || '0'),
   keepFixtures: process.env.DEPLOYED_TEST_KEEP_FIXTURES === '1',
@@ -138,7 +140,7 @@ async function main() {
       headers: { 'Idempotency-Key': `load-message-${testId}-${patient.id}` },
       body: { content: `Synthetic load message ${index}` },
     });
-  }), 50);
+  }), config.patientConcurrency);
 
   console.log(`Running ${Math.min(config.uploadCount, patients.length)} private object uploads`);
   await runConcurrent(patients.slice(0, config.uploadCount).map((patient, index) => async () => {
@@ -170,7 +172,11 @@ async function main() {
   await Promise.allSettled(sseStreams);
 
   console.log('Running distinct-staff socket reconnect storm and list reads');
-  const staffCookies = await Promise.all(staff.map((user) => loginStaff(user.email, password, user.id)));
+  const staffCookies = await mapConcurrent(
+    staff,
+    config.staffLoginConcurrency,
+    (user) => loginStaff(user.email, password, user.id),
+  );
   for (let index = 0; index < staffCookies.length; index += 1) {
     await measuredFetch('/encounters?limit=25', {
       cookie: staffCookies[index],
@@ -188,9 +194,16 @@ async function main() {
       },
       reconnection: false,
       timeout: 7000,
+      // Attach connect/error listeners before any handshake can complete.
+      // At capacity the old eager-connect form could emit `connect` before
+      // waitForSocket registered its one-time listener, causing a false test
+      // timeout even though the backend had accepted the socket.
+      autoConnect: false,
     }));
     try {
-      await Promise.all(sockets.map(waitForSocket));
+      const connected = sockets.map(waitForSocket);
+      sockets.forEach((socket) => socket.connect());
+      await Promise.all(connected);
     } finally {
       sockets.forEach((socket) => socket.disconnect());
     }
@@ -218,30 +231,43 @@ async function main() {
 async function measuredFetch(path, options = {}) {
   const startedAt = Date.now();
   requests += 1;
-  const response = await fetch(`${config.baseUrl}${path}`, {
-    method: options.method || 'GET',
-    headers: {
-      ...(options.cookie ? { Cookie: options.cookie } : {}),
-      ...(options.origin || options.cookie ? { Origin: options.origin || 'http://localhost:8082' } : {}),
-      ...(options.testClient ? { 'X-Priage-Test-Client': options.testClient } : {}),
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {}),
-    },
-    body: options.form || (options.body ? JSON.stringify(options.body) : undefined),
-  });
-  const responseBody = await response.text().catch(() => '');
-  timings.push(Date.now() - startedAt);
-  if (response.status >= 500 || response.status === 429) {
+  try {
+    const response = await fetch(`${config.baseUrl}${path}`, {
+      method: options.method || 'GET',
+      headers: {
+        ...(options.cookie ? { Cookie: options.cookie } : {}),
+        ...(options.origin || options.cookie ? { Origin: options.origin || 'http://localhost:8082' } : {}),
+        ...(options.testClient ? { 'X-Priage-Test-Client': options.testClient } : {}),
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
+      body: options.form || (options.body ? JSON.stringify(options.body) : undefined),
+    });
+    const responseBody = await response.text().catch(() => '');
+    timings.push(Date.now() - startedAt);
+    if (response.status >= 500 || response.status === 429) {
+      errors += 1;
+      if (errorSamples.length < 20) {
+        errorSamples.push({
+          path,
+          status: response.status,
+          body: responseBody.slice(0, 500),
+        });
+      }
+    }
+    return response;
+  } catch (error) {
+    timings.push(Date.now() - startedAt);
     errors += 1;
     if (errorSamples.length < 20) {
       errorSamples.push({
         path,
-        status: response.status,
-        body: responseBody.slice(0, 500),
+        status: 0,
+        body: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
     }
+    return null;
   }
-  return response;
 }
 
 async function loginStaff(email, password, userId) {
@@ -263,6 +289,10 @@ async function loginStaff(email, password, userId) {
 
 function waitForSocket(socket) {
   return new Promise((resolve, reject) => {
+    if (socket.connected) {
+      resolve();
+      return;
+    }
     const timer = setTimeout(() => reject(new Error('socket connection timed out')), 8000);
     socket.once('connect', () => {
       clearTimeout(timer);
@@ -284,6 +314,17 @@ async function runConcurrent(tasks, concurrency) {
       await tasks[index]();
     }
   }));
+}
+
+async function mapConcurrent(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  await runConcurrent(
+    items.map((item, index) => async () => {
+      results[index] = await mapper(item, index);
+    }),
+    concurrency,
+  );
+  return results;
 }
 
 function percentile(values, value) {

@@ -24,6 +24,9 @@ import { listMessages } from '../shared/api/messaging';
 import type { View } from '../shared/ui/NavBar';
 import { getHospitalConfig } from '../shared/api/hospitals';
 import { getPreferredLandingPage } from '../shared/settings/preferences';
+import { DemoWatermark } from '../shared/demo-runtime/DemoWatermark';
+import { ShowcaseLauncher } from '../shared/showcase/ShowcaseLauncher';
+import { ShowcaseProvider } from '../shared/showcase/ShowcaseProvider';
 
 // Re-export domain types so existing component imports keep working
 export type { PatientSummary as Patient, ChatMessage, Encounter } from '../shared/types/domain';
@@ -131,6 +134,18 @@ export function HospitalApp() {
   );
   const clinicalMessagingEnabled =
     user?.role === 'ADMIN' || user?.role === 'NURSE' || user?.role === 'DOCTOR';
+  const handleNavigate = useCallback((view: View) => {
+    if (!availableViews.includes(view)) return;
+    setCurrentView(view);
+  }, [availableViews]);
+  const showcaseNavigation = useMemo(
+    () => ({
+      currentView,
+      availableViews,
+      navigateTo: handleNavigate,
+    }),
+    [availableViews, currentView, handleNavigate],
+  );
 
   const visibleEncounterStatuses = useMemo<EncounterStatus[]>(() => {
     const statuses = new Set<EncounterStatus>();
@@ -581,11 +596,6 @@ export function HospitalApp() {
     return <LoginPage />;
   }
 
-  const handleNavigate = (view: View) => {
-    if (!availableViews.includes(view)) return;
-    setCurrentView(view);
-  };
-
   const handleBack = () => {
     logout();
   };
@@ -632,7 +642,7 @@ export function HospitalApp() {
   };
 
   return (
-    <>
+    <ShowcaseProvider navigation={showcaseNavigation}>
       {currentView === 'admit' && (
         <AdmitView
           onBack={handleBack}
@@ -696,6 +706,8 @@ export function HospitalApp() {
           onConfigUpdated={handleConfigUpdated}
         />
       )}
-    </>
+      <DemoWatermark />
+      <ShowcaseLauncher />
+    </ShowcaseProvider>
   );
 }

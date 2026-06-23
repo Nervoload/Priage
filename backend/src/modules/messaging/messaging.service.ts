@@ -13,7 +13,7 @@ import { AssetStatus, EventType, Prisma, SenderType } from '@prisma/client';
 import { PaginatedResponse } from '../../common/dto/pagination.dto';
 import { AlertsService } from '../alerts/alerts.service';
 import { AssetsService } from '../assets/assets.service';
-import { AssetSummaryDto, assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
+import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
 import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';

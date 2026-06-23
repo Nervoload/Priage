@@ -1,11 +1,12 @@
 import { useState } from 'react';
 
 interface DemoGatePageProps {
-  onVerify: (code: string) => Promise<void>;
+  onVerify: (email: string, code: string) => Promise<void>;
   error: string | null;
 }
 
 export function DemoGatePage({ onVerify, error }: DemoGatePageProps) {
+  const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -14,7 +15,7 @@ export function DemoGatePage({ onVerify, error }: DemoGatePageProps) {
     if (!code.trim() || submitting) return;
     setSubmitting(true);
     try {
-      await onVerify(code.trim());
+      await onVerify(email.trim(), code.trim());
     } finally {
       setSubmitting(false);
     }
@@ -41,7 +42,7 @@ export function DemoGatePage({ onVerify, error }: DemoGatePageProps) {
         </div>
 
         <h2 className="text-xl font-bold text-gray-900 text-center mb-0.5">Demo Access</h2>
-        <p className="text-xs text-gray-400 text-center mb-6">Enter your access code to continue</p>
+        <p className="text-xs text-gray-400 text-center mb-6">Enter the email and code from your demo invitation</p>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
@@ -51,17 +52,31 @@ export function DemoGatePage({ onVerify, error }: DemoGatePageProps) {
           )}
 
           <div>
+            <label htmlFor="demo-email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input
+              id="demo-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoFocus
+              placeholder="name@organization.com"
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
+            />
+          </div>
+
+          <div>
             <label htmlFor="demo-code" className="block text-sm font-medium text-gray-700 mb-1">Access Code</label>
             <input
               id="demo-code"
-              type="password"
+              type="text"
+              inputMode="numeric"
               value={code}
               onChange={(e) => setCode(e.target.value)}
               required
-              autoFocus
               placeholder="Enter demo access code"
               className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
             />
+            <p className="mt-1 text-xs text-gray-400">Leave email blank only for legacy shared demo codes.</p>
           </div>
 
           <button

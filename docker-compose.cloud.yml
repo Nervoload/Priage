@@ -125,6 +125,10 @@ services:
       AWS_ACCESS_KEY_ID: priage
       AWS_SECRET_ACCESS_KEY: priage-development-secret
       THROTTLE_SKIP_LOOPBACK: "false"
+      # The synthetic load runner creates many distinct staff users behind one
+      # local Docker address. Keep production login throttles unchanged while
+      # allowing this disposable stack to exercise the post-login workload.
+      THROTTLE_STAFF_LOGIN_LIMIT: 100
       EDGE_PUBLIC_AUTH_LIMIT: 60
       EDGE_GLOBAL_LIMIT: 100000
       EDGE_WRITE_LIMIT: 100000

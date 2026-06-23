@@ -51,6 +51,9 @@ export function assertProductionConfiguration(): void {
   if (isTrue(process.env.ALLOW_LEGACY_RAW_PATIENT_TOKENS)) {
     throw new Error('ALLOW_LEGACY_RAW_PATIENT_TOKENS cannot be enabled in production');
   }
+  if (isTrue(process.env.PATIENT_LEGACY_TOKEN_MIGRATION_MODE)) {
+    throw new Error('PATIENT_LEGACY_TOKEN_MIGRATION_MODE cannot be enabled in production');
+  }
 }
 
 function isTrue(value: string | undefined): boolean {
