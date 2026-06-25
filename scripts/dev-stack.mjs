@@ -12,6 +12,8 @@ const patientAppDir = join(projectRoot, 'Apps', 'PatientApp');
 const hospitalAppDir = join(projectRoot, 'Apps', 'HospitalApp');
 const versionFile = join(projectRoot, 'VERSION');
 const runtimeDir = join(projectRoot, '.priage-dev');
+const prismaConnectionRetryLimit = 10;
+const prismaConnectionRetryDelayMs = 1000;
 
 const args = new Set(process.argv.slice(2));
 const wantsHelp = args.has('--help') || args.has('-h');
@@ -437,7 +439,40 @@ function ensureDependenciesInstalled(name, cwd) {
 function runPrismaSetup() {
   console.log('\n== Prisma ==');
   runStep('Generating Prisma client', 'npx', ['prisma', 'generate'], { cwd: backendDir });
-  runStep('Applying Prisma migrations', 'npx', ['prisma', 'migrate', 'deploy'], { cwd: backendDir });
+  runPrismaMigrations();
+}
+
+function runPrismaMigrations() {
+  console.log('\n[priage-dev] Applying Prisma migrations');
+
+  for (let attempt = 1; attempt <= prismaConnectionRetryLimit; attempt += 1) {
+    const result = spawnSync('npx', ['prisma', 'migrate', 'deploy'], {
+      cwd: backendDir,
+      encoding: 'utf8',
+      env: process.env,
+    });
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    process.stdout.write(result.stdout ?? '');
+    process.stderr.write(result.stderr ?? '');
+
+    if (result.status === 0) {
+      return;
+    }
+
+    const cannotReachDatabase = /P1001|Can't reach database server/i.test(output);
+    if (!cannotReachDatabase || attempt === prismaConnectionRetryLimit) {
+      throw new Error(`Applying Prisma migrations failed with exit code ${result.status ?? 'unknown'}.`);
+    }
+
+    console.warn(
+      `[priage-dev] PostgreSQL is still starting (attempt ${attempt}/${prismaConnectionRetryLimit}); retrying in ${prismaConnectionRetryDelayMs / 1000}s.`,
+    );
+    sleepSync(prismaConnectionRetryDelayMs);
+  }
+}
+
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
 function runStep(label, cmd, commandArgs, options = {}) {
