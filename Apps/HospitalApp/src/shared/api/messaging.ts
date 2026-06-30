@@ -3,6 +3,12 @@
 
 import { client } from './client';
 import type { Message } from '../types/domain';
+import {
+  isStaticDemoMode,
+  listDemoMessages,
+  sendDemoStaffMessage,
+  trackDemoEvent,
+} from '../../../../DemoShared/src/staticDemo';
 
 // ─── Response types ─────────────────────────────────────────────────────────
 
@@ -30,6 +36,9 @@ export async function listMessages(
   encounterId: number,
   params: ListMessagesParams = {},
 ): Promise<PaginatedMessages> {
+  if (isStaticDemoMode()) {
+    return listDemoMessages(encounterId, params.afterMessageId) as PaginatedMessages;
+  }
   const query = new URLSearchParams();
   if (params.page) query.set('page', String(params.page));
   if (params.limit) query.set('limit', String(params.limit));
@@ -56,6 +65,9 @@ export async function sendMessage(
   encounterId: number,
   payload: SendMessagePayload,
 ): Promise<Message> {
+  if (isStaticDemoMode()) {
+    return sendDemoStaffMessage(encounterId, payload.content) as Message;
+  }
   return client<Message>(
     `/messaging/encounters/${encounterId}/messages`,
     {
@@ -73,6 +85,10 @@ export async function sendMessage(
 export async function markMessageRead(
   messageId: number,
 ): Promise<{ ok: boolean }> {
+  if (isStaticDemoMode()) {
+    trackDemoEvent('message_marked_read', { messageId });
+    return { ok: true };
+  }
   return client<{ ok: boolean }>(
     `/messaging/messages/${messageId}/read`,
     { method: 'POST' },

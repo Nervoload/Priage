@@ -126,7 +126,7 @@ export function Routing({ onConfirmed, onBack, mode = 'guest' }: RoutingProps) {
   }
 
   return (
-    <main style={styles.page}>
+    <main data-showcase="patient.routing.hospital" style={styles.page}>
       <section style={styles.card}>
         <header style={styles.header}>
           <span style={styles.badge}>Final Step</span>

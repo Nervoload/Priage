@@ -27,6 +27,10 @@ import { getPreferredLandingPage } from '../shared/settings/preferences';
 import { DemoWatermark } from '../shared/demo-runtime/DemoWatermark';
 import { ShowcaseLauncher } from '../shared/showcase/ShowcaseLauncher';
 import { ShowcaseProvider } from '../shared/showcase/ShowcaseProvider';
+import {
+  isStaticDemoMode,
+  subscribeDemoState,
+} from '../../../DemoShared/src/staticDemo';
 
 // Re-export domain types so existing component imports keep working
 export type { PatientSummary as Patient, ChatMessage, Encounter } from '../shared/types/domain';
@@ -483,6 +487,23 @@ export function HospitalApp() {
     isMounted.current = true;
 
     fetchEncounters();
+
+    if (isStaticDemoMode()) {
+      const unsubscribe = subscribeDemoState(() => {
+        scheduleFetchEncounters(0);
+        for (const encounterId of loadedMessageEncounters.current) {
+          void loadMessagesForEncounter(encounterId, 'replace');
+        }
+      });
+      return () => {
+        isMounted.current = false;
+        unsubscribe();
+        if (encounterRefreshTimer.current !== null) {
+          window.clearTimeout(encounterRefreshTimer.current);
+          encounterRefreshTimer.current = null;
+        }
+      };
+    }
 
     if (!waitingRoomRealtimeEnabled) {
       disconnectSocket();

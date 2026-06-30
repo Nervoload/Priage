@@ -218,6 +218,46 @@ The NestJS backend currently wires together these major modules:
 - Docker Desktop
 - Docker Compose v2
 
+### Static Sales Demo Build
+
+The lightweight sales demo can be built without the Nest backend, PostgreSQL, or
+Redis. It produces a Cloudflare Pages-ready static bundle with the protected
+demo access portal at `/demo`, PatientApp at `/patient/`, and HospitalApp at
+`/care/`.
+
+```bash
+node scripts/build-static-demo.mjs
+```
+
+The generated files are written to `dist/static-demo`. Static demo mode uses
+browser-local demo data, `localStorage`, and `BroadcastChannel`; Cloudflare
+Pages Functions under `functions/` enforce demo-code access for `/patient` and
+`/care` in deployed environments.
+
+For a fresh Cloudflare Pages build, install both app dependency trees before
+running the static demo build:
+
+```bash
+npm --prefix Apps/HospitalApp ci
+npm --prefix Apps/PatientApp ci
+node scripts/build-static-demo.mjs
+```
+
+Pages should publish `dist/static-demo` and keep the repo-level `functions/`
+directory enabled. The access layer requires:
+
+- D1 binding: `DEMO_DB`, migrated with `cloudflare/d1/schema.sql`
+- Secrets: `DEMO_CODE_PEPPER` and `DEMO_SESSION_SECRET`
+- Demo-code generator: insert a `demo_requests` row whose `code_hash` is an
+  HMAC-SHA256 of `normalizedEmail + ":" + normalizedCode` using
+  `DEMO_CODE_PEPPER`
+
+The generated `_routes.json` limits Pages Function invocation to `/api/*`,
+`/patient`, `/patient/*`, `/care`, `/care/*`, and the legacy `/hospital` alias.
+The generated `_headers` adds static security headers and no-store caching for
+the gated demo routes. Local plain static hosting will not enforce access; the
+copy-paste URL protection depends on Cloudflare Pages Functions middleware.
+
 ### Quick Start
 
 From the repo root:

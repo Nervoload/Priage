@@ -7,6 +7,11 @@
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, notifyDemoAccessRequired } from '../api/client';
 import type { Message } from '../types/domain';
+import {
+  isStaticDemoMode,
+  sendDemoStaffMessage,
+  trackDemoEvent,
+} from '../../../../DemoShared/src/staticDemo';
 
 let _socket: Socket | null = null;
 
@@ -55,6 +60,9 @@ function handleSocketAccessError(error: SocketConnectError): void {
  * reconnect reconciliation.
  */
 export function getSocket(): Socket {
+  if (isStaticDemoMode()) {
+    throw new Error('Static demo mode does not create a Socket.IO connection');
+  }
   if (!_socket) {
     _socket = io(API_BASE_URL, {
       withCredentials: true,
@@ -100,6 +108,7 @@ async function ensureConnected(socket: Socket): Promise<void> {
 
 /** Connect the socket (call after login) */
 export function connectSocket(): void {
+  if (isStaticDemoMode()) return;
   const socket = getSocket();
   if (!socket.connected) {
     socket.connect();
@@ -107,6 +116,10 @@ export function connectSocket(): void {
 }
 
 export async function subscribeToEncounterRealtime(encounterIds: number[]): Promise<number[]> {
+  if (isStaticDemoMode()) {
+    trackDemoEvent('static_demo_realtime_subscribed', { encounterCount: encounterIds.length });
+    return encounterIds;
+  }
   const socket = getSocket();
   await ensureConnected(socket);
   const ack = await new Promise<EncounterSubscribeAck>((resolve, reject) => {
@@ -126,6 +139,9 @@ export async function sendMessageViaSocket(
   content: string,
   isInternal = false,
 ): Promise<Message> {
+  if (isStaticDemoMode()) {
+    return sendDemoStaffMessage(encounterId, content) as Message;
+  }
   const socket = getSocket();
   await ensureConnected(socket);
 
@@ -155,6 +171,7 @@ export async function sendMessageViaSocket(
 
 /** Disconnect and destroy the socket (call on logout) */
 export function disconnectSocket(): void {
+  if (isStaticDemoMode()) return;
   if (_socket) {
     _socket.disconnect();
     _socket = null;

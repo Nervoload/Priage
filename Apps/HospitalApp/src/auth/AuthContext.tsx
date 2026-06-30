@@ -8,6 +8,12 @@ import type { AuthUser, LoginResponse } from '../shared/types/domain';
 import { login as apiLogin, getMe, logout as apiLogout } from '../shared/api/auth';
 import { ApiError, AUTH_EXPIRED_EVENT } from '../shared/api/client';
 import { disconnectSocket } from '../shared/realtime/socket';
+import {
+  getDemoStaffAuthUser,
+  getDemoStaffLoginResponse,
+  isStaticDemoMode,
+  trackDemoEvent,
+} from '../../../DemoShared/src/staticDemo';
 
 // ─── Context shape ──────────────────────────────────────────────────────────
 
@@ -62,18 +68,30 @@ function clearSessionHint(): void {
 // ─── Provider ───────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [initializing, setInitializing] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(() => (
+    isStaticDemoMode() ? getDemoStaffAuthUser() as AuthUser : null
+  ));
+  const [initializing, setInitializing] = useState(!isStaticDemoMode());
   const [loggingIn, setLoggingIn] = useState(false);
 
   const logout = useCallback(() => {
     disconnectSocket();
+    if (isStaticDemoMode()) {
+      trackDemoEvent('static_demo_staff_logout');
+      setUser(getDemoStaffAuthUser() as AuthUser);
+      return;
+    }
     void apiLogout().catch(() => undefined);
     clearSessionHint();
     setUser(null);
   }, []);
 
   const refreshUser = useCallback(async () => {
+    if (isStaticDemoMode()) {
+      const demoUser = getDemoStaffAuthUser() as AuthUser;
+      setUser(demoUser);
+      return demoUser;
+    }
     try {
       const me = await getMe();
       setUser(me);
@@ -92,6 +110,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // On mount: if there's a stored session cookie, validate it via GET /auth/me
   useEffect(() => {
     let cancelled = false;
+    if (isStaticDemoMode()) {
+      setInitializing(false);
+      return () => { cancelled = true; };
+    }
     if (!hasSessionHint()) {
       setInitializing(false);
       return () => { cancelled = true; };
@@ -116,6 +138,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string, mfaCode?: string) => {
     setLoggingIn(true);
     try {
+      if (isStaticDemoMode()) {
+        void password;
+        void mfaCode;
+        trackDemoEvent('static_demo_staff_login', { email });
+        const result = getDemoStaffLoginResponse() as LoginResponse;
+        setUser({
+          userId: result.user.id,
+          email: result.user.email,
+          role: result.user.role,
+          hospitalId: result.user.hospitalId,
+          hospital: result.user.hospital,
+        });
+        setSessionHint();
+        return result;
+      }
       const result = await apiLogin(email, password, mfaCode);
       // Map the login response user shape → AuthUser shape
       setUser({

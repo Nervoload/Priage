@@ -53,7 +53,7 @@ export function QuestionPage({
   }
 
   return (
-    <main style={styles.page}>
+    <main data-showcase="patient.intake.interview" style={styles.page}>
       <section style={styles.card}>
         <header style={styles.header}>
           <p style={styles.stepLabel}>{progressLabel ?? `Step ${step} of ${totalSteps}`}</p>

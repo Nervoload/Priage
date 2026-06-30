@@ -4,6 +4,11 @@ import { useDemoRuntime } from '../demo-runtime/useDemoRuntime';
 import { startDriverTour } from './driverAdapter';
 import { getShowcaseTour } from './showcaseRegistry';
 import type { ShowcaseNavigationAdapter, ShowcaseStep } from './showcaseTypes';
+import {
+  isStaticDemoMode,
+  runDemoShowcaseAction,
+  type DemoShowcaseActionId,
+} from '../../../../DemoShared/src/staticDemo';
 
 interface ShowcaseContextValue {
   running: boolean;
@@ -24,6 +29,7 @@ export function ShowcaseProvider({
   const [running, setRunning] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
   const navigationRef = useRef(navigation);
+  const autoStartedRef = useRef(false);
 
   useEffect(() => {
     navigationRef.current = navigation;
@@ -36,6 +42,9 @@ export function ShowcaseProvider({
   }, []);
 
   const beforeStep = useCallback(async (step: ShowcaseStep) => {
+    if (step.actionId && isStaticDemoMode()) {
+      runDemoShowcaseAction(step.actionId as DemoShowcaseActionId);
+    }
     const adapter = navigationRef.current;
     if (step.view && adapter.availableViews.includes(step.view) && adapter.currentView !== step.view) {
       adapter.navigateTo(step.view);
@@ -79,6 +88,16 @@ export function ShowcaseProvider({
       setRunning(false);
     });
   }, [beforeStep, profile, recordEvent, running]);
+
+  useEffect(() => {
+    if (!profile || running || autoStartedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const shouldAutoStart = params.get('tour') === '1' || params.get('showcase') === 'hospital';
+    if (!shouldAutoStart) return;
+    autoStartedRef.current = true;
+    const timer = window.setTimeout(() => startTour(profile.defaultTourId), 650);
+    return () => window.clearTimeout(timer);
+  }, [profile, running, startTour]);
 
   useEffect(() => () => {
     cleanupRef.current?.();

@@ -3,6 +3,7 @@ import { API_BASE_URL, DEMO_ACCESS_REQUIRED_EVENT } from '../shared/api/client';
 import { enterHospitalDemo } from '../shared/demo-runtime/demoRuntimeApi';
 import { disconnectSocket } from '../shared/realtime/socket';
 import { markHospitalSessionHint } from './AuthContext';
+import { isStaticDemoMode, trackDemoEvent } from '../../../DemoShared/src/staticDemo';
 
 interface DemoGateState {
   /** True while the initial probe is in flight */
@@ -24,6 +25,11 @@ export function useDemoGate(): DemoGateState {
     let cancelled = false;
 
     (async () => {
+      if (isStaticDemoMode()) {
+        trackDemoEvent('static_demo_hospital_gate_bypassed');
+        if (!cancelled) setChecking(false);
+        return;
+      }
       try {
         const res = await fetch(`${API_BASE_URL}/demo-sessions/me`, {
           credentials: 'include',
@@ -56,6 +62,12 @@ export function useDemoGate(): DemoGateState {
   const verify = useCallback(async (email: string, code: string) => {
     setError(null);
     try {
+      if (isStaticDemoMode()) {
+        trackDemoEvent('static_demo_hospital_code_entered', { hasEmail: Boolean(email), hasCode: Boolean(code) });
+        markHospitalSessionHint();
+        setGateActive(false);
+        return;
+      }
       if (!email) {
         const legacyRes = await fetch(`${API_BASE_URL}/demo-access`, {
           method: 'POST',

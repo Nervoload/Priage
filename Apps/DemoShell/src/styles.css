@@ -1,0 +1,296 @@
+:root {
+  color: #152236;
+  background: #eef4f8;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+.demo-portal {
+  min-height: 100vh;
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(18, 56, 88, 0.08), rgba(31, 109, 131, 0.04)),
+    #eef4f8;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 330px);
+  gap: 18px;
+  align-items: end;
+}
+
+.hero-copy {
+  max-width: 860px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #196d83;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1,
+h2 {
+  color: #102033;
+}
+
+h1 {
+  max-width: 880px;
+  margin-bottom: 10px;
+  font-size: clamp(34px, 5vw, 68px);
+  line-height: 0.96;
+}
+
+h2 {
+  margin-bottom: 8px;
+  font-size: 22px;
+}
+
+.summary,
+.body-copy,
+.explain-card p,
+.metrics-card p,
+.launch-card small {
+  color: #536579;
+  line-height: 1.55;
+}
+
+.summary {
+  max-width: 720px;
+  margin-bottom: 0;
+  font-size: 17px;
+}
+
+.session-card,
+.access-card,
+.explain-card,
+.feedback-card,
+.metrics-card,
+.launch-card {
+  border: 1px solid rgba(44, 72, 95, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 18px 55px rgba(27, 45, 65, 0.1);
+}
+
+.session-card {
+  min-height: 124px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 18px;
+}
+
+.session-card.unlocked {
+  border-color: rgba(31, 126, 88, 0.28);
+  background: linear-gradient(135deg, rgba(236, 253, 245, 0.96), rgba(255, 255, 255, 0.94));
+}
+
+.session-card span,
+.session-card strong,
+.session-card small {
+  display: block;
+}
+
+.session-card span {
+  color: #667586;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.session-card strong {
+  color: #142d42;
+  font-size: 18px;
+}
+
+.session-card small,
+.fine-print {
+  color: #69798b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.access-grid,
+.utility-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 520px) minmax(280px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.access-card,
+.explain-card,
+.feedback-card,
+.metrics-card {
+  padding: 20px;
+}
+
+form {
+  display: grid;
+  gap: 13px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: #31465c;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  border: 1px solid rgba(34, 54, 76, 0.18);
+  border-radius: 7px;
+  background: #fff;
+  color: #152437;
+  padding: 11px 12px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  border: 0;
+  border-radius: 7px;
+  background: #196d83;
+  color: #fff;
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.error-box {
+  margin: 0;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.launch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 18px;
+}
+
+.launch-card {
+  min-height: 280px;
+  display: grid;
+  align-content: end;
+  gap: 12px;
+  overflow: hidden;
+  padding: 24px;
+  text-decoration: none;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.launch-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(25, 109, 131, 0.42);
+  box-shadow: 0 24px 70px rgba(27, 45, 65, 0.16);
+}
+
+.launch-card.patient {
+  background:
+    linear-gradient(150deg, rgba(27, 63, 159, 0.12), rgba(255, 255, 255, 0.92)),
+    #fff;
+}
+
+.launch-card.care {
+  background:
+    linear-gradient(150deg, rgba(25, 109, 131, 0.15), rgba(255, 255, 255, 0.92)),
+    #fff;
+}
+
+.launch-kicker {
+  width: fit-content;
+  border-radius: 999px;
+  background: rgba(25, 109, 131, 0.12);
+  color: #12576b;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.launch-card strong {
+  max-width: 540px;
+  color: #102033;
+  font-size: clamp(27px, 4vw, 46px);
+  line-height: 1;
+}
+
+.launch-card small {
+  max-width: 560px;
+  font-size: 15px;
+}
+
+.status {
+  min-height: 18px;
+  margin: 0;
+  color: #1f6e58;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+@media (max-width: 860px) {
+  .demo-portal {
+    padding: 16px;
+  }
+
+  .hero,
+  .access-grid,
+  .utility-grid,
+  .launch-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .launch-card {
+    min-height: 230px;
+  }
+}

@@ -9,6 +9,7 @@ import { AuthProvider } from './shared/hooks/useAuth';
 import { GuestSessionProvider } from './shared/hooks/useGuestSession';
 import { ToastProvider } from './shared/ui/ToastContext';
 import { PatientApp } from './app/PatientApp';
+import { isStaticDemoMode } from '../../DemoShared/src/staticDemo';
 
 function DemoGateWrapper({ children }: { children: ReactNode }) {
   const { checking, gateActive, error, verify } = useDemoGate();
@@ -28,10 +29,18 @@ function DemoGateWrapper({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function getPatientRouterBasename(): string | undefined {
+  if (!isStaticDemoMode()) return undefined;
+  return window.location.pathname.startsWith('/patient') ? '/patient' : undefined;
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <DemoGateWrapper>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <BrowserRouter
+        basename={getPatientRouterBasename()}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
         <ToastProvider>
           <AuthProvider>
             <GuestSessionProvider>

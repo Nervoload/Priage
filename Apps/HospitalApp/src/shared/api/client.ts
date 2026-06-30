@@ -6,7 +6,13 @@
 // Small wrapper around fetch with base URL + auth header.
 // Points at the local NestJS backend by default.
 
-export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+import { isStaticDemoMode } from '../../../../DemoShared/src/staticDemo';
+
+const DEFAULT_API_BASE_URL = import.meta.env.VITE_DEMO_MODE === 'static'
+  ? 'static-demo'
+  : 'http://localhost:3000';
+
+export const API_BASE_URL: string = import.meta.env.VITE_API_URL ?? DEFAULT_API_BASE_URL;
 export const AUTH_EXPIRED_EVENT = 'auth-expired';
 export const DEMO_ACCESS_REQUIRED_EVENT = 'demo-access-required';
 
@@ -56,6 +62,9 @@ export async function client<T = unknown>(
   endpoint: string,
   options: ClientRequestInit = {},
 ): Promise<T> {
+  if (isStaticDemoMode()) {
+    throw new ApiError(501, 'Static demo route is not implemented locally', endpoint);
+  }
   const url = `${API_BASE_URL}${endpoint}`;
   const { suppressAuthExpired = false, ...fetchOptions } = options;
 

@@ -4,6 +4,7 @@ export interface ShowcaseStep {
   id: string;
   target: string;
   view?: View;
+  actionId?: string;
   title: string;
   description: string;
   side?: 'top' | 'right' | 'bottom' | 'left' | 'over';

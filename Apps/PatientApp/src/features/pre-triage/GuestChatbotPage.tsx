@@ -212,7 +212,7 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
   if (loading) {
     return (
-      <main style={styles.page}>
+      <main data-showcase="patient.intake.interview" style={styles.page}>
         <section style={styles.statusCard}>
           <div style={styles.spinner} />
           <p style={styles.statusText}>Loading your intake interview…</p>

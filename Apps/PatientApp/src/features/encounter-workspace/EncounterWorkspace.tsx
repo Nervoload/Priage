@@ -3,6 +3,10 @@ import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { cancelMyEncounter, getMyEncounter, getQueueInfo, listMyMessages } from '../../shared/api/encounters';
 import { API_BASE_URL, isPatientSessionInvalidError } from '../../shared/api/client';
+import {
+  isStaticDemoMode,
+  subscribeDemoState,
+} from '../../../../DemoShared/src/staticDemo';
 import { getMe, updateProfile } from '../../shared/api/auth';
 import { sendLocationPing, updateIntakeDetails } from '../../shared/api/intake';
 import { ENCOUNTER_STATUS_META, isTerminalEncounter } from '../../shared/encounters';
@@ -281,7 +285,7 @@ export function EncounterWorkspace() {
     void refreshEncounter(true);
     void refreshMessages('replace');
 
-    const eventSource = typeof EventSource !== 'undefined'
+    const eventSource = !isStaticDemoMode() && typeof EventSource !== 'undefined'
       ? new EventSource(`${API_BASE_URL}/patient/encounters/${encounterId}/events`, {
           withCredentials: true,
         })
@@ -295,6 +299,12 @@ export function EncounterWorkspace() {
 
     eventSource?.addEventListener('encounter.updated', handleEncounterUpdate);
     eventSource?.addEventListener('message.created', handleMessageCreated);
+    const unsubscribeDemoState = isStaticDemoMode()
+      ? subscribeDemoState(() => {
+          handleEncounterUpdate();
+          handleMessageCreated();
+        })
+      : null;
 
     const encounterTimer = window.setInterval(() => {
       void refreshEncounter();
@@ -304,6 +314,7 @@ export function EncounterWorkspace() {
     }, MESSAGE_FALLBACK_POLL_MS);
 
     return () => {
+      unsubscribeDemoState?.();
       eventSource?.close();
       window.clearInterval(encounterTimer);
       window.clearInterval(messageTimer);
@@ -569,7 +580,7 @@ export function EncounterWorkspace() {
       <section style={styles.grid}>
         <SupportCard hospital={selectedHospital} fallbackHospitalName={hospitalName} patientLocation={currentLocation} />
 
-        <article style={styles.card}>
+        <article data-showcase="patient.encounter.summary" style={styles.card}>
           <h2 style={styles.cardTitle}>Encounter Summary</h2>
           <div style={styles.summaryGrid}>
             <SummaryItem label="Chief complaint" value={encounter.chiefComplaint || 'Not captured'} />
@@ -649,7 +660,7 @@ export function EncounterWorkspace() {
           </article>
         )}
 
-        <article style={styles.card}>
+        <article data-showcase="patient.encounter.messages" style={styles.card}>
           <h2 style={styles.cardTitle}>Messages</h2>
           {recentStaffMessages.length === 0 ? (
             <p style={styles.mutedText}>No staff messages yet. Updates will appear here as the encounter progresses.</p>

@@ -1,5 +1,11 @@
+import { isStaticDemoMode } from '../../../../DemoShared/src/staticDemo';
+
+const DEFAULT_API_BASE_URL = import.meta.env.VITE_DEMO_MODE === 'static'
+  ? 'static-demo'
+  : 'http://localhost:3000';
+
 export const API_BASE_URL: string =
-  import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+  import.meta.env.VITE_API_URL ?? DEFAULT_API_BASE_URL;
 
 export const DEMO_ACCESS_REQUIRED_EVENT = 'demo-access-required';
 export const PATIENT_SESSION_EXPIRED_EVENT = 'patient-session-expired';
@@ -12,6 +18,9 @@ export async function client<T = unknown>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
+  if (isStaticDemoMode()) {
+    throw new ApiError(501, 'Static demo route is not implemented locally', endpoint);
+  }
   const url = `${API_BASE_URL}${endpoint}`;
 
   const headers: Record<string, string> = {

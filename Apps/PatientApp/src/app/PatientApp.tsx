@@ -19,6 +19,8 @@ import { Routing } from '../features/pre-triage/Routing';
 import { GuestChatbotPage } from '../features/pre-triage/GuestChatbotPage';
 import { flushPatientMessageOutbox } from '../shared/patientOutbox';
 import { flushPatientCommandOutbox } from '../shared/patientCommandOutbox';
+import { isStaticDemoMode } from '../../../DemoShared/src/staticDemo';
+import { PatientShowcase } from '../shared/showcase/PatientShowcase';
 
 export function PatientApp() {
   const { session, loading } = useAuth();
@@ -27,6 +29,9 @@ export function PatientApp() {
   const guestPath = resolveGuestPath(guestSession);
 
   useEffect(() => {
+    if (isStaticDemoMode()) {
+      return;
+    }
     if (!session && !guestSession) {
       return;
     }
@@ -59,6 +64,7 @@ export function PatientApp() {
   }
 
   return (
+    <>
     <Routes>
       <Route
         path="/welcome"
@@ -132,6 +138,8 @@ export function PatientApp() {
       />
       <Route path="*" element={<Navigate to={session ? '/' : '/welcome'} replace />} />
     </Routes>
+    <PatientShowcase />
+    </>
   );
 }
 
