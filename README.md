@@ -261,6 +261,10 @@ The build command is required because `dist/static-demo` is generated output and
 is not committed to git. Running only `npx wrangler deploy` from a fresh clone
 will fail before the assets exist.
 
+Alternatively, leave the build command blank and set the deploy command to
+`npm run deploy:demo`. That single command installs app dependencies, builds the
+static demo, runs the release check, and then invokes Wrangler.
+
 The checked-in `wrangler.jsonc` publishes `dist/static-demo` through the
 `ASSETS` binding, runs the Worker before asset delivery, and routes only
 `priage.ca/demo/*`. It reuses the existing `priage-demo-access` D1 database.

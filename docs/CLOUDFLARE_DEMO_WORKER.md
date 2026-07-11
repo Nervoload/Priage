@@ -63,6 +63,10 @@ Build command: npm ci && npm --prefix Apps/HospitalApp ci && npm --prefix Apps/P
 Deploy command: npm run deploy:demo:worker
 ```
 
+Alternatively, set no build command and use `npm run deploy:demo` as the deploy
+command. That single command installs both app dependency trees, builds the
+static demo, runs the release check, and uploads the Worker.
+
 Do not set the root directory to `dist/static-demo`, `cloudflare`, or an app
 subdirectory. The Worker config, root package scripts, frontend apps, and build
 scripts all need to be available from the repository root.
