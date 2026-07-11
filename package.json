@@ -4,7 +4,9 @@
   "scripts": {
     "build:demo": "node scripts/build-static-demo.mjs",
     "check:demo-release": "node scripts/build-static-demo.mjs && node scripts/check-static-demo-release.mjs",
-    "deploy:demo": "wrangler deploy"
+    "deploy": "npm run deploy:demo",
+    "deploy:demo": "npm run check:demo-release && npm run deploy:demo:worker",
+    "deploy:demo:worker": "wrangler deploy"
   },
   "devDependencies": {
     "wrangler": "^4.110.0"

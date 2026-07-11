@@ -251,6 +251,16 @@ Run the release check with:
 npm run check:demo-release
 ```
 
+For Cloudflare Workers Builds, keep the root directory blank/default so the
+build runs from this repository root. Configure:
+
+- Build command: `npm ci && npm --prefix Apps/HospitalApp ci && npm --prefix Apps/PatientApp ci && npm run check:demo-release`
+- Deploy command: `npm run deploy:demo:worker`
+
+The build command is required because `dist/static-demo` is generated output and
+is not committed to git. Running only `npx wrangler deploy` from a fresh clone
+will fail before the assets exist.
+
 The checked-in `wrangler.jsonc` publishes `dist/static-demo` through the
 `ASSETS` binding, runs the Worker before asset delivery, and routes only
 `priage.ca/demo/*`. It reuses the existing `priage-demo-access` D1 database.

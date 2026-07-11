@@ -52,6 +52,31 @@ npm run check:demo-release
 The check rejects a canonical `demo/hospital` output, localhost backend URLs,
 and `demoCode` or `demoSessionId` propagation in the built bundle.
 
+## Workers Builds settings
+
+Cloudflare Workers Builds runs a build command first, then a deploy command.
+Use these settings for this repository:
+
+```text
+Root directory: <blank/default repository root>
+Build command: npm ci && npm --prefix Apps/HospitalApp ci && npm --prefix Apps/PatientApp ci && npm run check:demo-release
+Deploy command: npm run deploy:demo:worker
+```
+
+Do not set the root directory to `dist/static-demo`, `cloudflare`, or an app
+subdirectory. The Worker config, root package scripts, frontend apps, and build
+scripts all need to be available from the repository root.
+
+The deploy command intentionally only uploads the already-built Worker and
+assets. `dist/static-demo` is generated output and is ignored by git, so a fresh
+Cloudflare clone must run the build command before Wrangler deploys.
+
+If the build log says `Executing user deploy command: npx wrangler deploy` and
+then fails with `Missing entry-point to Worker script or to assets directory`,
+Cloudflare is either running without the build command above or from the wrong
+root directory. Correct the Workers Builds settings rather than broadening the
+Worker route or committing `dist/`.
+
 ## Existing Cloudflare resources
 
 The Worker must reuse the resources already owned by the landing/access
@@ -94,10 +119,13 @@ not be broadened to `priage.ca/*`. The landing deployment may handle the exact
 After review and creation of the intended release branch, deploy with:
 
 ```bash
-npx wrangler deploy
+npm run deploy:demo
 ```
 
-This repository does not automate that production action.
+For Cloudflare Workers Builds, use `npm run deploy:demo:worker` as the deploy
+command because the build command has already run `npm run check:demo-release`.
+This repository does not deploy production automatically outside that explicit
+release operation.
 
 The legacy `functions/` Pages sources are not deployment entrypoints for this
 Worker. They remain source-compatible with the extracted session validator,
