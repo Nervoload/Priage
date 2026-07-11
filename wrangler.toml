@@ -1,0 +1,8 @@
+name = "priage-demo"
+compatibility_date = "2026-07-07"
+pages_build_output_dir = "dist/static-demo"
+
+[[d1_databases]]
+binding = "DEMO_DB"
+database_name = "priage-demo-access"
+database_id = "91ff88a8-cfdb-4565-8360-859e9398efef"

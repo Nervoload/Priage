@@ -35,9 +35,12 @@ const COOKIE_NAME = 'priage_demo_session';
 const SESSION_TTL_SECONDS = 48 * 60 * 60;
 const SESSION_TTL_MS = SESSION_TTL_SECONDS * 1000;
 const VERIFY_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const SESSION_ACTION_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const MAX_VERIFY_IP_ATTEMPTS_PER_WINDOW = 30;
 const MAX_VERIFY_EMAIL_ATTEMPTS_PER_WINDOW = 12;
 const MAX_VERIFY_ATTEMPTS = 10;
+const MAX_DEMO_EVENTS_PER_SESSION_WINDOW = 180;
+const MAX_CALLBACK_REQUESTS_PER_SESSION_WINDOW = 5;
 const MAX_JSON_BODY_BYTES = 16 * 1024;
 
 class DemoAccessError extends Error {
@@ -102,10 +105,11 @@ export async function handleVerifyDemoCode(request: Request, env: Env): Promise<
           ipLimited: ipAttemptCount > MAX_VERIFY_IP_ATTEMPTS_PER_WINDOW,
         },
       });
-      return json({ ok: false, error: 'Unable to verify that demo code.' }, { status: 400 });
+      return json({ ok: false, error: 'Unable to verify that demo code.' }, { status: 429 });
     }
 
-    const foundRequest = await findRequestForVerification(db, normalizedEmail, requestId);
+    const submittedHash = await hmacSha256Hex(codePepper, `${normalizedEmail}:${normalizedCode}`);
+    const foundRequest = await findRequestForVerification(db, normalizedEmail, submittedHash, requestId);
 
     if (!foundRequest) {
       return json({ ok: false, error: 'Unable to verify that demo code.' }, { status: 400 });
@@ -127,7 +131,6 @@ export async function handleVerifyDemoCode(request: Request, env: Env): Promise<
       return json({ ok: false, error: 'Unable to verify that demo code.' }, { status: 400 });
     }
 
-    const submittedHash = await hmacSha256Hex(codePepper, `${normalizedEmail}:${normalizedCode}`);
     if (!constantTimeEquals(submittedHash, foundRequest.codeHash)) {
       await db
         .prepare('UPDATE demo_requests SET verify_attempts = verify_attempts + 1 WHERE id = ?')
@@ -145,7 +148,7 @@ export async function handleVerifyDemoCode(request: Request, env: Env): Promise<
     const userAgent = request.headers.get('user-agent') ?? '';
     const userAgentHash = userAgent ? await hmacSha256Hex(codePepper, `ua:${userAgent}`) : null;
     const ipPrefixHash = remoteIp ? await hmacSha256Hex(codePepper, `ip-prefix:${coarseIpPrefix(remoteIp)}`) : null;
-    const expiresAt = now + SESSION_TTL_MS;
+    const expiresAt = Math.min(now + SESSION_TTL_MS, foundRequest.expiresAt);
 
     await db
       .prepare(
@@ -171,7 +174,7 @@ export async function handleVerifyDemoCode(request: Request, env: Env): Promise<
 
     const signature = await signSessionId(sessionId, sessionSecret);
     const headers = new Headers();
-    headers.set('set-cookie', buildSessionCookie(request, sessionId, signature));
+    headers.set('set-cookie', buildSessionCookie(request, sessionId, signature, Math.floor((expiresAt - now) / 1000)));
 
     return json({ ok: true, sessionId, expiresAt }, { headers });
   } catch (error) {
@@ -206,6 +209,14 @@ export async function handleDemoEvent(request: Request, env: Env): Promise<Respo
   if (!session) return json({ ok: false, error: 'Demo access required.' }, { status: 401 });
 
   const db = requireDb(env);
+  const now = Date.now();
+  const allowed = await enforceSessionActionLimit(db, env, session, {
+    action: 'demo_event',
+    maxAttempts: MAX_DEMO_EVENTS_PER_SESSION_WINDOW,
+    now,
+  });
+  if (!allowed) return json({ ok: false, error: 'Too many demo events.' }, { status: 429 });
+
   const body = await readJsonObject(request);
   const eventType = optionalString(body.type, 120) ?? optionalString(body.eventType, 120) ?? 'demo_event';
   const metadata = isRecord(body.metadata) ? body.metadata : isRecord(body.payload) ? body.payload : undefined;
@@ -214,7 +225,7 @@ export async function handleDemoEvent(request: Request, env: Env): Promise<Respo
     sessionId: session.id,
     requestId: session.requestId,
     eventType,
-    createdAt: Date.now(),
+    createdAt: now,
     payload: metadata,
   });
 
@@ -226,6 +237,14 @@ export async function handleCallbackRequest(request: Request, env: Env): Promise
   if (!session) return json({ ok: false, error: 'Demo access required.' }, { status: 401 });
 
   const db = requireDb(env);
+  const now = Date.now();
+  const allowed = await enforceSessionActionLimit(db, env, session, {
+    action: 'callback_request',
+    maxAttempts: MAX_CALLBACK_REQUESTS_PER_SESSION_WINDOW,
+    now,
+  });
+  if (!allowed) return json({ ok: false, error: 'Too many callback requests.' }, { status: 429 });
+
   const body = await readJsonObject(request);
   const name = optionalString(body.name, 180);
   const organization = optionalString(body.organization, 180);
@@ -247,7 +266,7 @@ export async function handleCallbackRequest(request: Request, env: Env): Promise
       organization,
       message,
       requestedTime,
-      Date.now(),
+      now,
     )
     .run();
 
@@ -255,13 +274,17 @@ export async function handleCallbackRequest(request: Request, env: Env): Promise
     sessionId: session.id,
     requestId: session.requestId,
     eventType: 'callback_requested',
-    createdAt: Date.now(),
+    createdAt: now,
   });
 
   return json({ ok: true });
 }
 
-export async function validateDemoSession(request: Request, env: Env): Promise<DemoSession | null> {
+export async function validateDemoSession(
+  request: Request,
+  env: Env,
+  options: { touch?: boolean } = {},
+): Promise<DemoSession | null> {
   const db = env.DEMO_DB;
   const sessionSecret = env.DEMO_SESSION_SECRET;
   if (!db || !sessionSecret) return null;
@@ -300,10 +323,12 @@ export async function validateDemoSession(request: Request, env: Env): Promise<D
   const expiresAt = Number(row.expires_at);
   if (!Number.isFinite(expiresAt) || expiresAt <= now) return null;
 
-  await db
-    .prepare('UPDATE demo_sessions SET last_seen_at = ? WHERE id = ?')
-    .bind(now, sessionId)
-    .run();
+  if (options.touch !== false) {
+    await db
+      .prepare('UPDATE demo_sessions SET last_seen_at = ? WHERE id = ?')
+      .bind(now, sessionId)
+      .run();
+  }
 
   return {
     id: String(row.id),
@@ -444,6 +469,7 @@ function normalizeDemoCode(code: string): string {
 async function findRequestForVerification(
   db: D1Database,
   emailNormalized: string,
+  submittedHash: string,
   requestId: string | null,
 ): Promise<{
   id: string;
@@ -456,10 +482,10 @@ async function findRequestForVerification(
 } | null> {
   const sql = requestId
     ? `SELECT * FROM demo_requests WHERE id = ? AND email_normalized = ? LIMIT 1`
-    : `SELECT * FROM demo_requests WHERE email_normalized = ? ORDER BY created_at DESC LIMIT 1`;
+    : `SELECT * FROM demo_requests WHERE email_normalized = ? AND code_hash = ? ORDER BY created_at DESC LIMIT 1`;
   const statement = requestId
     ? db.prepare(sql).bind(requestId, emailNormalized)
-    : db.prepare(sql).bind(emailNormalized);
+    : db.prepare(sql).bind(emailNormalized, submittedHash);
   const row = await statement.first<Record<string, D1Value>>();
   if (!row) return null;
   return {
@@ -493,6 +519,23 @@ async function incrementRateLimitCounter(
     .bind(key)
     .first<{ count: number }>();
   return Number(row?.count ?? 1);
+}
+
+async function enforceSessionActionLimit(
+  db: D1Database,
+  env: Env,
+  session: DemoSession,
+  input: { action: string; maxAttempts: number; now: number },
+): Promise<boolean> {
+  const codePepper = requireEnv(env.DEMO_CODE_PEPPER, 'DEMO_CODE_PEPPER');
+  const windowStart = Math.floor(input.now / SESSION_ACTION_LIMIT_WINDOW_MS) * SESSION_ACTION_LIMIT_WINDOW_MS;
+  const count = await incrementRateLimitCounter(db, {
+    action: input.action,
+    identifierHash: await hmacSha256Hex(codePepper, `${input.action}:${session.id}`),
+    windowStart,
+    expiresAt: windowStart + SESSION_ACTION_LIMIT_WINDOW_MS * 2,
+  });
+  return count <= input.maxAttempts;
 }
 
 async function recordDemoEvent(
@@ -533,9 +576,14 @@ function verificationRejectionReason(
   return 'unknown';
 }
 
-function buildSessionCookie(request: Request, sessionId: string, signature: string): string {
+function buildSessionCookie(
+  request: Request,
+  sessionId: string,
+  signature: string,
+  maxAgeSeconds = SESSION_TTL_SECONDS,
+): string {
   const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
-  return `${COOKIE_NAME}=${sessionId}.${signature}; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_SECONDS}`;
+  return `${COOKIE_NAME}=${sessionId}.${signature}; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=${maxAgeSeconds}`;
 }
 
 function parseCookies(header: string): Record<string, string> {

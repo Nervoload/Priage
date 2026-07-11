@@ -14,7 +14,14 @@ const staticRoot = join(projectRoot, 'dist', 'static-demo');
 const port = Number.parseInt(readArg('--port') || process.env.PRIAGE_DEMO_PORT || '5175', 10);
 const host = readArg('--host') || process.env.PRIAGE_DEMO_HOST || '127.0.0.1';
 const cookieName = 'priage_demo_session';
-const protectedPrefixes = ['/patient', '/care', '/hospital'];
+const protectedPrefixes = [
+  '/demo/patient',
+  '/demo/hospital',
+  '/demo/care',
+  '/patient',
+  '/care',
+  '/hospital',
+];
 
 if (!Number.isInteger(port) || port <= 0) {
   throw new Error(`Invalid demo server port: ${port}`);
@@ -38,6 +45,15 @@ server.listen(port, host, () => {
 
 async function handleRequest(request, response) {
   const url = new URL(request.url || '/', `http://${request.headers.host || `localhost:${port}`}`);
+  const legacyRedirect = legacyDemoRedirect(url);
+  if (legacyRedirect) {
+    response.writeHead(302, {
+      location: legacyRedirect,
+      'cache-control': 'no-store',
+    });
+    response.end();
+    return;
+  }
 
   if (request.method === 'GET' && url.pathname === '/api/demo-session') {
     const session = validateSession(request);
@@ -76,7 +92,7 @@ async function handleRequest(request, response) {
   const isProtected = protectedPrefixes.some((prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`));
   if (isProtected && !validateSession(request)) {
     const acceptsHtml = String(request.headers.accept || '').includes('text/html');
-    if (acceptsHtml || url.pathname === '/patient' || url.pathname === '/care' || url.pathname === '/hospital') {
+    if (acceptsHtml || protectedPrefixes.includes(url.pathname)) {
       response.writeHead(302, {
         location: `/demo?returnTo=${encodeURIComponent(url.pathname + url.search)}`,
         'cache-control': 'no-store',
@@ -113,16 +129,18 @@ async function handleVerify(request, response) {
 
 function serveStatic(pathname, response) {
   let mappedPath = pathname;
-  if (mappedPath === '/' || mappedPath === '/demo') mappedPath = '/index.html';
-  if (mappedPath === '/patient') mappedPath = '/patient/index.html';
-  if (mappedPath === '/care') mappedPath = '/care/index.html';
-  if (mappedPath === '/hospital') mappedPath = '/care/index.html';
-  if (mappedPath.startsWith('/patient/') && !hasFileExtension(mappedPath)) mappedPath = '/patient/index.html';
-  if (mappedPath.startsWith('/care/') && !hasFileExtension(mappedPath)) mappedPath = '/care/index.html';
-  if (mappedPath.startsWith('/hospital/')) {
-    mappedPath = mappedPath === '/hospital/' || !hasFileExtension(mappedPath)
-      ? '/care/index.html'
-      : mappedPath.replace('/hospital/', '/care/');
+  if (mappedPath === '/') mappedPath = '/demo/index.html';
+  if (mappedPath === '/demo' || mappedPath === '/demo/' || mappedPath === '/demo/access') {
+    mappedPath = '/demo/index.html';
+  }
+  if (mappedPath.startsWith('/demo/access/') && !hasFileExtension(mappedPath)) mappedPath = '/demo/index.html';
+  if (mappedPath === '/demo/patient') mappedPath = '/demo/patient/index.html';
+  if (mappedPath === '/demo/hospital') mappedPath = '/demo/hospital/index.html';
+  if (mappedPath.startsWith('/demo/patient/') && !hasFileExtension(mappedPath)) {
+    mappedPath = '/demo/patient/index.html';
+  }
+  if (mappedPath.startsWith('/demo/hospital/') && !hasFileExtension(mappedPath)) {
+    mappedPath = '/demo/hospital/index.html';
   }
 
   const filePath = resolve(staticRoot, `.${decodeURIComponent(mappedPath)}`);
@@ -149,6 +167,23 @@ function streamFile(filePath, response, contentType, noStore) {
 
 function shouldNoStore(pathname) {
   return pathname === '/demo' || protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function legacyDemoRedirect(url) {
+  const legacyPairs = [
+    ['/demo/care', '/demo/hospital'],
+    ['/patient', '/demo/patient'],
+    ['/care', '/demo/hospital'],
+    ['/hospital', '/demo/hospital'],
+  ];
+
+  for (const [from, to] of legacyPairs) {
+    if (url.pathname === from || url.pathname.startsWith(`${from}/`)) {
+      return `${to}${url.pathname.slice(from.length)}${url.search}`;
+    }
+  }
+
+  return null;
 }
 
 function readAccessConfig() {

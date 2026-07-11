@@ -32,7 +32,7 @@ Expected end-to-end flow:
 2. The landing page explains the Priage mission, target users, workflow, and value proposition.
 3. The prospect requests demo access by submitting a form with email, name, organization, role, organization type, and areas of interest.
 4. A small access service validates the request, applies abuse protection, generates a demo code or signed link, stores the request, and emails the prospect.
-5. The prospect opens the demo surface, for example `demo.priage.ca`.
+5. The prospect opens the demo surface, for example `priage.ca/demo`.
 6. The prospect enters email plus code or follows a signed link.
 7. The access service validates the code server-side and sets a short-lived authorized demo session.
 8. The demo shell loads the PatientApp and HospitalApp in demo mode.
@@ -96,15 +96,15 @@ The static demo may receive `demoCode` or `demoSessionId` as opaque metadata, bu
 Intended public structure:
 
 - `priage.ca`: marketing landing page and demo request form
-- `demo.priage.ca`: code entry, validation, and demo shell
-- `/patient` or `patient.priage.ca`: patient demo surface
-- `/care` or `care.priage.ca`: care-team demo surface
+- `priage.ca/demo`: code entry, validation, and demo shell
+- `priage.ca/demo/patient`: patient demo surface
+- `priage.ca/demo/hospital`: care-team demo surface
 
 The current implementation assumes the shell, patient app, and hospital app are served under the same origin:
 
-- `/`
-- `/patient/`
-- `/care/`
+- `/demo/`
+- `/demo/patient/`
+- `/demo/hospital/`
 
 Same-origin hosting matters because the current runtime syncs both apps through browser-local state and `BroadcastChannel`. If patient and hospital are moved to separate subdomains, one of these must happen:
 
@@ -112,7 +112,7 @@ Same-origin hosting matters because the current runtime syncs both apps through 
 - introduce a small shared backend/session layer, or
 - use a hosting strategy that preserves same-origin frame access for the shell and apps.
 
-For the current Cloudflare Pages target, prefer one same-origin static deployment with `/demo`, `/patient`, and `/care` paths.
+For the current Cloudflare Pages target, prefer one same-origin static deployment with `/demo`, `/demo/patient`, and `/demo/hospital` paths.
 
 ## 6. Current Implementation Status
 
@@ -171,8 +171,8 @@ flowchart TB
     landing["Landing Page\npriage.ca\nrequest demo form"]
     access["Access Service\nWorker / Pages Function / backend\ncode generation + validation"]
     shell["Demo Shell\n/\nframes both apps + feedback"]
-    patient["PatientApp\n/patient\nstatic demo mode"]
-    hospital["HospitalApp\n/care\nstatic demo mode"]
+    patient["PatientApp\n/demo/patient\nstatic demo mode"]
+    hospital["HospitalApp\n/demo/hospital\nstatic demo mode"]
     store["Browser-local Demo Engine\nlocalStorage + BroadcastChannel"]
     events["Optional Event Endpoint\nfuture upload"]
 
@@ -203,8 +203,8 @@ Current responsibilities:
 
 - Render demo header and session context.
 - Read opaque query metadata such as `demoCode` and `demoSessionId`.
-- Load PatientApp under `/patient/?demo=static`.
-- Load HospitalApp under `/care/?demo=static`.
+- Load PatientApp under `/demo/patient/?demo=static`.
+- Load HospitalApp under `/demo/hospital/?demo=static`.
 - Provide view toggles: both, patient, hospital.
 - Provide links to open patient/hospital fullscreen.
 - Reset the local scenario.
@@ -449,9 +449,9 @@ dist/static-demo
 
 The build script:
 
-- builds DemoShell to `/`
-- builds HospitalApp to `/care/`
-- builds PatientApp to `/patient/`
+- builds DemoShell to `/demo/`
+- builds HospitalApp to `/demo/hospital/`
+- builds PatientApp to `/demo/patient/`
 - writes Cloudflare Pages redirects
 - pins demo build env to `VITE_DEMO_MODE=static`
 - pins `VITE_API_URL=static-demo` during demo build so static bundles do not default to localhost
@@ -459,10 +459,9 @@ The build script:
 Generated redirect file:
 
 ```txt
-/patient/* /patient/index.html 200
-/care/* /care/index.html 200
-/hospital/* /care/index.html 200
-/* /index.html 200
+/demo /demo/index.html 200
+/demo/patient/* /demo/patient/index.html 200
+/demo/hospital/* /demo/hospital/index.html 200
 ```
 
 Cloudflare Pages configuration:
@@ -567,7 +566,7 @@ Recommended first integration:
 3. Generate a short code or signed link.
 4. Store only a hash of the code.
 5. Email the prospect.
-6. Validate code on `demo.priage.ca`.
+6. Validate code on `priage.ca/demo`.
 7. Set a short-lived HttpOnly cookie.
 8. Serve or unlock the static demo shell.
 9. Pass opaque `demoSessionId` into the shell query or runtime config.

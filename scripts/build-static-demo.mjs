@@ -10,6 +10,7 @@ const projectRoot = resolve(__dirname, '..');
 const hospitalAppDir = join(projectRoot, 'Apps', 'HospitalApp');
 const patientAppDir = join(projectRoot, 'Apps', 'PatientApp');
 const outDir = join(projectRoot, 'dist', 'static-demo');
+const demoRootDir = join(outDir, 'demo');
 
 const demoEnv = {
   ...process.env,
@@ -26,9 +27,11 @@ run('npx', [
   'build',
   '--config',
   '../DemoShell/vite.config.ts',
+  '--base',
+  '/demo/',
   '--outDir',
-  '../../dist/static-demo',
-  '--emptyOutDir',
+  '../../dist/static-demo/demo',
+  '--emptyOutDir=false',
 ], {
   cwd: hospitalAppDir,
   env: demoEnv,
@@ -47,14 +50,23 @@ run('npm', ['run', 'build:demo'], {
 writeFileSync(
   join(outDir, '_redirects'),
   [
-    '/demo /index.html 200',
-    '/patient /patient/index.html 200',
-    '/patient/* /patient/index.html 200',
-    '/care /care/index.html 200',
-    '/care/* /care/index.html 200',
-    '/hospital /care/index.html 200',
-    '/hospital/* /care/index.html 200',
-    '/* /index.html 200',
+    '/ /demo 302',
+    '/demo /demo/index.html 200',
+    '/demo/ /demo/index.html 200',
+    '/demo/access /demo/index.html 200',
+    '/demo/access/* /demo/index.html 200',
+    '/demo/patient /demo/patient/index.html 200',
+    '/demo/patient/* /demo/patient/index.html 200',
+    '/demo/hospital /demo/hospital/index.html 200',
+    '/demo/hospital/* /demo/hospital/index.html 200',
+    '/demo/care /demo/hospital 302',
+    '/demo/care/* /demo/hospital/:splat 302',
+    '/patient /demo/patient 302',
+    '/patient/* /demo/patient/:splat 302',
+    '/care /demo/hospital 302',
+    '/care/* /demo/hospital/:splat 302',
+    '/hospital /demo/hospital 302',
+    '/hospital/* /demo/hospital/:splat 302',
     '',
   ].join('\n'),
 );
@@ -65,12 +77,18 @@ writeFileSync(
     version: 1,
     include: [
       '/api/*',
+      '/demo/patient',
+      '/demo/patient/*',
+      '/demo/hospital',
+      '/demo/hospital/*',
+      '/demo/care',
+      '/demo/care/*',
       '/patient',
       '/patient/*',
-      '/care',
-      '/care/*',
       '/hospital',
       '/hospital/*',
+      '/care',
+      '/care/*',
     ],
     exclude: [],
   }, null, 2),
@@ -89,28 +107,13 @@ writeFileSync(
     '/demo',
     '  Cache-Control: no-store',
     '',
-    '/patient',
-    '  Cache-Control: no-store',
-    '',
-    '/patient/*',
-    '  Cache-Control: no-store',
-    '',
-    '/care',
-    '  Cache-Control: no-store',
-    '',
-    '/care/*',
-    '  Cache-Control: no-store',
-    '',
-    '/hospital',
-    '  Cache-Control: no-store',
-    '',
-    '/hospital/*',
+    '/demo/*',
     '  Cache-Control: no-store',
     '',
   ].join('\n'),
 );
 
-console.log(`Static demo build ready: ${outDir}`);
+console.log(`Static demo build ready: ${demoRootDir}`);
 
 function run(command, args, options) {
   const result = spawnSync(command, args, {

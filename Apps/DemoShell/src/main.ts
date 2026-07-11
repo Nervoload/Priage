@@ -131,8 +131,8 @@ function renderUnlockedState(): string {
   if (session?.sessionId) metadata.set('demoSessionId', session.sessionId);
   if (sessionMeta.demoCode) metadata.set('demoCode', sessionMeta.demoCode);
 
-  const patientUrl = `/patient/?${metadata.toString()}&showcase=patient`;
-  const careUrl = `/care/?${metadata.toString()}&showcase=hospital`;
+  const patientUrl = `/demo/patient/?${metadata.toString()}&showcase=patient`;
+  const hospitalUrl = `/demo/hospital/?${metadata.toString()}&showcase=hospital`;
   const state = loadDemoState();
 
   return `
@@ -143,7 +143,7 @@ function renderUnlockedState(): string {
         <small>Guided guest check-in, intake interview, hospital selection, status updates, and patient messaging.</small>
       </a>
 
-      <a class="launch-card care" href="${careUrl}" target="_blank" rel="noreferrer" data-launch="care">
+      <a class="launch-card care" href="${hospitalUrl}" target="_blank" rel="noreferrer" data-launch="hospital">
         <span class="launch-kicker">Care Team App</span>
         <strong>Try the hospital workflow</strong>
         <small>Guided admittance, triage, waiting-room monitoring, messaging, analytics, and configuration tour.</small>

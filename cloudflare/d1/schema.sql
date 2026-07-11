@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS demo_requests (
 CREATE INDEX IF NOT EXISTS idx_demo_requests_email
 ON demo_requests(email_normalized);
 
+CREATE INDEX IF NOT EXISTS idx_demo_requests_email_code_hash
+ON demo_requests(email_normalized, code_hash);
+
 CREATE INDEX IF NOT EXISTS idx_demo_requests_expires
 ON demo_requests(expires_at);
 

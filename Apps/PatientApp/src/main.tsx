@@ -31,6 +31,7 @@ function DemoGateWrapper({ children }: { children: ReactNode }) {
 
 function getPatientRouterBasename(): string | undefined {
   if (!isStaticDemoMode()) return undefined;
+  if (window.location.pathname.startsWith('/demo/patient')) return '/demo/patient';
   return window.location.pathname.startsWith('/patient') ? '/patient' : undefined;
 }
 

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:demo": "tsc && vite build --base=/patient/ --outDir ../../dist/static-demo/patient --emptyOutDir",
+    "build:demo": "tsc && vite build --base=/demo/patient/ --outDir ../../dist/static-demo/demo/patient --emptyOutDir",
     "check:unused": "../../backend/node_modules/.bin/knip --config knip.json --include files,exports,dependencies",
     "preview": "vite preview"
   },

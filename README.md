@@ -222,8 +222,8 @@ The NestJS backend currently wires together these major modules:
 
 The lightweight sales demo can be built without the Nest backend, PostgreSQL, or
 Redis. It produces a Cloudflare Pages-ready static bundle with the protected
-demo access portal at `/demo`, PatientApp at `/patient/`, and HospitalApp at
-`/care/`.
+demo access portal at `/demo`, PatientApp at `/demo/patient/`, and HospitalApp
+at `/demo/hospital/`.
 
 ```bash
 node scripts/build-static-demo.mjs
@@ -231,8 +231,8 @@ node scripts/build-static-demo.mjs
 
 The generated files are written to `dist/static-demo`. Static demo mode uses
 browser-local demo data, `localStorage`, and `BroadcastChannel`; Cloudflare
-Pages Functions under `functions/` enforce demo-code access for `/patient` and
-`/care` in deployed environments.
+Pages Functions under `functions/` enforce demo-code access for
+`/demo/patient` and `/demo/hospital` in deployed environments.
 
 For a fresh Cloudflare Pages build, install both app dependency trees before
 running the static demo build:
@@ -243,20 +243,51 @@ npm --prefix Apps/PatientApp ci
 node scripts/build-static-demo.mjs
 ```
 
-Pages should publish `dist/static-demo` and keep the repo-level `functions/`
-directory enabled. The access layer requires:
+Cloudflare Pages should use this build command:
+
+```bash
+npm --prefix Apps/HospitalApp ci && npm --prefix Apps/PatientApp ci && node scripts/build-static-demo.mjs
+```
+
+Pages should publish `dist/static-demo`, use the repo-level `functions/`
+directory, and keep the checked-in `wrangler.toml` D1 binding pointed at the
+same `priage-demo-access` database that the landing page writes demo requests
+to. The access layer requires:
 
 - D1 binding: `DEMO_DB`, migrated with `cloudflare/d1/schema.sql`
 - Secrets: `DEMO_CODE_PEPPER` and `DEMO_SESSION_SECRET`
 - Demo-code generator: insert a `demo_requests` row whose `code_hash` is an
   HMAC-SHA256 of `normalizedEmail + ":" + normalizedCode` using
   `DEMO_CODE_PEPPER`
+- Landing email link: set `DEMO_BASE_URL=https://priage.ca/demo` so generated
+  emails open `/demo/access?request=<requestId>`, which this bundle routes to
+  the demo access form.
+- Verification requires the normalized email plus the generated code. Codes are
+  valid only while their `demo_requests.expires_at` value is in the future, and
+  successful verification sets the HttpOnly `priage_demo_session` cookie for up
+  to 48 hours, capped by the original request expiry.
+- The verify endpoint rate-limits by normalized email and coarse IP prefix.
+  Authenticated demo event and callback writes are additionally rate-limited by
+  session to protect the D1 write path during demos.
 
 The generated `_routes.json` limits Pages Function invocation to `/api/*`,
-`/patient`, `/patient/*`, `/care`, `/care/*`, and the legacy `/hospital` alias.
-The generated `_headers` adds static security headers and no-store caching for
-the gated demo routes. Local plain static hosting will not enforce access; the
-copy-paste URL protection depends on Cloudflare Pages Functions middleware.
+`/demo/patient`, `/demo/patient/*`, `/demo/hospital`, `/demo/hospital/*`, and
+legacy aliases that redirect into the `/demo` namespace. The generated
+`_headers` adds static security headers and no-store caching for the gated demo
+routes. Local plain static hosting will not enforce access; copy-paste URL
+protection depends on Cloudflare Pages Functions middleware.
+
+For Cloudflare edge protection, configure the Pages project to fail closed when
+Functions are unavailable or exhausted, and add WAF/rate-limit rules in front of
+the dynamic demo endpoints:
+
+- `POST /api/verify-demo-code`
+- `POST /api/demo-events`
+- `POST /api/callback-request`
+
+Those edge controls reduce Function/D1 spend during abuse. The application code
+still rate-limits verification by normalized email plus coarse IP prefix, and
+rate-limits authenticated demo event/callback writes by session.
 
 ### Quick Start
 

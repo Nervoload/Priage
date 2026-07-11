@@ -1,24 +1,30 @@
 import { redirectToDemo, validateDemoSession, type PagesFunction } from './_shared/demoAccess';
 
-const PROTECTED_PREFIXES = ['/patient', '/care', '/hospital'];
+const PROTECTED_PREFIXES = [
+  '/demo/patient',
+  '/demo/hospital',
+  '/demo/care',
+  '/patient',
+  '/care',
+  '/hospital',
+];
 
 export const onRequest: PagesFunction = async ({ request, env, next }) => {
   const pathname = new URL(request.url).pathname;
-  const protectedRoute = PROTECTED_PREFIXES.some((prefix) => (
-    pathname === prefix || pathname.startsWith(`${prefix}/`)
-  ));
+  const protectedRoute = PROTECTED_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix));
 
   if (!protectedRoute) {
     return next ? next() : new Response(null, { status: 404 });
   }
 
-  const session = await validateDemoSession(request, env);
+  const session = await validateDemoSession(request, env, { touch: false });
   if (session) {
     return next ? next() : new Response(null, { status: 404 });
   }
 
   const accept = request.headers.get('accept') || '';
-  if (accept.includes('text/html') || pathname === '/patient' || pathname === '/care' || pathname === '/hospital') {
+  const htmlNavigation = accept.includes('text/html') || PROTECTED_PREFIXES.includes(pathname);
+  if (htmlNavigation) {
     return redirectToDemo(request);
   }
 
@@ -30,3 +36,7 @@ export const onRequest: PagesFunction = async ({ request, env, next }) => {
     },
   });
 };
+
+function matchesPrefix(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
