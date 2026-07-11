@@ -54,10 +54,18 @@ export default {
       return secureResponse(Response.redirect(redirectUrl.toString(), 308), true);
     }
 
-    if (url.pathname === '/demo/' || url.pathname === '/demo/index.html') {
+    if (
+      url.pathname === '/demo' ||
+      url.pathname === '/demo/' ||
+      url.pathname === '/demo/index.html'
+    ) {
       const redirectUrl = new URL('/demo/access', url.origin);
       redirectUrl.search = url.search;
-      return secureResponse(Response.redirect(redirectUrl.toString(), 302), true);
+
+      return secureResponse(
+        Response.redirect(redirectUrl.toString(), 302),
+        true,
+      );
     }
 
     if (isAccessRoute(url.pathname)) {
@@ -152,6 +160,7 @@ function fetchAsset(
 
 function secureResponse(response: Response, noStore = false): Response {
   const headers = new Headers(response.headers);
+  headers.set('x-priage-demo-worker', 'true');
   headers.set('x-content-type-options', 'nosniff');
   headers.set('x-frame-options', 'DENY');
   headers.set('referrer-policy', 'strict-origin-when-cross-origin');
