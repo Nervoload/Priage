@@ -16,8 +16,8 @@ const host = readArg('--host') || process.env.PRIAGE_DEMO_HOST || '127.0.0.1';
 const cookieName = 'priage_demo_session';
 const protectedPrefixes = [
   '/demo/patient',
-  '/demo/hospital',
   '/demo/care',
+  '/demo/hospital',
   '/patient',
   '/care',
   '/hospital',
@@ -40,7 +40,7 @@ server.on('error', (error) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`[local-demo] Serving protected static demo at http://localhost:${port}/demo`);
+  console.log(`[local-demo] Serving protected static demo at http://localhost:${port}/demo/access`);
 });
 
 async function handleRequest(request, response) {
@@ -60,7 +60,6 @@ async function handleRequest(request, response) {
     if (!session) return sendJson(response, 401, { ok: false });
     return sendJson(response, 200, {
       ok: true,
-      sessionId: session.sessionId,
       email: session.email,
       expiresAt: session.expiresAt,
     });
@@ -94,7 +93,7 @@ async function handleRequest(request, response) {
     const acceptsHtml = String(request.headers.accept || '').includes('text/html');
     if (acceptsHtml || protectedPrefixes.includes(url.pathname)) {
       response.writeHead(302, {
-        location: `/demo?returnTo=${encodeURIComponent(url.pathname + url.search)}`,
+        location: `/demo/access?returnTo=${encodeURIComponent(url.pathname + url.search)}`,
         'cache-control': 'no-store',
       });
       response.end();
@@ -124,7 +123,7 @@ async function handleVerify(request, response) {
   const cookie = `${cookieName}=${sessionId}.${signature}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor((expiresAt - Date.now()) / 1000)}`;
 
   appendEvent('verify_demo_code_succeeded', { email, sessionId });
-  return sendJson(response, 200, { ok: true, sessionId, expiresAt }, { 'set-cookie': cookie });
+  return sendJson(response, 200, { ok: true, expiresAt }, { 'set-cookie': cookie });
 }
 
 function serveStatic(pathname, response) {
@@ -135,12 +134,12 @@ function serveStatic(pathname, response) {
   }
   if (mappedPath.startsWith('/demo/access/') && !hasFileExtension(mappedPath)) mappedPath = '/demo/index.html';
   if (mappedPath === '/demo/patient') mappedPath = '/demo/patient/index.html';
-  if (mappedPath === '/demo/hospital') mappedPath = '/demo/hospital/index.html';
+  if (mappedPath === '/demo/care') mappedPath = '/demo/care/index.html';
   if (mappedPath.startsWith('/demo/patient/') && !hasFileExtension(mappedPath)) {
     mappedPath = '/demo/patient/index.html';
   }
-  if (mappedPath.startsWith('/demo/hospital/') && !hasFileExtension(mappedPath)) {
-    mappedPath = '/demo/hospital/index.html';
+  if (mappedPath.startsWith('/demo/care/') && !hasFileExtension(mappedPath)) {
+    mappedPath = '/demo/care/index.html';
   }
 
   const filePath = resolve(staticRoot, `.${decodeURIComponent(mappedPath)}`);
@@ -166,15 +165,19 @@ function streamFile(filePath, response, contentType, noStore) {
 }
 
 function shouldNoStore(pathname) {
-  return pathname === '/demo' || protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  return (
+    pathname === '/demo' ||
+    pathname === '/demo/access' ||
+    protectedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+  );
 }
 
 function legacyDemoRedirect(url) {
   const legacyPairs = [
-    ['/demo/care', '/demo/hospital'],
+    ['/demo/hospital', '/demo/care'],
     ['/patient', '/demo/patient'],
-    ['/care', '/demo/hospital'],
-    ['/hospital', '/demo/hospital'],
+    ['/care', '/demo/care'],
+    ['/hospital', '/demo/care'],
   ];
 
   for (const [from, to] of legacyPairs) {
@@ -203,8 +206,11 @@ function validateSession(request) {
 
   const cookie = parseCookies(request.headers.cookie || '')[cookieName];
   if (!cookie) return null;
-  const [sessionId, signature] = cookie.split('.');
-  if (!sessionId || !signature) return null;
+  const separatorIndex = cookie.indexOf('.');
+  if (separatorIndex <= 0 || separatorIndex !== cookie.lastIndexOf('.')) return null;
+  const sessionId = cookie.slice(0, separatorIndex);
+  const signature = cookie.slice(separatorIndex + 1);
+  if (!sessionId || sessionId.length > 128 || !/^[a-f0-9]{64}$/.test(signature)) return null;
   if (!constantTimeEquals(signature, signSession(sessionId, config.sessionSecret))) return null;
   if (Date.now() >= config.expiresAt) return null;
   return { sessionId, email: normalizeEmail(config.email), expiresAt: config.expiresAt };

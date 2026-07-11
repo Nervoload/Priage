@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "priage-demo",
+  "main": "cloudflare/demo-worker.ts",
+  "compatibility_date": "2026-07-09",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "priage.ca/demo/*",
+      "zone_name": "priage.ca"
+    }
+  ],
+  "assets": {
+    "directory": "./dist/static-demo",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DEMO_DB",
+      "database_name": "priage-demo-access",
+      "database_id": "91ff88a8-cfdb-4565-8360-859e9398efef"
+    }
+  ]
+}
