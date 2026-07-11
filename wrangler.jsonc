@@ -6,6 +6,10 @@
   "workers_dev": false,
   "routes": [
     {
+      "pattern": "priage.ca/demo",
+      "zone_name": "priage.ca"
+    },
+    {
       "pattern": "priage.ca/demo/*",
       "zone_name": "priage.ca"
     }
