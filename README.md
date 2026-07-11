@@ -213,7 +213,7 @@ The NestJS backend currently wires together these major modules:
 
 ### External Software
 
-- Node.js 20+
+- Node.js 20+ (Node.js 22+ for the checked-in Wrangler deployment tooling)
 - npm 9+
 - Docker Desktop
 - Docker Compose v2
@@ -221,73 +221,64 @@ The NestJS backend currently wires together these major modules:
 ### Static Sales Demo Build
 
 The lightweight sales demo can be built without the Nest backend, PostgreSQL, or
-Redis. It produces a Cloudflare Pages-ready static bundle with the protected
-demo access portal at `/demo`, PatientApp at `/demo/patient/`, and HospitalApp
-at `/demo/hospital/`.
+Redis. It produces a Cloudflare Worker Static Assets bundle with the public
+access portal at `/demo/access`, PatientApp at `/demo/patient/`, and the Care
+Team App at `/demo/care/`.
 
 ```bash
 node scripts/build-static-demo.mjs
 ```
 
 The generated files are written to `dist/static-demo`. Static demo mode uses
-browser-local demo data, `localStorage`, and `BroadcastChannel`; Cloudflare
-Pages Functions under `functions/` enforce demo-code access for
-`/demo/patient` and `/demo/hospital` in deployed environments.
+browser-local demo data, `localStorage`, and `BroadcastChannel`. The scoped
+Worker in `cloudflare/demo-worker.ts` validates the landing service's signed
+HttpOnly cookie against the shared D1 database before serving either protected
+app. The production NestJS backend is not part of this demo deployment.
 
-For a fresh Cloudflare Pages build, install both app dependency trees before
-running the static demo build:
+For a fresh build, install the root deployment tooling and both app dependency
+trees before running the static demo build:
 
 ```bash
+npm ci
 npm --prefix Apps/HospitalApp ci
 npm --prefix Apps/PatientApp ci
 node scripts/build-static-demo.mjs
 ```
 
-Cloudflare Pages should use this build command:
+Run the release check with:
 
 ```bash
-npm --prefix Apps/HospitalApp ci && npm --prefix Apps/PatientApp ci && node scripts/build-static-demo.mjs
+npm run check:demo-release
 ```
 
-Pages should publish `dist/static-demo`, use the repo-level `functions/`
-directory, and keep the checked-in `wrangler.toml` D1 binding pointed at the
-same `priage-demo-access` database that the landing page writes demo requests
-to. The access layer requires:
+The checked-in `wrangler.jsonc` publishes `dist/static-demo` through the
+`ASSETS` binding, runs the Worker before asset delivery, and routes only
+`priage.ca/demo/*`. It reuses the existing `priage-demo-access` D1 database.
+The Worker requires:
 
-- D1 binding: `DEMO_DB`, migrated with `cloudflare/d1/schema.sql`
-- Secrets: `DEMO_CODE_PEPPER` and `DEMO_SESSION_SECRET`
-- Demo-code generator: insert a `demo_requests` row whose `code_hash` is an
-  HMAC-SHA256 of `normalizedEmail + ":" + normalizedCode` using
-  `DEMO_CODE_PEPPER`
-- Landing email link: set `DEMO_BASE_URL=https://priage.ca/demo` so generated
-  emails open `/demo/access?request=<requestId>`, which this bundle routes to
-  the demo access form.
-- Verification requires the normalized email plus the generated code. Codes are
-  valid only while their `demo_requests.expires_at` value is in the future, and
-  successful verification sets the HttpOnly `priage_demo_session` cookie for up
-  to 48 hours, capped by the original request expiry.
-- The verify endpoint rate-limits by normalized email and coarse IP prefix.
-  Authenticated demo event and callback writes are additionally rate-limited by
-  session to protect the D1 write path during demos.
+- D1 binding: `DEMO_DB`, pointing to the landing service's existing database
+- Secret: `DEMO_SESSION_SECRET`, with exactly the same value as the landing service
+- Worker route: `priage.ca/demo/*`
 
-The generated `_routes.json` limits Pages Function invocation to `/api/*`,
-`/demo/patient`, `/demo/patient/*`, `/demo/hospital`, `/demo/hospital/*`, and
-legacy aliases that redirect into the `/demo` namespace. The generated
-`_headers` adds static security headers and no-store caching for the gated demo
-routes. Local plain static hosting will not enforce access; copy-paste URL
-protection depends on Cloudflare Pages Functions middleware.
+The separate landing application remains authoritative for demo-code creation,
+email, verification, session creation, events, and callback requests. DemoShell
+continues to call its same-origin root `/api/*` endpoints; the demo Worker does
+not route or proxy those APIs. No code or session identifier is forwarded in
+app URLs or stored in demo-local state.
 
-For Cloudflare edge protection, configure the Pages project to fail closed when
-Functions are unavailable or exhausted, and add WAF/rate-limit rules in front of
-the dynamic demo endpoints:
+See [Cloudflare demo Worker deployment](docs/CLOUDFLARE_DEMO_WORKER.md) for the
+exact responsibility boundary, required Cloudflare configuration, deployment
+command, and verification steps. Deployment is intentionally a separate release
+operation after review.
+
+The landing deployment should retain its WAF/rate-limit controls for:
 
 - `POST /api/verify-demo-code`
 - `POST /api/demo-events`
 - `POST /api/callback-request`
 
-Those edge controls reduce Function/D1 spend during abuse. The application code
-still rate-limits verification by normalized email plus coarse IP prefix, and
-rate-limits authenticated demo event/callback writes by session.
+Those controls protect the landing service's dynamic D1 write path. The demo
+Worker only performs read-only session authorization and static asset delivery.
 
 ### Quick Start
 

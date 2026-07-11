@@ -1,0 +1,12 @@
+{
+  "name": "priage-demo-deployment",
+  "private": true,
+  "scripts": {
+    "build:demo": "node scripts/build-static-demo.mjs",
+    "check:demo-release": "node scripts/build-static-demo.mjs && node scripts/check-static-demo-release.mjs",
+    "deploy:demo": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.110.0"
+  }
+}

@@ -315,15 +315,6 @@ export function submitDemoFeedback(input: { rating?: string; message?: string; e
   return feedback;
 }
 
-export function getDemoSessionMetadata(): Record<string, string> {
-  if (typeof window === 'undefined') return {};
-  const params = new URLSearchParams(window.location.search);
-  return {
-    demoCode: params.get('demoCode') || '',
-    demoSessionId: params.get('demoSessionId') || '',
-  };
-}
-
 export function getDemoStaffAuthUser() {
   const state = loadDemoState();
   return {

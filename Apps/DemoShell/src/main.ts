@@ -1,5 +1,4 @@
 import {
-  getDemoSessionMetadata,
   loadDemoState,
   submitDemoFeedback,
   trackDemoEvent,
@@ -8,7 +7,6 @@ import './styles.css';
 
 type DemoSessionResponse = {
   ok: boolean;
-  sessionId?: string;
   email?: string;
   expiresAt?: number;
 };
@@ -17,7 +15,6 @@ const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('Demo shell root not found');
 
 const params = new URLSearchParams(window.location.search);
-const sessionMeta = getDemoSessionMetadata();
 
 let session: DemoSessionResponse | null = null;
 let verificationError = '';
@@ -31,8 +28,6 @@ async function init() {
   render();
   trackDemoEvent('demo_portal_loaded', {
     path: window.location.pathname,
-    hasDemoCode: Boolean(sessionMeta.demoCode),
-    hasDemoSessionId: Boolean(sessionMeta.demoSessionId),
     authenticated: Boolean(session?.ok),
   });
 }
@@ -125,14 +120,8 @@ function renderAccessForm(): string {
 }
 
 function renderUnlockedState(): string {
-  const metadata = new URLSearchParams();
-  metadata.set('demo', 'static');
-  metadata.set('tour', '1');
-  if (session?.sessionId) metadata.set('demoSessionId', session.sessionId);
-  if (sessionMeta.demoCode) metadata.set('demoCode', sessionMeta.demoCode);
-
-  const patientUrl = `/demo/patient/?${metadata.toString()}&showcase=patient`;
-  const hospitalUrl = `/demo/hospital/?${metadata.toString()}&showcase=hospital`;
+  const patientUrl = '/demo/patient/?tour=1&showcase=patient';
+  const careUrl = '/demo/care/?tour=1&showcase=hospital';
   const state = loadDemoState();
 
   return `
@@ -143,7 +132,7 @@ function renderUnlockedState(): string {
         <small>Guided guest check-in, intake interview, hospital selection, status updates, and patient messaging.</small>
       </a>
 
-      <a class="launch-card care" href="${hospitalUrl}" target="_blank" rel="noreferrer" data-launch="hospital">
+      <a class="launch-card care" href="${careUrl}" target="_blank" rel="noreferrer" data-launch="care">
         <span class="launch-kicker">Care Team App</span>
         <strong>Try the hospital workflow</strong>
         <small>Guided admittance, triage, waiting-room monitoring, messaging, analytics, and configuration tour.</small>
