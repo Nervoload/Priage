@@ -3,6 +3,7 @@ import type { ChatMessage, Encounter, TriageAssessment } from '../../shared/type
 import { patientName } from '../../shared/types/domain';
 import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
+import { PriageSummaryPanel } from '../../shared/ui/PriageSummaryPanel';
 import {
   DASHBOARD_STATUS_THEME,
   formatDashboardElapsedMinutes,
@@ -439,6 +440,15 @@ function PatientProfile({
             )}
           </div>
         </SectionCard>
+
+        {encounter.priageSummary && (
+          <div className="xl:col-span-2">
+            <div className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+              AI intake handoff
+            </div>
+            <PriageSummaryPanel summary={encounter.priageSummary} />
+          </div>
+        )}
 
         {warnings.length > 0 && (
           <SectionCard eyebrow="Safety" title="Medical Alerts" tone="rose">

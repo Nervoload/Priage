@@ -1,7 +1,23 @@
-import type { AuthenticatedPatientSession, GuestIntakeSession } from './types/domain';
+import type {
+  AuthenticatedPatientSession,
+  GuestIntakeSession,
+  TriageMandatoryAnswers,
+  TriageStatus,
+} from './types/domain';
 
 export const AUTH_SESSION_KEY = 'patientAuthSession';
 export const GUEST_SESSION_KEY = 'patientGuestSession';
+const TRIAGE_DRAFT_PREFIX = 'patientTriageDraft';
+
+// Draft persistence supports refresh/resume. Production policy must define
+// consent, device-sharing warnings, expiry, and local-data clearing requirements.
+export interface PatientTriageDraft {
+  chiefComplaint: string;
+  mandatoryAnswers: TriageMandatoryAnswers;
+  sessionId?: string;
+  status?: TriageStatus;
+  currentAnswer?: string;
+}
 
 function loadJson<T>(key: string): T | null {
   try {
@@ -45,7 +61,24 @@ export function clearGuestSessionStorage() {
   localStorage.removeItem(GUEST_SESSION_KEY);
 }
 
+export function loadTriageDraft(scope: 'guest' | 'authenticated'): PatientTriageDraft | null {
+  return loadJson<PatientTriageDraft>(`${TRIAGE_DRAFT_PREFIX}:${scope}`);
+}
+
+export function saveTriageDraft(
+  scope: 'guest' | 'authenticated',
+  draft: PatientTriageDraft | null,
+) {
+  saveJson(`${TRIAGE_DRAFT_PREFIX}:${scope}`, draft);
+}
+
+export function clearTriageDraft(scope: 'guest' | 'authenticated') {
+  localStorage.removeItem(`${TRIAGE_DRAFT_PREFIX}:${scope}`);
+}
+
 export function clearAllPatientSessions() {
   clearAuthSession();
   clearGuestSessionStorage();
+  clearTriageDraft('guest');
+  clearTriageDraft('authenticated');
 }

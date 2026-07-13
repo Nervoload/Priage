@@ -47,6 +47,7 @@
 
   /* Font family */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Sora", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 /* ─── Base Styles ─────────────────────────────────────────────────────────── */
@@ -55,22 +56,35 @@ html {
   scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 body {
   font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   background-color: #f8fafc;
   color: #1f2937;
   margin: 0;
 }
 
+::selection {
+  background-color: rgba(30, 58, 95, 0.16);
+}
+
+/* Visible, consistent keyboard focus without a harsh default outline */
+:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.55);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .font-hospital-display {
-  font-family: "Avenir Next", "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-display);
   letter-spacing: -0.02em;
 }
 
 .font-hospital-body {
-  font-family: "Avenir Next", "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-sans);
 }
 
 /* ─── Animations ──────────────────────────────────────────────────────────── */
@@ -150,8 +164,14 @@ body {
 }
 
 /* Scrollbar styling for a cleaner look */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -159,10 +179,19 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: #d1d5db;
+  background-color: #cbd5e1;
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: #9ca3af;
+  background-color: #94a3b8;
+}
+
+/* Smooth hover lift shared by interactive cards */
+.card-lift {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.card-lift:hover {
+  transform: translateY(-2px);
 }

@@ -113,6 +113,8 @@ export interface GuestIntakeSession {
   patientId: number;
   encounterId: number | null;
   hospitalSlug: string | null;
+  triageSessionId?: string;
+  triageStatus?: TriageStatus;
   firstName?: string;
   lastName?: string;
   age?: number;
@@ -248,48 +250,76 @@ export interface ConfirmIntentPayload {
   hospitalSlug?: string;
 }
 
-export type InterviewPhase = 'urgent' | 'emergent' | 'history';
-export type InterviewInputType = 'text' | 'textarea' | 'number' | 'boolean' | 'single_select';
-export type InterviewStatus = 'in_progress' | 'emergency_ack_required' | 'complete';
+export type TriageStatus = 'ask_question' | 'complete' | 'urgent_review' | 'submitted';
 
-export interface InterviewQuestion {
-  publicId: string;
-  phase: InterviewPhase;
-  inputType: InterviewInputType;
-  prompt: string;
-  helpText?: string;
-  placeholder?: string;
+export interface TriageMandatoryAnswers {
+  onset: string;
+  severity: number | 'unknown' | 'prefer_not_to_answer' | '';
+  progression: 'better' | 'worse' | 'same' | 'unknown' | '';
+  relevantHistory: string;
+}
+
+export interface TriageQuestion {
+  id: string;
+  text: string;
+  inputType: 'text' | 'textarea' | 'number' | 'boolean' | 'single_select';
+  options: string[];
+  allowsOther: boolean;
   required: boolean;
-  choices: string[];
-  clinicalReason?: string;
-  askIfAmbiguous: boolean;
+  helpText: string;
 }
 
-export interface InterviewEmergencyAlert {
-  title: string;
-  body: string;
-  recommendation: string;
+export interface TriageAnswer {
+  questionId: string;
+  answer: string;
+  question?: string;
+  topic?: string;
 }
 
-export interface InterviewState {
-  interviewPublicId: string;
-  status: InterviewStatus;
-  phase: InterviewPhase;
-  askedCount: number;
+export interface TriageSession {
+  sessionId: string;
+  status: TriageStatus;
+  question: TriageQuestion | null;
+  reasonForQuestion: string | null;
+  summary: TriageSummary;
+  chiefComplaint: string;
+  urgentReview: boolean;
+  urgencyReason: string | null;
+  patientMessage: string | null;
+  questionCount: number;
   maxQuestions: number;
-  currentQuestion: InterviewQuestion | null;
-  cachedQuestions: InterviewQuestion[];
-  emergencyAlert: InterviewEmergencyAlert | null;
-  summaryPreview: string;
+  answers?: TriageAnswer[] | Record<string, string>;
+  mandatoryAnswers?: TriageMandatoryAnswers;
 }
 
-export interface AdvanceInterviewPayload {
-  questionPublicId?: string;
-  valueText?: string;
-  valueNumber?: number;
-  valueBoolean?: boolean;
-  valueChoice?: string;
-  action?: 'acknowledge_emergency';
+export interface TriageSummary {
+  chiefComplaint: string;
+  originalChiefComplaint: string;
+  onset: string;
+  severity: string;
+  progression: string;
+  relevantSymptoms: string[];
+  relevantNegatives: string[];
+  medicalHistory: string[];
+  medications: string[];
+  allergies: string[];
+  additionalContext: string[];
+  unansweredImportantQuestions: string[];
+  urgentWarningSigns: string[];
+  urgency: 'low' | 'medium' | 'high' | 'emergency';
+  redFlags: string[];
+  briefing: string;
+  recommendedAction: string;
+}
+
+export interface StartTriagePayload {
+  chiefComplaint: string;
+  mandatoryAnswers: TriageMandatoryAnswers;
+}
+
+export interface AnswerTriagePayload {
+  questionId: string;
+  answer: string;
 }
 
 export interface LocationPingPayload {

@@ -220,7 +220,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
       <button
         onClick={() => setOpen((value) => !value)}
         className={`
-          fixed right-0 z-40 cursor-pointer rounded-l-[20px] border border-r-0 px-3 py-4 shadow-[0_18px_42px_-24px_rgba(15,23,42,0.45)]
+          fixed right-0 z-40 cursor-pointer rounded-l-xl border border-r-0 px-3 py-4 shadow-sm
           transition-all duration-300
           ${totalAlerts > 0
             ? 'border-rose-700 bg-rose-700 text-white hover:bg-rose-800'
@@ -235,7 +235,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
         }}
         title={open ? 'Close alerts panel' : 'Open alerts panel'}
       >
-        <span className="text-[11px] font-bold uppercase tracking-[0.18em]">
+        <span className="text-[11px] font-bold uppercase tracking-wide">
           {open ? 'Close' : 'Alerts'}
         </span>
         <span className={`mt-2 rounded-full px-2 py-1 text-[11px] font-bold ${open ? 'bg-white/18' : totalAlerts > 0 ? 'bg-white/18' : 'bg-slate-100 text-slate-700'}`}>
@@ -257,7 +257,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
           transition: expanded ? 'width 0.3s ease-out' : undefined,
         }}
       >
-        <div className="relative flex h-full flex-col overflow-hidden border-l border-white/80 bg-[linear-gradient(180deg,_rgba(248,250,252,0.98)_0%,_rgba(255,255,255,0.96)_40%,_rgba(241,245,249,0.98)_100%)] shadow-[-18px_0_60px_-38px_rgba(15,23,42,0.45)]">
+        <div className="relative flex h-full flex-col overflow-hidden border-l border-slate-200 bg-[linear-gradient(180deg,_rgba(248,250,252,0.98)_0%,_rgba(255,255,255,0.96)_40%,_rgba(241,245,249,0.98)_100%)] shadow-[-18px_0_60px_-38px_rgba(15,23,42,0.45)]">
           {!expanded && (
             <div
               onMouseDown={onDragStart}
@@ -271,7 +271,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
             </div>
           )}
 
-          <div className="relative border-b border-slate-200/80 bg-white/78 px-5 pb-4 pt-5 backdrop-blur-xl">
+          <div className="relative border-b border-slate-200 bg-white px-5 pb-4 pt-5 backdrop-blur-xl">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top_right,_rgba(219,234,254,0.74)_0%,_transparent_64%)]" />
 
             <div className="relative flex items-start justify-between gap-4">
@@ -279,7 +279,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                 <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                   Waiting room intelligence
                 </div>
-                <h2 className="mt-2 font-hospital-display text-[1.45rem] font-semibold tracking-[-0.04em] text-slate-950">
+                <h2 className="mt-2 font-hospital-display text-xl font-semibold tracking-tight text-slate-950">
                   Alerts and flow
                 </h2>
                 <p className="mt-1 max-w-xl text-sm leading-6 text-slate-500">
@@ -290,7 +290,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setExpanded((value) => !value)}
-                  className="flex h-9 w-9 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/90 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600 cursor-pointer"
+                  className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600 cursor-pointer"
                   title={expanded ? 'Collapse to side panel' : 'Expand to full view'}
                 >
                   {expanded ? (
@@ -321,7 +321,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                     setOpen(false);
                     setExpanded(false);
                   }}
-                  className="flex h-9 w-9 items-center justify-center rounded-[14px] border border-slate-200/80 bg-white/90 text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600 cursor-pointer"
+                  className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 transition-colors hover:border-slate-300 hover:text-slate-600 cursor-pointer"
                   title="Close panel"
                 >
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -343,7 +343,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
             </div>
 
             <div className="relative mt-4 flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center gap-2 rounded-[18px] border border-slate-200/80 bg-slate-50/90 p-1 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.34)]">
+              <div className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/90 p-1 shadow-sm">
                 {(['alerts', 'summary'] as const).map((tab) => {
                   const isActive = activeTab === tab;
                   return (
@@ -351,9 +351,9 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                       key={tab}
                       onClick={() => setActiveTab(tab)}
                       className={`
-                        rounded-[14px] px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer
+                        rounded-md px-4 py-2.5 text-sm font-semibold transition-all cursor-pointer
                         ${isActive
-                          ? 'bg-slate-900 text-white shadow-[0_16px_34px_-24px_rgba(15,23,42,0.82)]'
+                          ? 'bg-slate-900 text-white shadow-sm'
                           : 'text-slate-600 hover:bg-white hover:text-slate-900'
                         }
                       `}
@@ -376,11 +376,11 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
             {activeTab === 'alerts' ? (
               items.length === 0 ? (
                 <div className="flex h-full items-center justify-center">
-                  <div className="max-w-sm rounded-[28px] border border-white/80 bg-white/92 px-6 py-8 text-center shadow-[0_24px_60px_-42px_rgba(15,23,42,0.42)]">
+                  <div className="max-w-sm rounded-xl border border-slate-200 bg-white px-6 py-8 text-center shadow-sm">
                     <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-500">
                       All clear
                     </div>
-                    <div className="mt-2 font-hospital-display text-2xl font-semibold tracking-[-0.04em] text-slate-900">
+                    <div className="mt-2 font-hospital-display text-2xl font-semibold tracking-tight text-slate-900">
                       No active alerts
                     </div>
                     <p className="mt-2 text-sm leading-6 text-slate-500">
@@ -407,8 +407,8 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                         role="button"
                         tabIndex={0}
                         className={`
-                          group w-full cursor-pointer rounded-[24px] border p-4 text-left shadow-[0_22px_54px_-40px_rgba(15,23,42,0.4)]
-                          transition-all hover:-translate-y-0.5 hover:shadow-[0_26px_60px_-36px_rgba(15,23,42,0.45)]
+                          group w-full cursor-pointer rounded-xl border p-4 text-left shadow-sm
+                          transition-all hover:-translate-y-0.5 hover:shadow-sm
                           focus:outline-none focus:ring-2 focus:ring-priage-200
                           ${severityTheme.card} ${severityTheme.border}
                         `}
@@ -416,7 +416,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                         <div className="flex items-start gap-4">
                           <div className="relative shrink-0">
                             <div
-                              className="flex h-12 w-12 items-center justify-center rounded-[18px] text-sm font-bold text-white shadow-[0_16px_38px_-22px_rgba(15,23,42,0.5)]"
+                              className="flex h-12 w-12 items-center justify-center rounded-lg text-sm font-bold text-white shadow-sm"
                               style={{ backgroundImage: avatarTheme.gradient }}
                             >
                               {getDashboardInitials(name)}
@@ -428,12 +428,12 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
 
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <div className="truncate font-hospital-display text-lg font-semibold tracking-[-0.03em] text-slate-950">
+                              <div className="truncate font-hospital-display text-lg font-semibold tracking-tight text-slate-950">
                                 {name}
                               </div>
                               <StatusPill
                                 status={encounter.status}
-                                className={`rounded-md px-2 py-1 text-[10px] font-bold tracking-[0.16em] ${DASHBOARD_STATUS_THEME[encounter.status].cardPill}`}
+                                className={`rounded-md px-2 py-1 text-[10px] font-bold tracking-wide ${DASHBOARD_STATUS_THEME[encounter.status].cardPill}`}
                               />
                               {encounter.currentCtasLevel && <CTASBadge level={encounter.currentCtasLevel} />}
                               {newMessageCount > 0 && (
@@ -443,7 +443,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                               )}
                             </div>
 
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                               <span className={`rounded-full px-2.5 py-1 ${severityTheme.pill}`}>
                                 {severity === 'critical' ? 'Critical wait' : severity === 'warn' ? 'Warning wait' : 'On time'}
                               </span>
@@ -467,7 +467,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                                   event.stopPropagation();
                                   dismiss(encounter.id);
                                 }}
-                                className="rounded-[12px] border border-white/80 bg-white/90 px-3 py-2 text-xs font-semibold text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 cursor-pointer"
+                                className="rounded-[12px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 cursor-pointer"
                                 title="Dismiss alert"
                               >
                                 Dismiss
@@ -503,7 +503,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                           label={
                             <StatusPill
                               status={entry.status}
-                              className={`rounded-md px-2 py-1 text-[10px] font-bold tracking-[0.16em] ${DASHBOARD_STATUS_THEME[entry.status].cardPill}`}
+                              className={`rounded-md px-2 py-1 text-[10px] font-bold tracking-wide ${DASHBOARD_STATUS_THEME[entry.status].cardPill}`}
                             />
                           }
                           value={String(entry.count)}
@@ -525,7 +525,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                           <button
                             key={encounter.id}
                             onClick={() => onSelectPatient?.(encounter.id)}
-                            className="flex w-full items-center justify-between gap-3 rounded-[18px] border border-slate-200/80 bg-slate-50/85 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white cursor-pointer"
+                            className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/85 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white cursor-pointer"
                           >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-slate-800">
@@ -549,7 +549,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                           <button
                             key={item.encounter.id}
                             onClick={() => onSelectPatient?.(item.encounter.id)}
-                            className="flex w-full items-center justify-between gap-3 rounded-[18px] border border-slate-200/80 bg-slate-50/85 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white cursor-pointer"
+                            className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/85 px-3 py-3 text-left transition-colors hover:border-slate-300 hover:bg-white cursor-pointer"
                           >
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-slate-800">{item.name}</div>
@@ -564,7 +564,7 @@ export function AlertDashboard({ encounters, chatMessages, onSelectPatient }: Al
                         ))}
                       </div>
                     ) : (
-                      <div className="rounded-[18px] border border-slate-200/80 bg-slate-50/85 px-4 py-4 text-sm text-slate-500">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50/85 px-4 py-4 text-sm text-slate-500">
                         No new patient messages right now.
                       </div>
                     )}
@@ -600,13 +600,13 @@ function PanelStatCard({
     emerald: 'border-emerald-200 bg-emerald-50/90 text-emerald-900',
     amber: 'border-amber-200 bg-amber-50/90 text-amber-900',
     rose: 'border-rose-200 bg-rose-50/90 text-rose-900',
-    slate: 'border-slate-200 bg-white/92 text-slate-900',
+    slate: 'border-slate-200 bg-white text-slate-900',
   };
 
   return (
-    <div className={`rounded-[22px] border px-4 py-3 shadow-[0_20px_44px_-36px_rgba(15,23,42,0.42)] ${toneClasses[tone]}`}>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">{label}</div>
-      <div className="mt-1 font-hospital-display text-[1.4rem] font-semibold tracking-[-0.03em]">{value}</div>
+    <div className={`rounded-lg border px-4 py-3 shadow-sm ${toneClasses[tone]}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-wide opacity-70">{label}</div>
+      <div className="mt-1 font-hospital-display text-[1.4rem] font-semibold tracking-tight">{value}</div>
     </div>
   );
 }
@@ -621,9 +621,9 @@ function PanelSection({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[24px] border border-white/80 bg-white/92 p-5 shadow-[0_22px_50px_-40px_rgba(15,23,42,0.42)]">
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{eyebrow}</div>
-      <h3 className="mt-2 font-hospital-display text-xl font-semibold tracking-[-0.03em] text-slate-900">
+      <h3 className="mt-2 font-hospital-display text-xl font-semibold tracking-tight text-slate-900">
         {title}
       </h3>
       <div className="mt-4">{children}</div>
@@ -633,7 +633,7 @@ function PanelSection({
 
 function BreakdownRow({ label, value }: { label: ReactNode; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-[18px] border border-slate-200/80 bg-slate-50/85 px-3 py-3">
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/85 px-3 py-3">
       <div className="min-w-0">{label}</div>
       <div className="shrink-0 text-sm font-semibold text-slate-800">{value}</div>
     </div>

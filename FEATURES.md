@@ -351,33 +351,27 @@ const messages = await listMessages(encounterId);       // chat history
 ```
 
 
-New Ai Feature Page
+AI-assisted intake
 
-Add Chatbot Page Between Quick Check-In and Hospital Selection
-After the "Fast emergency intake" form in the patient app, insert a new ChatGPT chatbot page. The current "Choose hospital" button becomes "Next" and navigates to the chatbot. The chatbot page includes a "Choose hospital" button below the chat area that continues to the existing hospital routing page.
+The patient intake flow collects a chief complaint, four mandatory baseline
+answers, and then uses the backend-owned `/api/triage/*` harness to ask one
+relevant follow-up question at a time. The server owns conversation state,
+validates structured model output, enforces stopping and repetition rules, and
+creates the unreviewed staff-facing intake summary.
 
-Proposed Changes
-Patient App — Intake Form
-[MODIFY] 
-Login.tsx
-Change button text from 'Choose hospital' to 'Next'
-Change navigation target from /guest/routing to /guest/chatbot
-Update the footer hint text to mention the chatbot step
-Patient App — New Chatbot Page
-[NEW] 
-GuestChatbotPage.tsx
-A new page with:
+OpenAI and Anthropic are backend-only adapters selected with environment
+configuration. API keys, prompts, provider errors, and internal configuration
+are never sent to the Patient App. When no provider is configured or a provider
+fails, the harness uses safe fallback behavior and does not expose model errors
+to the patient.
 
-Header — "AI Health Assistant" badge + title + subtitle
-Chat area — scrollable message list with user/assistant bubbles
-Input bar — text input + send button, calls OpenAI Chat Completions API (gpt-4o-mini) directly from the browser using the provided API key
-"Choose hospital" primary button below the chat — navigates to /guest/routing
-← Back button — goes back to /guest/start
-Styled with the same patientTheme + heroBackdrop tokens as the rest of the guest flow
+Possible emergency warning signs stop normal questioning and mark the intake
+for immediate staff review. This collection workflow does not diagnose,
+prescribe, confirm a triage level, or replace assessment by qualified staff.
 
-CAUTION
-
-The OpenAI API key will be embedded client-side. This is fine for a demo/dev build but should be moved to a backend proxy before any production deployment.
+The flow uses the existing patient theme and routes from reason for visit, to
+baseline questions, to dynamic questions, to patient review, and finally to
+hospital selection. Active server state can be restored after refresh.
 
 Patient App — Routing
 [MODIFY] 

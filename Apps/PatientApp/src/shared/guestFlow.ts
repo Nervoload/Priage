@@ -9,7 +9,11 @@ export function resolveGuestPath(session: GuestIntakeSession | null): string {
     return `/guest/enroute/${session.encounterId}`;
   }
 
-  return '/guest/chatbot';
+  if (session.triageStatus === 'submitted') {
+    return '/guest/routing';
+  }
+
+  return '/guest/triage';
 }
 
 export function getGuestResumeLabel(session: GuestIntakeSession | null): string {

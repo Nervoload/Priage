@@ -9,6 +9,7 @@ import { patientName } from '../../shared/types/domain';
 import { createTriageAssessment, listTriageAssessments } from '../../shared/api/triage';
 import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
+import { PriageSummaryPanel } from '../../shared/ui/PriageSummaryPanel';
 import { useToast } from '../../shared/ui/ToastContext';
 
 interface TriageWorkspaceProps {
@@ -81,7 +82,6 @@ const INFO_PANEL_DEFAULT_WIDTH = 420;
 const INFO_PANEL_MIN_WIDTH = 320;
 const FORM_PANEL_MIN_WIDTH = 460;
 const SIDEBAR_HEADER_CLASS = 'text-sm font-semibold uppercase tracking-wide text-gray-900';
-const SIDEBAR_SUBHEADER_CLASS = 'text-xs font-bold uppercase tracking-[0.2em] text-gray-800';
 const TRIAGE_HEADER_CLASS = 'text-sm font-semibold uppercase tracking-wide text-gray-900';
 
 const CTAS_OPTION_STYLES: Record<1 | 2 | 3 | 4 | 5, string> = {
@@ -695,47 +695,7 @@ export function TriageWorkspace({ encounter, onClose, onComplete }: TriageWorksp
           {encounter.priageSummary && (
             <div>
               <h3 className={`${SIDEBAR_HEADER_CLASS} mb-3`}>Priage Intake Handoff</h3>
-              <div className="space-y-3">
-                <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={SIDEBAR_SUBHEADER_CLASS}>AI Briefing</span>
-                    {encounter.priageSummary.recommendedCtasLevel != null && (
-                      <CTASBadge level={encounter.priageSummary.recommendedCtasLevel as 1 | 2 | 3 | 4 | 5} />
-                    )}
-                  </div>
-                  <p className="mt-2 m-0 text-base leading-7 text-sky-950">{encounter.priageSummary.briefing}</p>
-                </div>
-
-                <div className="rounded-lg bg-gray-50 px-4 py-3">
-                  <div className={SIDEBAR_SUBHEADER_CLASS}>Case Summary</div>
-                  <p className="mt-2 m-0 text-base leading-7 text-gray-800">{encounter.priageSummary.caseSummary}</p>
-                </div>
-
-                {encounter.priageSummary.progressionRisks.length > 0 && (
-                  <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3">
-                    <div className={SIDEBAR_SUBHEADER_CLASS}>Progression Risks</div>
-                    <ul className="mt-2 space-y-2 pl-5 text-base leading-7 text-rose-900">
-                      {encounter.priageSummary.progressionRisks.map((risk) => (
-                        <li key={risk}>{risk}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {encounter.priageSummary.questionAnswers.length > 0 && (
-                  <div className="space-y-3">
-                    <div className={SIDEBAR_SUBHEADER_CLASS}>Question Log</div>
-                    {encounter.priageSummary.questionAnswers.map((item, index) => (
-                      <div key={`${item.answeredAt}-${index}`} className="rounded-lg border border-gray-200 bg-white px-4 py-3">
-                        <div className="text-[13px] font-semibold uppercase tracking-wide text-gray-700">Question</div>
-                        <div className="mt-1 text-base leading-7 text-gray-900">{item.question}</div>
-                        <div className="mt-3 text-[13px] font-semibold uppercase tracking-wide text-gray-700">Answer</div>
-                        <div className="mt-1 text-base leading-7 text-gray-900">{item.answer}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <PriageSummaryPanel summary={encounter.priageSummary} compact />
             </div>
           )}
 

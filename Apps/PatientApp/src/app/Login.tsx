@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { createIntent } from '../shared/api/intake';
 import { useGuestSession } from '../shared/hooks/useGuestSession';
+import { clearTriageDraft } from '../shared/session';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
@@ -17,7 +18,6 @@ export function Login() {
   const [age, setAge] = useState('');
   const [gender, setGender] = useState('');
   const [chiefComplaint, setChiefComplaint] = useState('');
-  const [details, setDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
@@ -52,9 +52,9 @@ export function Login() {
         age: Number.parseInt(age, 10),
         gender: gender.trim(),
         chiefComplaint: chiefComplaint.trim(),
-        details: details.trim() || undefined,
       });
 
+      clearTriageDraft('guest');
       setSession({
         patientId: result.patientId,
         encounterId: result.encounterId,
@@ -64,9 +64,8 @@ export function Login() {
         age: Number.parseInt(age, 10),
         gender: gender.trim(),
         chiefComplaint: chiefComplaint.trim(),
-        details: details.trim() || undefined,
       });
-      navigate('/guest/chatbot');
+      navigate('/guest/triage');
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not start guest check-in.');
     } finally {
@@ -163,23 +162,13 @@ export function Login() {
             />
           </label>
 
-          <label style={styles.fieldLabel}>
-            Briefly explain the situation
-            <textarea
-              style={styles.textArea}
-              value={details}
-              onChange={(event) => setDetails(event.target.value)}
-              placeholder="Share timing, triggers, what changed, or anything else staff should know."
-            />
-          </label>
-
           <button style={styles.primaryButton} type="submit" disabled={submitting}>
             {submitting ? 'Starting check-in…' : 'Next'}
           </button>
         </form>
 
         <footer style={styles.footer}>
-          <strong>What happens next:</strong> complete a short safety check, answer a few dynamic intake questions, then choose your hospital and notify the care team.
+            <strong>What happens next:</strong> answer four required baseline questions, complete a short guided triage, review your summary, then choose your hospital.
         </footer>
       </section>
     </main>

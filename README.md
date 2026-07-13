@@ -183,6 +183,7 @@ The NestJS backend currently wires together these major modules:
 - `auth`, `users`
 - `patient-auth`
 - `intake`, `intake-sessions`
+- `ai-triage` (patient-reported intake questioning, safety escalation, and summaries)
 - `encounters`
 - `triage`
 - `messaging`
@@ -194,6 +195,26 @@ The NestJS backend currently wires together these major modules:
 - `priage`
 - `platform`
 - `health`
+
+### AI-assisted intake boundary
+
+The Patient App collects a reason for visit and four required baseline answers,
+then calls the server-owned `/api/triage/*` conversation API. The backend runs
+deterministic warning-sign checks, asks at most one provider-generated question
+at a time, validates every structured response, prevents repeated questions,
+and caps generated follow-ups at 12. A possible emergency warning sign stops
+normal questioning and marks the intake for immediate staff review.
+
+Provider-specific code is isolated behind OpenAI and Anthropic adapters selected
+with backend environment variables. The frontend never receives provider keys,
+prompts, configuration, raw errors, or internal reasoning. Final summaries
+separate reported symptoms, explicit denials, unknown information, history, and
+possible warning signs; they do not contain a diagnosis or a medically
+confirmed triage level.
+
+Conversation snapshots and answers use the existing `IntakeSession` and
+`ContextItem` records. The staff-facing handoff is an unreviewed `AI_DERIVED`
+`SummaryProjection` and remains subject to qualified clinical review.
 
 ### Tech Stack
 

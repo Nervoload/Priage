@@ -1,7 +1,5 @@
 import { API_BASE_URL, client } from './client';
 import type {
-  AdvanceInterviewPayload,
-  InterviewState,
   ConfirmIntentPayload,
   CreateIntentPayload,
   CreateIntentResponse,
@@ -38,17 +36,6 @@ export async function updateIntakeDetails(
 
 export async function confirmIntent(payload: ConfirmIntentPayload): Promise<Encounter> {
   return sendDurablePatientCommand<Encounter>('/intake/confirm', 'POST', payload);
-}
-
-export async function startInterview(): Promise<InterviewState> {
-  return client<InterviewState>('/intake/interview/start', {
-    method: 'POST',
-    body: JSON.stringify({}),
-  });
-}
-
-export async function advanceInterview(payload: AdvanceInterviewPayload): Promise<InterviewState> {
-  return sendDurablePatientCommand<InterviewState>('/intake/interview/advance', 'POST', payload);
 }
 
 export async function sendLocationPing(payload: LocationPingPayload): Promise<{ ok: boolean }> {

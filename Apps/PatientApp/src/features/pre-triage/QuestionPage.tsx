@@ -21,6 +21,7 @@ interface QuestionPageProps {
   onChipSelect?: (value: string) => void;
   summary?: ReactNode;
   onClear?: () => void;
+  busy?: boolean;
 }
 
 export function QuestionPage({
@@ -42,8 +43,9 @@ export function QuestionPage({
   onChipSelect,
   summary,
   onClear,
+  busy = false,
 }: QuestionPageProps) {
-  const canAdvance = !required || value.trim().length > 0;
+  const canAdvance = (!required || value.trim().length > 0) && !busy;
 
   function handleKeyDown(event: React.KeyboardEvent) {
     if (event.key === 'Enter' && !multiline && canAdvance) {
@@ -79,6 +81,8 @@ export function QuestionPage({
               onChange={(event) => onChange(event.target.value)}
               placeholder={placeholder}
               autoFocus
+              aria-label={question}
+              disabled={busy}
             />
           ) : (
             <input
@@ -88,6 +92,8 @@ export function QuestionPage({
               placeholder={placeholder}
               onKeyDown={handleKeyDown}
               autoFocus
+              aria-label={question}
+              disabled={busy}
             />
           )
         )}
@@ -124,7 +130,7 @@ export function QuestionPage({
               cursor: canAdvance ? 'pointer' : 'not-allowed',
             }}
             onClick={onNext}
-            disabled={!canAdvance}
+            disabled={!canAdvance || busy}
             type="button"
           >
             {nextLabel}

@@ -1,13 +1,18 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 import { Sanitize } from '../../../common/decorators/sanitize.decorator';
 
-export class AdvanceInterviewDto {
-  @IsOptional()
+export class AnswerTriageDto {
   @IsString()
   @MaxLength(120)
   @Sanitize()
-  questionPublicId?: string;
+  questionId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  @Sanitize()
+  answer?: string;
 
   @IsOptional()
   @IsString()
@@ -29,9 +34,4 @@ export class AdvanceInterviewDto {
   @MaxLength(120)
   @Sanitize()
   valueChoice?: string;
-
-  @IsOptional()
-  @IsString()
-  @IsIn(['acknowledge_emergency'])
-  action?: 'acknowledge_emergency';
 }

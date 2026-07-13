@@ -99,9 +99,27 @@ LOG_LEVEL="log"
 # Jobs
 TRIAGE_REASSESSMENT_MINUTES=30
 
+# AI-assisted intake (leave provider blank to use safe fallback behavior)
+AI_PROVIDER=
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+AI_MODEL=
+AI_TIMEOUT_MS=12000
+
 # App
 APP_VERSION="0.1.0"
 ```
+
+Supported `AI_PROVIDER` values are `openai` and `anthropic`. Keep all provider
+keys in `backend/.env`; never add them to either Vite app. The patient frontend
+only calls the NestJS `/api/triage/*` endpoints. A blank provider or missing key
+does not enable live model calls.
+
+The intake harness collects patient-reported information for qualified staff
+review. It does not diagnose, prescribe, confirm a triage level, or replace a
+professional assessment. Before production use, review privacy, security,
+retention, consent, access-control, and applicable healthcare compliance
+requirements for the intended deployment.
 
 ### 3c. Run database migrations
 
@@ -216,8 +234,25 @@ The Patient App supports two demo entry paths:
 
 | Entry | Purpose | Backend |
 |------|---------|---------|
-| **Quick Check-In** | Guest intake / fast hospital check-in | `/intake/*` |
+| **Quick Check-In** | Guest intake, baseline questions, and AI-assisted follow-up | `/intake/*`, `/api/triage/*` |
 | **Sign In / Create Account** | Full patient dashboard/messages/profile flow | `/patient-auth/*`, `/patient/*` |
+
+### Patient intake API flow
+
+1. `/intake/intent` creates the patient session and stores the original chief
+   complaint.
+2. `/api/triage/start` validates the four mandatory baseline answers and starts
+   or resumes the server-owned conversation.
+3. `/api/triage/:sessionId/answer` records only the active question's answer and
+   returns one next question, completion, or urgent-review response.
+4. `/api/triage/:sessionId` restores the current conversation after refresh.
+5. `/api/triage/:sessionId/complete` records the patient's final review.
+6. `/intake/confirm` confirms hospital selection after triage submission.
+
+The backend stores versioned state and summaries in the existing intake
+`ContextItem`/`SummaryProjection` records. Only clinically relevant,
+patient-reported context is sent to the configured provider; direct identifiers
+are excluded.
 
 ---
 
@@ -255,6 +290,13 @@ npm run test:smoke
 
 # Verbose mode (prints response bodies)
 npm run test:smoke:verbose
+```
+
+The isolated AI-triage safety/provider tests do not require a running database
+or live provider key:
+
+```bash
+npm run test:ai-triage
 ```
 
 Or run the logging test suite:

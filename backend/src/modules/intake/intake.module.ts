@@ -5,18 +5,17 @@
 
 import { Module } from '@nestjs/common';
 
+import { AiTriageModule } from '../ai-triage/ai-triage.module';
 import { AssetsModule } from '../assets/assets.module';
 import { EventsModule } from '../events/events.module';
 import { IntakeSessionsModule } from '../intake-sessions/intake-sessions.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { IntakeController } from './intake.controller';
-import { OpenAiCompatibleTriageInterviewProvider } from './interview/triage-interview.provider';
-import { TriageInterviewService } from './interview/triage-interview.service';
 import { IntakeService } from './intake.service';
 
 @Module({
   controllers: [IntakeController],
-  providers: [IntakeService, TriageInterviewService, OpenAiCompatibleTriageInterviewProvider],
-  imports: [AssetsModule, EventsModule, PrismaModule, IntakeSessionsModule],
+  providers: [IntakeService],
+  imports: [AiTriageModule, AssetsModule, EventsModule, PrismaModule, IntakeSessionsModule],
 })
 export class IntakeModule {}

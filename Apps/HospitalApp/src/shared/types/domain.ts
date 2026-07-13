@@ -192,6 +192,28 @@ export interface PriageSummaryQuestionAnswer {
 }
 
 export interface PriageSummary {
+  structuredData: Record<string, unknown>;
+  chiefComplaint: string;
+  originalChiefComplaint: string;
+  onset: string;
+  severity: string;
+  progression: string;
+  relevantSymptoms: string[];
+  relevantNegatives: string[];
+  medicalHistory: string[];
+  medications: string[];
+  allergies: string[];
+  additionalContext: string[];
+  unansweredImportantQuestions: string[];
+  urgentWarningSigns: string[];
+  urgency: 'low' | 'medium' | 'high' | 'emergency';
+  urgentReview: boolean;
+  mandatoryAnswers: {
+    onset: string;
+    severity: number | string;
+    progression: string;
+    relevantHistory: string;
+  } | null;
   briefing: string;
   recommendedCtasLevel: number | null;
   caseSummary: string;

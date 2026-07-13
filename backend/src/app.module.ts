@@ -14,6 +14,7 @@ import { GLOBAL_THROTTLE, shouldSkipThrottleForLoopback } from './common/http/th
 import { OriginCsrfGuard } from './common/http/origin-csrf.guard';
 import { EdgeRateLimitGuard } from './common/http/edge-rate-limit.guard';
 import { AlertsModule } from './modules/alerts/alerts.module';
+import { AiTriageModule } from './modules/ai-triage/ai-triage.module';
 import { DemoAccessModule } from './modules/demo-access/demo-access.module';
 import { DemoAccessGuard } from './modules/demo-access/demo-access.guard';
 import { AssetsModule } from './modules/assets/assets.module';
@@ -65,6 +66,7 @@ import { UsersModule } from './modules/users/users.module';
     MessagingModule,
     AlertsModule,
     TriageModule,
+    AiTriageModule,
     AssetsModule,
     PatientsModule,
     IntakeModule,

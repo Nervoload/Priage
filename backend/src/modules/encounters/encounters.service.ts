@@ -1408,12 +1408,57 @@ export class EncountersService {
           .filter((answer): answer is PriageSummaryQuestionAnswerDto => answer !== null)
       : [];
     const progressionRisks = this.parseStringArray(content.progressionRisks);
+    const mandatory = content.mandatoryAnswers
+      && typeof content.mandatoryAnswers === 'object'
+      && !Array.isArray(content.mandatoryAnswers)
+      ? content.mandatoryAnswers as Record<string, unknown>
+      : null;
+    const mandatoryAnswers = mandatory
+      && typeof mandatory.onset === 'string'
+      && (typeof mandatory.severity === 'number' || typeof mandatory.severity === 'string')
+      && typeof mandatory.progression === 'string'
+      && typeof mandatory.relevantHistory === 'string'
+      ? {
+          onset: mandatory.onset,
+          severity: mandatory.severity,
+          progression: mandatory.progression,
+          relevantHistory: mandatory.relevantHistory,
+        }
+      : null;
+    const urgency = content.urgency === 'medium'
+      || content.urgency === 'high'
+      || content.urgency === 'emergency'
+      ? content.urgency
+      : 'low';
 
     if (!briefing && !caseSummary && !recommendedAction) {
       return null;
     }
 
     return {
+      structuredData: content,
+      chiefComplaint: typeof content.chiefComplaint === 'string' ? content.chiefComplaint : '',
+      originalChiefComplaint: typeof content.originalChiefComplaint === 'string'
+        ? content.originalChiefComplaint
+        : (typeof content.chiefComplaint === 'string' ? content.chiefComplaint : ''),
+      onset: typeof content.onset === 'string' ? content.onset : (mandatoryAnswers?.onset ?? ''),
+      severity: typeof content.severity === 'string'
+        ? content.severity
+        : (mandatoryAnswers ? String(mandatoryAnswers.severity) : ''),
+      progression: typeof content.progression === 'string'
+        ? content.progression
+        : (mandatoryAnswers?.progression ?? ''),
+      relevantSymptoms: this.parseStringArray(content.relevantSymptoms),
+      relevantNegatives: this.parseStringArray(content.relevantNegatives),
+      medicalHistory: this.parseStringArray(content.medicalHistory),
+      medications: this.parseStringArray(content.medications),
+      allergies: this.parseStringArray(content.allergies),
+      additionalContext: this.parseStringArray(content.additionalContext),
+      unansweredImportantQuestions: this.parseStringArray(content.unansweredImportantQuestions),
+      urgentWarningSigns: this.parseStringArray(content.urgentWarningSigns),
+      urgency,
+      urgentReview: content.urgentReview === true,
+      mandatoryAnswers,
       briefing,
       recommendedCtasLevel: this.parseRecommendedCtasLevel(content.recommendedCtasLevel),
       caseSummary,

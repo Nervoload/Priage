@@ -239,61 +239,57 @@ function buildPatientRequestOptions(path, method, patientCookie, idempotencyKey)
 }
 
 function buildInterviewAnswer(question) {
-  const payload = { questionPublicId: question.publicId };
-
-  switch (question.inputType) {
-    case 'boolean':
-      payload.valueBoolean = false;
-      return payload;
-    case 'number':
-      payload.valueNumber = 3;
-      return payload;
-    case 'single_select':
-      payload.valueChoice = question.choices?.[0] ?? 'No';
-      return payload;
-    case 'textarea':
-    case 'text':
-    default:
-      payload.valueText = `Logging test answer for ${question.publicId}`;
-      return payload;
-  }
+  return { questionId: question.id, answer: `Logging test answer for ${question.id}` };
 }
 
 async function completeInterviewForPatient(patientCookie) {
-  let options = buildPatientRequestOptions('/intake/interview/start', 'POST', patientCookie);
-  let response = await makeRequest(options);
+  let options = buildPatientRequestOptions('/api/triage/start', 'POST', patientCookie);
+  let response = await makeRequest(options, {
+    chiefComplaint: 'Minor ankle discomfort',
+    mandatoryAnswers: {
+      onset: 'Earlier today',
+      severity: 3,
+      progression: 'same',
+      relevantHistory: 'Unknown',
+    },
+  });
   let interview = response.data;
 
   if (response.statusCode !== 200 && response.statusCode !== 201) {
     throw new Error(`Interview start failed with status ${response.statusCode}`);
   }
 
-  for (let index = 0; index < 12; index += 1) {
+  for (let index = 0; index < 13; index += 1) {
     if (interview?.status === 'complete') {
-      if (!interview.summaryPreview) {
-        throw new Error('Interview completed without a summary preview');
+      if (!interview.summary?.briefing) {
+        throw new Error('Triage completed without a summary briefing');
       }
-      return interview;
+      options = buildPatientRequestOptions(
+        `/api/triage/${interview.sessionId}/complete`,
+        'POST',
+        patientCookie,
+        `logging-triage-complete-${randomUUID()}`,
+      );
+      response = await makeRequest(options, {});
+      return response.data;
+    }
+
+    if (interview?.status === 'urgent_review') {
+      throw new Error('Unexpected urgent-review response for minor logging complaint');
     }
 
     options = buildPatientRequestOptions(
-      '/intake/interview/advance',
+      `/api/triage/${interview.sessionId}/answer`,
       'POST',
       patientCookie,
-      `logging-interview-${randomUUID()}`,
+      `logging-triage-${randomUUID()}`,
     );
 
-    if (interview?.status === 'emergency_ack_required') {
-      response = await makeRequest(options, { action: 'acknowledge_emergency' });
-      interview = response.data;
-      continue;
+    if (!interview?.question) {
+      throw new Error(`Triage is ${interview?.status ?? 'unknown'} but has no question`);
     }
 
-    if (!interview?.currentQuestion) {
-      throw new Error(`Interview is ${interview?.status ?? 'unknown'} but has no currentQuestion`);
-    }
-
-    response = await makeRequest(options, buildInterviewAnswer(interview.currentQuestion));
+    response = await makeRequest(options, buildInterviewAnswer(interview.question));
     interview = response.data;
 
     if (response.statusCode !== 200 && response.statusCode !== 201) {
@@ -301,7 +297,7 @@ async function completeInterviewForPatient(patientCookie) {
     }
   }
 
-  throw new Error(`Interview did not complete after repeated answers; last status=${interview?.status ?? 'unknown'}`);
+  throw new Error(`Triage did not complete after repeated answers; last status=${interview?.status ?? 'unknown'}`);
 }
 
 // ============================================================================

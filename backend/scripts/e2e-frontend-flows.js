@@ -156,62 +156,57 @@ function section(name) {
 }
 
 function buildInterviewAnswer(question) {
-  const payload = { questionPublicId: question.publicId };
-
-  switch (question.inputType) {
-    case 'boolean':
-      payload.valueBoolean = false;
-      return payload;
-    case 'number':
-      payload.valueNumber = 3;
-      return payload;
-    case 'single_select':
-      payload.valueChoice = question.choices?.[0] ?? 'No';
-      return payload;
-    case 'textarea':
-    case 'text':
-    default:
-      payload.valueText = `E2E answer for ${question.publicId}`;
-      return payload;
-  }
+  return { questionId: question.id, answer: `E2E answer for ${question.id}` };
 }
 
 async function completeInterviewForPatient(patientCookie) {
-  let interviewResponse = await api('POST', '/intake/interview/start', null, false, patientHeaders(patientCookie));
+  let interviewResponse = await api('POST', '/api/triage/start', {
+    chiefComplaint: 'Minor ankle discomfort',
+    mandatoryAnswers: {
+      onset: 'Earlier today',
+      severity: 3,
+      progression: 'same',
+      relevantHistory: 'Unknown',
+    },
+  }, false, patientHeaders(patientCookie));
   let interview = interviewResponse.json;
 
   assert('Interview start returns 201/200', interviewResponse.status === 201 || interviewResponse.status === 200);
 
-  for (let index = 0; index < 12; index += 1) {
+  for (let index = 0; index < 13; index += 1) {
     if (interview?.status === 'complete') {
-      assert('Interview reaches complete state', true);
-      assert('Interview includes summary preview', typeof interview?.summaryPreview === 'string' && interview.summaryPreview.length > 0);
-      return interview;
+      assert('Triage reaches review state', true);
+      assert('Triage includes summary briefing', typeof interview?.summary?.briefing === 'string' && interview.summary.briefing.length > 0);
+      const completed = await api(
+        'POST',
+        `/api/triage/${interview.sessionId}/complete`,
+        {},
+        false,
+        patientHeaders(patientCookie, `e2e-triage-complete-${randomUUID()}`),
+      );
+      assert('Triage submits after review', completed.json?.status === 'submitted');
+      return completed.json;
     }
 
-    if (interview?.status === 'emergency_ack_required') {
-      interviewResponse = await api('POST', '/intake/interview/advance', {
-        action: 'acknowledge_emergency',
-      }, false, patientHeaders(patientCookie, `e2e-interview-${randomUUID()}`));
-      interview = interviewResponse.json;
-      continue;
+    if (interview?.status === 'urgent_review') {
+      throw new Error('Unexpected urgent-review response for minor E2E complaint');
     }
 
-    if (!interview?.currentQuestion) {
-      throw new Error(`Interview is ${interview?.status ?? 'unknown'} but has no currentQuestion`);
+    if (!interview?.question) {
+      throw new Error(`Triage is ${interview?.status ?? 'unknown'} but has no question`);
     }
 
     interviewResponse = await api(
       'POST',
-      '/intake/interview/advance',
-      buildInterviewAnswer(interview.currentQuestion),
+      `/api/triage/${interview.sessionId}/answer`,
+      buildInterviewAnswer(interview.question),
       false,
       patientHeaders(patientCookie, `e2e-interview-${randomUUID()}`),
     );
     interview = interviewResponse.json;
   }
 
-  throw new Error(`Interview did not complete after repeated answers; last status=${interview?.status ?? 'unknown'}`);
+  throw new Error(`Triage did not complete after repeated answers; last status=${interview?.status ?? 'unknown'}`);
 }
 
 async function connectSocket() {

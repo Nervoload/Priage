@@ -5,6 +5,7 @@ import { GuestChatbotPage } from '../features/pre-triage/GuestChatbotPage';
 import { Routing } from '../features/pre-triage/Routing';
 import { updateIntakeDetails } from '../shared/api/intake';
 import { useAuth } from '../shared/hooks/useAuth';
+import { loadTriageDraft } from '../shared/session';
 import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
 import { useToast } from '../shared/ui/ToastContext';
 
@@ -15,8 +16,9 @@ export function PriagePage() {
   const { patient } = useAuth();
   const { showToast } = useToast();
 
-  const [step, setStep] = useState<IntakeStep>('capture');
-  const [chiefComplaint, setChiefComplaint] = useState('');
+  const savedDraft = loadTriageDraft('authenticated');
+  const [step, setStep] = useState<IntakeStep>(savedDraft ? 'interview' : 'capture');
+  const [chiefComplaint, setChiefComplaint] = useState(savedDraft?.chiefComplaint ?? '');
   const [details, setDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -53,8 +55,9 @@ export function PriagePage() {
     return (
       <GuestChatbotPage
         mode="authenticated"
+        chiefComplaint={chiefComplaint}
         onChooseHospital={() => setStep('routing')}
-        onBack={() => setStep('capture')}
+        onBack={() => navigate('/')}
       />
     );
   }
@@ -64,7 +67,7 @@ export function PriagePage() {
       <Routing
         mode="authenticated"
         onConfirmed={(encounterId) => navigate(`/encounters/${encounterId}/current`)}
-        onBack={() => setStep('interview')}
+        onBack={() => navigate('/')}
       />
     );
   }

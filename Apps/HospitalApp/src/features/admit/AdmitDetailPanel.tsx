@@ -3,6 +3,7 @@ import type { EncounterDetail, HospitalCustomIntakeQuestion } from '../../shared
 import { patientName } from '../../shared/types/domain';
 import { CTASBadge } from '../../shared/ui/Badge';
 import { StatusPill } from '../../shared/ui/StatusPill';
+import { PriageSummaryPanel } from '../../shared/ui/PriageSummaryPanel';
 import {
   DASHBOARD_STATUS_THEME,
   formatDashboardPatientSex,
@@ -160,7 +161,7 @@ export function AdmitDetailPanel({
       <div
         className={`
           relative flex w-full flex-col overflow-hidden rounded-[34px] border border-white/80
-          bg-[radial-gradient(circle_at_top,_rgba(255,247,237,0.95)_0%,_rgba(255,255,255,0.96)_34%,_rgba(248,250,252,1)_100%)]
+          bg-[radial-gradient(circle_at_top,_rgba(239,246,255,0.9)_0%,_rgba(255,255,255,0.97)_34%,_rgba(248,250,252,1)_100%)]
           shadow-[0_32px_90px_-48px_rgba(15,23,42,0.55)] animate-slide-up
           ${expanded ? 'h-[calc(100vh-24px)] max-w-none w-[calc(100vw-24px)]' : 'max-h-[88vh] max-w-6xl'}
         `}
@@ -432,6 +433,12 @@ function OverviewPage({
           </div>
         )}
       </SectionCard>
+
+      {encounter.priageSummary && (
+        <div className="xl:col-span-2">
+          <PriageSummaryPanel summary={encounter.priageSummary} />
+        </div>
+      )}
     </div>
   );
 }
@@ -637,95 +644,7 @@ function FormDetailsPage({
 }
 
 function SummaryPage({ encounter }: { encounter: EncounterDetail }) {
-  const summary = encounter.priageSummary;
-
-  if (!summary) {
-    return (
-      <div className="flex h-full min-h-[320px] items-center justify-center">
-        <div className="max-w-lg rounded-[28px] border border-slate-200/80 bg-white/92 px-6 py-8 text-center shadow-[0_24px_60px_-42px_rgba(15,23,42,0.38)]">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-[18px] bg-slate-100 text-slate-500">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M7 5.5A2.5 2.5 0 0 1 9.5 3h7A2.5 2.5 0 0 1 19 5.5v13A2.5 2.5 0 0 1 16.5 21h-7A2.5 2.5 0 0 1 7 18.5v-13Z"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-              <path d="M10 8h6M10 12h6M10 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M5 7v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </div>
-          <h3 className="mt-4 font-hospital-display text-2xl font-semibold tracking-[-0.03em] text-slate-900">
-            No Priage AI Summary Yet
-          </h3>
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            This encounter does not have an AI handoff summary yet. The profile and intake page still contains the patient and form information needed for admittance.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid gap-4 xl:grid-cols-[1.04fr,0.96fr]">
-      <SectionCard eyebrow="AI Briefing" title="Priage Intake Handoff" tone="sky">
-        <div className="rounded-[22px] border border-sky-200 bg-sky-50 px-4 py-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-700">
-              Generated {formatDateTime(summary.generatedAt)}
-            </span>
-            <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-800">
-              {summary.generationMode}
-            </span>
-            {summary.recommendedCtasLevel != null && (
-              <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-sky-800">
-                Provisional CTAS {summary.recommendedCtasLevel}
-              </span>
-            )}
-          </div>
-          <p className="mt-3 text-sm leading-6 text-sky-950">{summary.briefing}</p>
-        </div>
-
-        <div className="mt-4 rounded-[22px] border border-slate-200/80 bg-slate-50/88 px-4 py-4">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Case Summary</div>
-          <p className="mt-2 text-sm leading-6 text-slate-700">{summary.caseSummary}</p>
-        </div>
-
-        <div className="mt-4 rounded-[22px] border border-emerald-200 bg-emerald-50 px-4 py-4">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">Recommended Action</div>
-          <p className="mt-2 text-sm leading-6 text-emerald-900">{summary.recommendedAction}</p>
-        </div>
-      </SectionCard>
-
-      <div className="space-y-4">
-        {summary.redFlags.length > 0 && (
-          <SectionCard eyebrow="Risk" title="Red Flags" tone="rose">
-            <BulletList items={summary.redFlags} tone="rose" />
-          </SectionCard>
-        )}
-
-        {summary.progressionRisks.length > 0 && (
-          <SectionCard eyebrow="Monitoring" title="Progression Risks" tone="amber">
-            <BulletList items={summary.progressionRisks} tone="amber" />
-          </SectionCard>
-        )}
-
-        <SectionCard eyebrow="Summary" title="Summary Metadata">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <InfoField label="Generated" value={formatDateTime(summary.generatedAt)} />
-            <InfoField label="Generation Mode" value={summary.generationMode} />
-            <InfoField
-              label="Question Answers"
-              value={`${summary.questionAnswers.length} recorded`}
-            />
-            <InfoField
-              label="Progression Risks"
-              value={`${summary.progressionRisks.length} identified`}
-            />
-          </div>
-        </SectionCard>
-      </div>
-    </div>
-  );
+  return <PriageSummaryPanel summary={encounter.priageSummary} />;
 }
 
 function PageButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
@@ -837,22 +756,6 @@ function TimelineItem({ label, time }: { label: string; time: string | null | un
         <div className="text-sm font-semibold text-slate-800">{label}</div>
         <div className="text-xs text-slate-500">{formatDateTime(time)}</div>
       </div>
-    </div>
-  );
-}
-
-function BulletList({ items, tone }: { items: string[]; tone: 'rose' | 'amber' }) {
-  const dotClass = tone === 'rose' ? 'bg-rose-500' : 'bg-amber-500';
-  const textClass = tone === 'rose' ? 'text-rose-900' : 'text-amber-900';
-
-  return (
-    <div className="space-y-2">
-      {items.map((item) => (
-        <div key={item} className="flex items-start gap-3 rounded-[18px] border border-white/80 bg-white/78 px-4 py-3">
-          <span className={`mt-2 h-2 w-2 rounded-full ${dotClass}`} />
-          <span className={`text-sm leading-6 ${textClass}`}>{item}</span>
-        </div>
-      ))}
     </div>
   );
 }

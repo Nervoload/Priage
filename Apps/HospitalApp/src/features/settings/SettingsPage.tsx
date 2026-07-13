@@ -582,11 +582,11 @@ export function SettingsPage({
             left: 'max(1rem, calc((100vw - 1500px) / 2 + 1rem))',
           }}
         >
-          <div className="rounded-[30px] border border-white/80 bg-white/88 px-5 py-6 shadow-[0_28px_80px_-52px_rgba(15,23,42,0.48)]">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">
+          <div className="rounded-xl border border-slate-200 bg-white px-5 py-6 shadow-sm">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
               {isAdmin ? 'Admin Dashboard' : 'Settings'}
             </div>
-            <div className="mt-3 font-hospital-display text-2xl font-semibold tracking-[-0.04em] text-slate-950">
+            <div className="mt-3 font-hospital-display text-2xl font-semibold tracking-tight text-slate-950">
               {user?.hospital?.name ?? 'Clinic'}
             </div>
             <div className="mt-1 text-sm text-slate-500">
@@ -601,7 +601,7 @@ export function SettingsPage({
                     key={section.id}
                     onClick={() => setActiveSection(section.id)}
                     className={`
-                      group relative flex w-full items-center justify-between rounded-[18px] px-2 py-2.5 text-left transition-colors
+                      group relative flex w-full items-center justify-between rounded-lg px-2 py-2.5 text-left transition-colors
                       ${isActive ? 'text-slate-950' : 'text-slate-500 hover:text-slate-800'}
                     `}
                   >
@@ -630,13 +630,13 @@ export function SettingsPage({
         </aside>
 
         <div className="space-y-5">
-          <section className="rounded-[32px] border border-white/80 bg-white/90 px-6 py-6 shadow-[0_28px_80px_-50px_rgba(15,23,42,0.46)]">
+          <section className="rounded-xl border border-slate-200 bg-white px-6 py-6 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.22em] text-priage-600">
+                <div className="text-xs font-semibold uppercase tracking-wider text-priage-600">
                   {sectionMeta.eyebrow}
                 </div>
-                <h1 className="mt-2 font-hospital-display text-3xl font-semibold tracking-[-0.04em] text-slate-950">
+                <h1 className="mt-2 font-hospital-display text-3xl font-semibold tracking-tight text-slate-950">
                   {sectionMeta.title}
                 </h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
@@ -655,7 +655,7 @@ export function SettingsPage({
                   <button
                     onClick={() => void handleSaveAdminSettings()}
                     disabled={savingConfig}
-                    className="mt-2 rounded-[18px] bg-accent-600 px-5 py-3 text-sm font-semibold text-white shadow-[0_22px_42px_-24px_rgba(220,38,38,0.58)] transition-colors hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mt-2 rounded-lg bg-accent-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {savingConfig ? 'Saving…' : sectionMeta.saveLabel}
                   </button>
@@ -755,8 +755,8 @@ export function SettingsPage({
             Enter your administrator password to save changes.
           </p>
 
-          <div className="mt-5 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Pending changes</div>
+          <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Pending changes</div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <Metric label="Hospital name" value={hospitalDraftName.trim() || 'Missing'} />
               <Metric label="Slug" value={hospitalDraftSlug.trim().toLowerCase() || 'Missing'} />
@@ -778,14 +778,14 @@ export function SettingsPage({
           <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
             <button
               onClick={closeHospitalConfirmModal}
-              className="rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
             >
               Cancel
             </button>
             <button
               onClick={() => void handleSaveHospitalDetails()}
               disabled={savingHospitalDetails}
-              className="rounded-[16px] bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg bg-accent-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-accent-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {savingHospitalDetails ? 'Saving Changes…' : 'Save Changes'}
             </button>
@@ -895,11 +895,11 @@ function GeneralSection({
           <button
             onClick={() => void onSaveProfile()}
             disabled={savingProfile}
-            className="rounded-[16px] bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {savingProfile ? 'Saving Account…' : 'Save Account'}
           </button>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
             Cookie-backed staff session
           </span>
         </div>
@@ -925,7 +925,7 @@ function GeneralSection({
               {canEditHospitalDetails && (
                 <button
                   onClick={onStartHospitalEdit}
-                  className="rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                  className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
                 >
                   Edit
                 </button>
@@ -933,7 +933,7 @@ function GeneralSection({
             </div>
 
             {canEditHospitalDetails && isEditingHospitalDetails && (
-              <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Hospital name">
                     <input
@@ -960,13 +960,13 @@ function GeneralSection({
                 <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
                   <button
                     onClick={onCancelHospitalEdit}
-                    className="rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                    className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={onRequestHospitalSave}
-                    className="rounded-[16px] bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800"
+                    className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-slate-800"
                   >
                     Save Changes
                   </button>
@@ -974,7 +974,7 @@ function GeneralSection({
               </div>
             )}
 
-            <div className="mt-4 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
+            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
               This workspace is scoped to a single hospital database. Staff access stays tenant-bound through the
               authenticated hospital account and the server-side hospital ID checks already present in the backend.
             </div>
@@ -1031,7 +1031,7 @@ function StaffSection({
             </select>
           </Field>
           <Field label="Current visible workspaces">
-            <div className="flex min-h-[48px] flex-wrap items-center gap-2 rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2.5">
+            <div className="flex min-h-[48px] flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
               {liveVisiblePages.map((view) => (
                 <span key={view} className={PILL_CLASS}>
                   {PAGE_LABELS[view]}
@@ -1044,7 +1044,7 @@ function StaffSection({
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <button
             onClick={onSaveLandingPage}
-            className="rounded-[16px] border border-priage-200 bg-priage-50 px-4 py-2.5 text-sm font-semibold text-priage-700 transition-colors hover:bg-priage-100"
+            className="rounded-lg border border-priage-200 bg-priage-50 px-4 py-2.5 text-sm font-semibold text-priage-700 transition-colors hover:bg-priage-100"
           >
             Save Role Settings
           </button>
@@ -1067,9 +1067,9 @@ function StaffSection({
             <table className="min-w-full border-separate border-spacing-y-2">
               <thead>
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Role</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Role</th>
                   {HOSPITAL_PAGE_KEYS.map((page) => (
-                    <th key={page} className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    <th key={page} className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">
                       {PAGE_LABELS[page]}
                     </th>
                   ))}
@@ -1077,7 +1077,7 @@ function StaffSection({
               </thead>
               <tbody>
                 {ROLE_ORDER.map((role) => (
-                  <tr key={role} className="rounded-[18px] bg-slate-50">
+                  <tr key={role} className="rounded-lg bg-slate-50">
                     <td className="rounded-l-[18px] px-3 py-3 text-sm font-semibold text-slate-900">{ROLE_LABELS[role]}</td>
                     {HOSPITAL_PAGE_KEYS.map((page) => {
                       const enabled = draftConfig.pageAccess[role].includes(page);
@@ -1162,7 +1162,7 @@ function PatientsSection({
             value={draftConfig.customIntakeQuestions.filter((question) => question.appliesTo === 'triage' || question.appliesTo === 'both').length}
           />
         </div>
-        <div className="mt-4 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
           These questions feed the hospital-side completeness review and the patient-facing intake form, so new admin
           questions can be answered directly in-app before arrival.
         </div>
@@ -1177,7 +1177,7 @@ function PatientsSection({
         ) : (
           <div className="space-y-3">
             {draftConfig.customIntakeQuestions.map((question) => (
-              <div key={question.id} className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
+              <div key={question.id} className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-4">
                 <div className="grid gap-3 lg:grid-cols-[1.2fr,1fr,0.8fr,0.8fr,auto]">
                   <Field label="Question label">
                     <input
@@ -1220,7 +1220,7 @@ function PatientsSection({
                   <div className="flex items-end">
                     <button
                       onClick={() => onRemoveIntakeQuestion(question.id)}
-                      className="rounded-[16px] border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                      className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
                     >
                       Remove
                     </button>
@@ -1253,7 +1253,7 @@ function PatientsSection({
         <div className="mt-4">
           <button
             onClick={onAddIntakeQuestion}
-            className="rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
           >
             Add Intake Question
           </button>
@@ -1310,7 +1310,7 @@ function FeedbackSection({
           ) : (
             <div className="space-y-3">
               {draftConfig.admittanceFeedbackSurvey.map((question) => (
-                <div key={question.id} className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
+                <div key={question.id} className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-4">
                   <div className="grid gap-3 lg:grid-cols-[1.3fr,0.8fr,auto]">
                     <Field label="Prompt">
                       <input
@@ -1335,7 +1335,7 @@ function FeedbackSection({
                     <div className="flex items-end">
                       <button
                         onClick={() => onRemoveSurveyQuestion(question.id)}
-                        className="rounded-[16px] border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                        className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
                       >
                         Remove
                       </button>
@@ -1368,7 +1368,7 @@ function FeedbackSection({
           <div className="mt-4">
             <button
               onClick={onAddSurveyQuestion}
-              className="rounded-[16px] border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
             >
               Add Survey Question
             </button>
@@ -1451,7 +1451,7 @@ function FeedbackSection({
             <button
               onClick={() => void onSubmitFeedback()}
               disabled={submittingFeedback}
-              className="rounded-[16px] bg-priage-700 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-priage-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg bg-priage-700 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-priage-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submittingFeedback ? 'Submitting…' : 'Submit Feedback'}
             </button>
@@ -1476,10 +1476,10 @@ function FeedbackSection({
           ) : (
             <div className="space-y-3">
               {feedbackSubmissions.map((submission) => (
-                <div key={submission.id} className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-4">
+                <div key={submission.id} className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-sm font-semibold text-slate-900">{submission.submittedBy.email}</div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       {submission.submittedBy.role}
                     </div>
                   </div>
@@ -1488,7 +1488,7 @@ function FeedbackSection({
                   <div className="mt-3 space-y-2">
                     {submission.responses.map((response) => (
                       <div key={`${submission.id}-${response.questionId}`}>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                           {response.prompt}
                         </div>
                         <div className="mt-1 text-sm text-slate-700">{String(response.answer)}</div>
@@ -1496,8 +1496,8 @@ function FeedbackSection({
                     ))}
 
                     {submission.bugReport && (
-                      <div className="rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
                           Bug report
                         </div>
                         <div className="mt-1 whitespace-pre-wrap text-sm text-amber-950">{submission.bugReport}</div>
@@ -1524,8 +1524,8 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[28px] border border-white/80 bg-white/90 px-5 py-5 shadow-[0_24px_70px_-46px_rgba(15,23,42,0.42)]">
-      <h2 className="font-hospital-display text-2xl font-semibold tracking-[-0.03em] text-slate-950">{title}</h2>
+    <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+      <h2 className="font-hospital-display text-2xl font-semibold tracking-tight text-slate-950">{title}</h2>
       <p className="mt-1 text-sm leading-6 text-slate-500">{subtitle}</p>
       <div className="mt-5">{children}</div>
     </section>
@@ -1543,7 +1543,7 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</label>
+      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</label>
       {children}
     </div>
   );
@@ -1551,8 +1551,8 @@ function Field({
 
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</div>
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-4">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-2 text-xl font-semibold text-slate-950">{value}</div>
     </div>
   );
@@ -1560,17 +1560,17 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 
 function EmptyNotice({ message }: { message: string }) {
   return (
-    <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
       {message}
     </div>
   );
 }
 
 const FIELD_CLASS =
-  'w-full rounded-[16px] border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-[0_12px_24px_-22px_rgba(15,23,42,0.35)] focus:border-priage-300 focus:outline-none focus:ring-2 focus:ring-priage-200';
+  'w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm focus:border-priage-300 focus:outline-none focus:ring-2 focus:ring-priage-200';
 
 const READONLY_CLASS =
-  'flex min-h-[46px] items-center rounded-[16px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700';
+  'flex min-h-[46px] items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700';
 
 const PILL_CLASS =
   'inline-flex items-center rounded-full bg-priage-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-priage-700';

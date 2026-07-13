@@ -345,58 +345,55 @@ async function createTrackedGuestEncounter(intentOverrides = {}) {
 }
 
 function buildInterviewAnswer(question) {
-  const payload = { questionPublicId: question.publicId };
-
-  switch (question.inputType) {
-    case 'boolean':
-      payload.valueBoolean = false;
-      return payload;
-    case 'number':
-      payload.valueNumber = 3;
-      return payload;
-    case 'single_select':
-      payload.valueChoice = question.choices?.[0] ?? 'No';
-      return payload;
-    case 'textarea':
-    case 'text':
-    default:
-      payload.valueText = `Smoke answer for ${question.publicId}`;
-      return payload;
-  }
+  return { questionId: question.id, answer: `Smoke answer for ${question.id}` };
 }
 
 async function completeInterviewForPatient(patientCookie) {
-  let interview = await makeRequest('POST', '/intake/interview/start', {
+  let interview = await makeRequest('POST', '/api/triage/start', {
     headers: patientAuth(patientCookie),
+    body: {
+      chiefComplaint: 'Minor ankle discomfort',
+      mandatoryAnswers: {
+        onset: 'Earlier today',
+        severity: 3,
+        progression: 'same',
+        relevantHistory: 'Unknown',
+      },
+    },
   });
 
-  for (let index = 0; index < 12; index += 1) {
+  for (let index = 0; index < 13; index += 1) {
     if (interview.status === 'complete') {
-      if (!interview.summaryPreview) {
-        throw new Error('Interview completed without a summary preview');
+      if (!interview.summary?.briefing) {
+        throw new Error('Triage completed without a summary briefing');
       }
-      return interview;
-    }
-
-    if (interview.status === 'emergency_ack_required') {
-      interview = await makeRequest('POST', '/intake/interview/advance', {
-        headers: patientAuth(patientCookie),
-        body: { action: 'acknowledge_emergency' },
+      return makeRequest('POST', `/api/triage/${interview.sessionId}/complete`, {
+        headers: {
+          ...patientAuth(patientCookie),
+          'Idempotency-Key': `smoke-triage-complete-${interview.sessionId}`,
+        },
+        body: {},
       });
-      continue;
     }
 
-    if (!interview.currentQuestion) {
-      throw new Error(`Interview is ${interview.status} but has no currentQuestion`);
+    if (interview.status === 'urgent_review') {
+      throw new Error('Unexpected urgent-review response for minor smoke complaint');
     }
 
-    interview = await makeRequest('POST', '/intake/interview/advance', {
-      headers: patientAuth(patientCookie),
-      body: buildInterviewAnswer(interview.currentQuestion),
+    if (!interview.question) {
+      throw new Error(`Triage is ${interview.status} but has no question`);
+    }
+
+    interview = await makeRequest('POST', `/api/triage/${interview.sessionId}/answer`, {
+      headers: {
+        ...patientAuth(patientCookie),
+        'Idempotency-Key': `smoke-triage-answer-${interview.question.id}`,
+      },
+      body: buildInterviewAnswer(interview.question),
     });
   }
 
-  throw new Error(`Interview did not complete after repeated answers; last status=${interview.status}`);
+  throw new Error(`Triage did not complete after repeated answers; last status=${interview.status}`);
 }
 
 async function createStaffReadyPatient(overrides = {}) {

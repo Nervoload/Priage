@@ -19,7 +19,6 @@ import { PatientRateLimitGuard } from '../auth/guards/patient-rate-limit.guard';
 import { PatientContext, PatientGuard } from '../auth/guards/patient.guard';
 import { ConfirmIntentDto } from './dto/confirm-intent.dto';
 import { CreateIntentDto } from './dto/create-intent.dto';
-import { AdvanceInterviewDto } from './dto/interview.dto';
 import { LocationPingDto } from './dto/location-ping.dto';
 import { UpdateIntakeDetailsDto } from './dto/update-intake-details.dto';
 import { IntakeService } from './intake.service';
@@ -94,43 +93,6 @@ export class IntakeController {
         correlationId: req.correlationId,
       },
       () => this.intakeService.updateDetailsBySession(patient.sessionId, dto, req.correlationId),
-    );
-  }
-
-  /**
-   * POST /intake/interview/start
-   * Idempotently starts or resumes the guest interview.
-   */
-  @Post('interview/start')
-  @UseGuards(PatientGuard, PatientRateLimitGuard)
-  async startInterview(
-    @CurrentPatient() patient: PatientContext,
-    @Req() req: Request,
-  ) {
-    return this.intakeService.startInterviewBySession(patient.sessionId, patient.patientId, req.correlationId);
-  }
-
-  /**
-   * POST /intake/interview/advance
-   * Persists an answer or emergency acknowledgment and returns the next state.
-   */
-  @Post('interview/advance')
-  @UseGuards(PatientGuard, PatientRateLimitGuard)
-  async advanceInterview(
-    @Body() dto: AdvanceInterviewDto,
-    @Headers('idempotency-key') idempotencyKey: string | undefined,
-    @CurrentPatient() patient: PatientContext,
-    @Req() req: Request,
-  ) {
-    return this.patientIdempotency.execute(
-      {
-        patient,
-        command: 'patient.intake.interview.advance',
-        idempotencyKey,
-        fingerprintInput: { body: dto },
-        correlationId: req.correlationId,
-      },
-      () => this.intakeService.advanceInterviewBySession(patient.sessionId, patient.patientId, dto, req.correlationId),
     );
   }
 

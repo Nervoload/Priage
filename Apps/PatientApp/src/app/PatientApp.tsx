@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../shared/hooks/useAuth';
-import { startInterview } from '../shared/api/intake';
+import { getTriage } from '../shared/api/triage';
 import { useGuestSession } from '../shared/hooks/useGuestSession';
 import { resolveGuestPath } from '../shared/guestFlow';
 import { LoginPage } from '../auth/LoginPage';
@@ -78,11 +78,15 @@ export function PatientApp() {
       />
       <Route
         path="/guest/chatbot"
+        element={<Navigate to="/guest/triage" replace />}
+      />
+      <Route
+        path="/guest/triage"
         element={
           session
             ? <Navigate to="/" replace />
             : guestSession
-              ? <GuestChatbotRoute />
+              ? <GuestTriageRoute />
               : <Navigate to="/guest/start" replace />
         }
       />
@@ -335,24 +339,29 @@ function GuestRoutingRoute() {
   const [checking, setChecking] = useState(true);
   const [allowed, setAllowed] = useState(false);
   const navigate = useNavigate();
+  const { session: guestSession } = useGuestSession();
 
   useEffect(() => {
     let cancelled = false;
 
-    async function verifyInterview() {
+    async function verifyTriage() {
       try {
-        const interview = await startInterview();
+        if (!guestSession?.triageSessionId) {
+          navigate('/guest/triage', { replace: true });
+          return;
+        }
+        const triage = await getTriage(guestSession.triageSessionId);
         if (cancelled) {
           return;
         }
-        if (interview.status === 'complete') {
+        if (triage.status === 'submitted') {
           setAllowed(true);
         } else {
-          navigate('/guest/chatbot', { replace: true });
+          navigate('/guest/triage', { replace: true });
         }
       } catch {
         if (!cancelled) {
-          navigate('/guest/chatbot', { replace: true });
+          navigate('/guest/triage', { replace: true });
         }
       } finally {
         if (!cancelled) {
@@ -361,11 +370,11 @@ function GuestRoutingRoute() {
       }
     }
 
-    void verifyInterview();
+    void verifyTriage();
     return () => {
       cancelled = true;
     };
-  }, [navigate]);
+  }, [guestSession?.triageSessionId, navigate]);
 
   if (checking) {
     return (
@@ -380,12 +389,29 @@ function GuestRoutingRoute() {
     return null;
   }
 
-  return <Routing onConfirmed={(encounterId) => navigate(`/guest/enroute/${encounterId}`)} onBack={() => navigate('/guest/chatbot')} />;
+  return <Routing onConfirmed={(encounterId) => navigate(`/guest/enroute/${encounterId}`)} onBack={() => navigate('/welcome')} />;
 }
 
-function GuestChatbotRoute() {
+function GuestTriageRoute() {
   const navigate = useNavigate();
-  return <GuestChatbotPage onChooseHospital={() => navigate('/guest/routing')} onBack={() => navigate('/guest/start')} />;
+  const { session, setSession } = useGuestSession();
+
+  if (!session?.chiefComplaint) {
+    return <Navigate to="/guest/start" replace />;
+  }
+
+  return (
+    <GuestChatbotPage
+      chiefComplaint={session.chiefComplaint}
+      onChooseHospital={() => navigate('/guest/routing')}
+      onBack={() => navigate('/welcome')}
+      onSessionChange={(triage) => setSession({
+        ...session,
+        triageSessionId: triage.sessionId,
+        triageStatus: triage.status,
+      })}
+    />
+  );
 }
 
 function GuestEncounterRedirect() {

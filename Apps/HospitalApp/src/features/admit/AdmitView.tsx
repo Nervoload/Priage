@@ -869,6 +869,17 @@ function EncounterCard({
         )}
       </div>
 
+      {encounter.priagePreview?.briefing && (
+        <div className="relative mt-3 rounded-[16px] border border-sky-200 bg-sky-50 px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-800">
+            AI intake handoff
+          </div>
+          <p className="mt-1 line-clamp-3 text-xs leading-5 text-sky-950">
+            {encounter.priagePreview.briefing}
+          </p>
+        </div>
+      )}
+
       <div className="relative mt-4 mb-2 flex flex-wrap items-center gap-2">
         <StatusPill
           status={encounter.status}

@@ -194,77 +194,70 @@ async function loginWithFallback() {
 }
 
 function buildInterviewAnswer(question) {
-  const payload = { questionPublicId: question.publicId };
-
-  switch (question.inputType) {
-    case 'boolean':
-      payload.valueBoolean = false;
-      return payload;
-    case 'number':
-      payload.valueNumber = 3;
-      return payload;
-    case 'single_select':
-      payload.valueChoice = question.choices?.[0] ?? 'No';
-      return payload;
-    case 'textarea':
-    case 'text':
-    default:
-      payload.valueText = `Realtime smoke answer for ${question.publicId}`;
-      return payload;
-  }
+  return { questionId: question.id, answer: `Realtime smoke answer for ${question.id}` };
 }
 
 async function completeInterviewForPatient(patientCookie) {
   const headers = { Cookie: patientCookie };
-  let { res, json, text } = await api('/intake/interview/start', {
+  let { res, json, text } = await api('/api/triage/start', {
     method: 'POST',
-    headers,
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chiefComplaint: 'Minor ankle discomfort',
+      mandatoryAnswers: {
+        onset: 'Earlier today',
+        severity: 3,
+        progression: 'same',
+        relevantHistory: 'Unknown',
+      },
+    }),
   });
 
   if (!res.ok) {
     throw new Error(`Failed to start intake interview: ${res.status} ${text}`);
   }
 
-  for (let index = 0; index < 12; index += 1) {
+  for (let index = 0; index < 13; index += 1) {
     if (json?.status === 'complete') {
-      if (!json.summaryPreview) {
-        throw new Error('Interview completed without a summary preview');
+      if (!json.summary?.briefing) {
+        throw new Error('Triage completed without a summary briefing');
       }
+      ({ res, json, text } = await api(`/api/triage/${json.sessionId}/complete`, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `realtime-triage-complete-${randomUUID()}`,
+        },
+        body: JSON.stringify({}),
+      }));
       return json;
     }
 
-    if (json?.status === 'emergency_ack_required') {
-      ({ res, json, text } = await api('/intake/interview/advance', {
-        method: 'POST',
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `realtime-interview-${randomUUID()}`,
-        },
-        body: JSON.stringify({ action: 'acknowledge_emergency' }),
-      }));
-    } else {
-      if (!json?.currentQuestion) {
-        throw new Error(`Interview is ${json?.status ?? 'unknown'} but has no currentQuestion`);
-      }
-
-      ({ res, json, text } = await api('/intake/interview/advance', {
-        method: 'POST',
-        headers: {
-          ...headers,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `realtime-interview-${randomUUID()}`,
-        },
-        body: JSON.stringify(buildInterviewAnswer(json.currentQuestion)),
-      }));
+    if (json?.status === 'urgent_review') {
+      throw new Error('Unexpected urgent-review response for minor realtime complaint');
     }
+
+    if (!json?.question) {
+      throw new Error(`Triage is ${json?.status ?? 'unknown'} but has no question`);
+    }
+
+    ({ res, json, text } = await api(`/api/triage/${json.sessionId}/answer`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `realtime-triage-${randomUUID()}`,
+      },
+      body: JSON.stringify(buildInterviewAnswer(json.question)),
+    }));
 
     if (!res.ok) {
       throw new Error(`Failed to advance intake interview: ${res.status} ${text}`);
     }
   }
 
-  throw new Error(`Interview did not complete after repeated answers; last status=${json?.status ?? 'unknown'}`);
+  throw new Error(`Triage did not complete after repeated answers; last status=${json?.status ?? 'unknown'}`);
 }
 
 async function createEncounter(hospitalSlug) {

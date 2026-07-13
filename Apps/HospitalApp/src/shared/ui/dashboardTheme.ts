@@ -8,13 +8,13 @@ export interface DashboardStatusTheme {
 }
 
 export const DASHBOARD_PAGE_CLASS =
-  'min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,247,237,0.95)_0%,_rgba(248,250,252,1)_34%,_rgba(241,245,249,1)_100%)] font-hospital-body';
+  'min-h-screen bg-[radial-gradient(1200px_circle_at_18%_-8%,_rgba(219,234,254,0.55)_0%,_transparent_55%),radial-gradient(1000px_circle_at_92%_0%,_rgba(224,242,254,0.5)_0%,_transparent_50%),linear-gradient(180deg,_#f8fafc_0%,_#f1f5f9_100%)] font-hospital-body';
 
 export const DASHBOARD_GLASS_PANEL_CLASS =
-  'rounded-[30px] border border-white/80 bg-white/80 backdrop-blur-xl shadow-[0_24px_80px_-48px_rgba(15,23,42,0.55)]';
+  'rounded-[24px] border border-slate-200/70 bg-white/85 backdrop-blur-xl shadow-[0_1px_2px_rgba(15,23,42,0.04),0_24px_64px_-44px_rgba(15,23,42,0.4)]';
 
 export const DASHBOARD_EMPTY_STATE_CLASS =
-  'rounded-[28px] border border-slate-200/80 bg-white/90 px-5 py-12 text-center text-sm text-slate-500 shadow-[0_18px_50px_-38px_rgba(15,23,42,0.55)]';
+  'rounded-[22px] border border-dashed border-slate-300/80 bg-white/70 px-5 py-14 text-center text-sm text-slate-500 shadow-none';
 
 export const DASHBOARD_CARD_GRID_CLASS =
   'grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-5';

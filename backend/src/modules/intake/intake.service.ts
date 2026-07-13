@@ -13,6 +13,7 @@ import { ContextSourceType, EncounterStatus, Prisma, ReviewState, TrustTier, Vis
 import Redis from 'ioredis';
 
 import { PATIENT_SESSION_TTL_MS } from '../../common/http/auth-cookie.util';
+import { AiTriageService } from '../ai-triage/ai-triage.service';
 import { normalizeHospitalConfig, type HospitalIntakeResponseType } from '../hospitals/hospital-config';
 import { IntakeSessionsService } from '../intake-sessions/intake-sessions.service';
 import { LoggingService } from '../logging/logging.service';
@@ -22,8 +23,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { ConfirmIntentDto } from './dto/confirm-intent.dto';
 import { CreateIntentDto } from './dto/create-intent.dto';
-import { AdvanceInterviewDto } from './dto/interview.dto';
-import { TriageInterviewService } from './interview/triage-interview.service';
 import { LocationPingDto } from './dto/location-ping.dto';
 import { UpdateIntakeDetailsDto } from './dto/update-intake-details.dto';
 
@@ -57,7 +56,7 @@ export class IntakeService {
     private readonly prisma: PrismaService,
     private readonly intakeSessions: IntakeSessionsService,
     private readonly loggingService: LoggingService,
-    private readonly triageInterview: TriageInterviewService,
+    private readonly aiTriage: AiTriageService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -165,25 +164,12 @@ export class IntakeService {
     return this.confirmWithSession(session, dto, correlationId);
   }
 
-  async startInterviewBySession(sessionId: number, patientId: number, correlationId?: string) {
-    return this.triageInterview.startBySession(sessionId, patientId, correlationId);
-  }
-
-  async advanceInterviewBySession(
-    sessionId: number,
-    patientId: number,
-    dto: AdvanceInterviewDto,
-    correlationId?: string,
-  ) {
-    return this.triageInterview.advanceBySession(sessionId, patientId, dto, correlationId);
-  }
-
   private async confirmWithSession(
     session: SessionRecord,
     dto: ConfirmIntentDto,
     correlationId?: string,
   ) {
-    await this.triageInterview.ensureInterviewCompleteBySession(session.id, session.patientId, correlationId);
+    await this.aiTriage.ensureSubmitted(session.id, session.patientId);
     const hospitalId = await this.resolveHospitalId(dto);
     const encounter = await this.intakeSessions.confirmByAuthSession(
       session.id,

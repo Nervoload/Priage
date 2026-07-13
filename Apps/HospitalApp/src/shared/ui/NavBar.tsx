@@ -85,14 +85,15 @@ export function NavBar({ currentView, onNavigate, onLogout, user, availableViews
   const homeView = visibleTabs.find((tab) => tab.key === 'waiting')?.key ?? visibleTabs[0]?.key ?? 'settings';
 
   return (
-    <nav className="sticky top-0 z-50 overflow-visible border-b border-white/10 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg">
+    <nav className="sticky top-0 z-50 overflow-visible border-b border-white/[0.08] bg-gradient-to-r from-priage-900 via-priage-800 to-priage-700 shadow-[0_10px_36px_-18px_rgba(11,20,35,0.85)] backdrop-blur">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
       <div className="relative h-16 px-6">
         <div className="absolute left-6 top-1/2 z-30 flex min-w-[220px] -translate-y-1/2 items-center justify-start">
           <button
             onClick={() => onNavigate(homeView)}
-            className="flex items-center gap-2 text-white transition-opacity hover:opacity-80"
+            className="flex items-center gap-2.5 text-white transition-opacity hover:opacity-85 cursor-pointer"
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-sm font-black text-white ring-1 ring-white/20">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-white/25 to-white/5 text-sm font-black text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] ring-1 ring-white/25">
               P
             </div>
             <span className="font-hospital-display text-xl font-semibold tracking-[-0.03em] text-white">
@@ -102,7 +103,7 @@ export function NavBar({ currentView, onNavigate, onLogout, user, availableViews
         </div>
 
         <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex w-[min(820px,calc(100vw-30rem))] max-w-[calc(100vw-8rem)] -translate-x-1/2 -translate-y-1/2 items-center justify-center">
-          <div className="pointer-events-auto flex w-full items-end justify-center gap-3">
+          <div className="pointer-events-auto flex w-full items-center justify-center gap-1 rounded-2xl bg-white/[0.06] p-1 ring-1 ring-white/10">
             {visibleTabs.map((tab) => {
               const isActive = currentView === tab.key;
               return (
@@ -110,19 +111,16 @@ export function NavBar({ currentView, onNavigate, onLogout, user, availableViews
                   key={tab.key}
                   onClick={() => onNavigate(tab.key)}
                   className={`
-                    group relative flex min-h-[46px] min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap px-3 pb-3 pt-2 text-center
-                    font-hospital-display text-base font-semibold tracking-[-0.02em] transition-all duration-150 cursor-pointer
-                    ${isActive ? 'text-white' : 'text-white/68 hover:text-white'}
+                    group relative flex min-h-[40px] min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-3 text-center
+                    font-hospital-display text-[15px] font-semibold tracking-[-0.02em] transition-all duration-150 cursor-pointer
+                    ${isActive
+                      ? 'bg-white/[0.14] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_8px_20px_-12px_rgba(0,0,0,0.5)] ring-1 ring-white/15'
+                      : 'text-white/65 hover:bg-white/[0.07] hover:text-white'
+                    }
                   `}
                 >
                   <span className="shrink-0">{tab.icon}</span>
                   <span>{tab.label}</span>
-                  <span
-                    className={`
-                      pointer-events-none absolute bottom-0 left-1/2 z-20 h-0.5 w-12 -translate-x-1/2 rounded-full transition-all duration-150
-                      ${isActive ? 'bg-white' : 'bg-transparent group-hover:bg-white/45'}
-                    `}
-                  />
                 </button>
               );
             })}
@@ -132,18 +130,18 @@ export function NavBar({ currentView, onNavigate, onLogout, user, availableViews
         <div className="absolute right-6 top-1/2 z-30 flex min-w-[320px] -translate-y-1/2 items-center justify-end gap-4 whitespace-nowrap">
           {user && (
             <div className="flex shrink-0 items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-600 text-sm font-bold text-white">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-accent-500 to-accent-700 text-sm font-bold text-white shadow-[0_8px_18px_-8px_rgba(220,38,38,0.7)] ring-1 ring-white/20">
                 {user.email[0].toUpperCase()}
               </div>
               <div className="flex min-w-0 shrink-0 flex-col items-end">
-                <span className="max-w-[220px] truncate text-[15px] font-medium leading-tight text-white/92">{user.email}</span>
-                <span className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-priage-200">{user.role}</span>
+                <span className="max-w-[220px] truncate text-[14px] font-medium leading-tight text-white/92">{user.email}</span>
+                <span className="text-[10px] font-semibold uppercase leading-tight tracking-[0.16em] text-priage-200">{user.role}</span>
               </div>
             </div>
           )}
           <button
             onClick={onLogout}
-            className="shrink-0 rounded-md px-2.5 py-1.5 text-[15px] font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-red-300 cursor-pointer"
+            className="shrink-0 rounded-lg border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[13px] font-semibold text-white/80 transition-colors hover:border-red-300/40 hover:bg-red-500/15 hover:text-red-200 cursor-pointer"
           >
             Logout
           </button>

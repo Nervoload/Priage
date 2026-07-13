@@ -22,7 +22,8 @@
     "check:production": "node scripts/production-readiness.js",
     "demo:seed": "node scripts/demo-seed.js",
     "seed:full": "node scripts/demo-seed.js",
-    "test:platform": "node scripts/platform-smoke.js"
+    "test:platform": "node scripts/platform-smoke.js",
+    "test:ai-triage": "npm run build && node scripts/test-ai-triage.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1068.0",

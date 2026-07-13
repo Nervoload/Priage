@@ -131,7 +131,7 @@ export function PatientCard({ encounter, messages, alertSeverity, queueEntry, on
             {initials}
           </div>
           <div className="min-w-0">
-            <div className="truncate font-hospital-display text-[1.08rem] font-semibold tracking-[-0.03em] text-slate-900">
+            <div className="truncate font-hospital-display text-base font-semibold tracking-tight text-slate-900">
               {name}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">

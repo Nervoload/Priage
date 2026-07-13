@@ -15,6 +15,7 @@ import { PatientCard } from './PatientCard';
 import { PatientDetailModal } from './PatientDetailModal';
 import { AlertDashboard } from './AlertDashboard';
 import { sortByQueuePriority, getQueuePositions } from '../../shared/queue/queuePriority';
+import { getEncounter } from '../../shared/api/encounters';
 
 interface WaitingRoomViewProps {
   onBack?: () => void;
@@ -73,7 +74,7 @@ export function WaitingRoomView({
   realtimeActive = false,
   onEnterWaitingRoom,
 }: WaitingRoomViewProps) {
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedEncounter, setSelectedEncounter] = useState<Encounter | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
   const [filtersVisible, setFiltersVisible] = useState(true);
@@ -139,7 +140,6 @@ export function WaitingRoomView({
     return sortByQueuePriority(list).map((entry) => entry.encounter);
   }, [alertMap, encounters, filter, searchQuery]);
 
-  const selectedEncounter = encounters.find((encounter) => encounter.id === selectedId) ?? null;
   const alertCount = Object.keys(alertMap).length;
   const hasCustomFilters = filter !== 'all' || searchQuery.trim().length > 0;
 
@@ -154,6 +154,17 @@ export function WaitingRoomView({
   const toggleFilter = (key: FilterKey) => {
     setFilter((current) => (current === key ? 'all' : key));
   };
+
+  async function openEncounter(id: number) {
+    const listEncounter = encounters.find((encounter) => encounter.id === id) ?? null;
+    setSelectedEncounter(listEncounter);
+    try {
+      setSelectedEncounter(await getEncounter(id));
+    } catch {
+      // Keep the list record available if the detail request fails. Clinical
+      // AI content remains hidden rather than fabricating or using stale data.
+    }
+  }
 
   return (
     <div className={DASHBOARD_PAGE_CLASS}>
@@ -393,7 +404,7 @@ export function WaitingRoomView({
                   messages={chatMessages[encounter.id] || []}
                   alertSeverity={alertMap[encounter.id] ?? null}
                   queueEntry={queueMap.get(encounter.id) ?? null}
-                  onClick={() => setSelectedId(encounter.id)}
+                  onClick={() => void openEncounter(encounter.id)}
                 />
               ))}
             </div>
@@ -410,13 +421,15 @@ export function WaitingRoomView({
         messages={selectedEncounter ? (chatMessages[selectedEncounter.id] || []) : []}
         onSendMessage={onSendMessage}
         onRemovePatient={onRemovePatient}
-        onClose={() => setSelectedId(null)}
+        onClose={() => {
+          setSelectedEncounter(null);
+        }}
       />
 
       <AlertDashboard
         encounters={encounters}
         chatMessages={chatMessages}
-        onSelectPatient={(id) => setSelectedId(id)}
+        onSelectPatient={(id) => void openEncounter(id)}
       />
     </div>
   );

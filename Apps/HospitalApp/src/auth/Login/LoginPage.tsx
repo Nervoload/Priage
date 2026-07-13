@@ -34,50 +34,53 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     }
   };
 
+  const inputClass =
+    'w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm bg-slate-50/60 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-priage-400/40 focus:border-priage-400 focus:bg-white transition-all';
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex flex-col items-center justify-center p-8">
+    <div className="min-h-screen bg-[radial-gradient(1000px_circle_at_15%_-10%,_rgba(219,234,254,0.7)_0%,_transparent_55%),radial-gradient(900px_circle_at_90%_10%,_rgba(224,242,254,0.6)_0%,_transparent_50%),linear-gradient(180deg,_#f8fafc_0%,_#eef2f7_100%)] flex flex-col items-center justify-center p-8 font-hospital-body">
       {/* Branding */}
       <div className="text-center mb-10 animate-fade-in-up">
-        <h1 className="text-5xl font-bold text-priage-600 mb-1">Priage</h1>
-        <p className="text-gray-500 text-sm">Emergency Room Information &amp; Monitoring Pipeline</p>
+        <h1 className="font-hospital-display text-5xl font-bold tracking-[-0.04em] text-priage-700 mb-2">Priage</h1>
+        <p className="text-slate-500 text-sm">Emergency Room Information &amp; Monitoring Pipeline</p>
       </div>
 
       {/* Card */}
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-[400px] animate-fade-in-up">
+      <div className="bg-white/90 backdrop-blur-xl rounded-[24px] border border-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_32px_80px_-48px_rgba(15,23,42,0.45)] p-8 w-full max-w-[400px] animate-fade-in-up">
         {/* Avatar */}
         <div className="flex justify-center mb-5">
-          <div className="w-16 h-16 rounded-full bg-priage-600 flex items-center justify-center">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-priage-600 to-priage-800 shadow-[0_18px_40px_-18px_rgba(17,31,54,0.7)] ring-1 ring-white/40 flex items-center justify-center">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="7" r="4"/>
               <path d="M5 21c0-3.5 3-5 7-5s7 1.5 7 5"/>
             </svg>
           </div>
         </div>
 
-        <h2 className="text-xl font-bold text-gray-900 text-center mb-0.5">Hospital App</h2>
-        <p className="text-xs text-gray-400 text-center mb-6">Manage patients, triage, and monitor the ER pipeline</p>
+        <h2 className="font-hospital-display text-xl font-semibold tracking-[-0.02em] text-slate-900 text-center mb-1">Hospital App</h2>
+        <p className="text-xs text-slate-400 text-center mb-7">Manage patients, triage, and monitor the ER pipeline</p>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">
+            <div className="bg-red-50 border border-red-200/80 rounded-xl px-3.5 py-2.5 text-sm text-red-700">
               {error}
             </div>
           )}
 
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label htmlFor="email" className="block text-[13px] font-semibold text-slate-700 mb-1.5">Email</label>
             <input
               id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
+              className={inputClass}
             />
           </div>
 
           <div>
-            <label htmlFor="mfaCode" className="block text-sm font-medium text-gray-700 mb-1">Authenticator code</label>
+            <label htmlFor="mfaCode" className="block text-[13px] font-semibold text-slate-700 mb-1.5">Authenticator code</label>
             <input
               id="mfaCode"
               inputMode="numeric"
@@ -85,31 +88,35 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               value={mfaCode}
               onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
               placeholder="Required when MFA is enabled"
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
+              className={inputClass}
             />
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <label htmlFor="password" className="block text-[13px] font-semibold text-slate-700 mb-1.5">Password</label>
             <input
               id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
+              className={inputClass}
             />
           </div>
 
           <button
             type="submit"
             disabled={loggingIn}
-            className="w-full py-2.5 bg-accent-600 text-white rounded-lg font-semibold text-sm hover:bg-accent-700 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full py-3 bg-gradient-to-b from-accent-500 to-accent-600 text-white rounded-xl font-semibold text-sm shadow-[0_14px_30px_-14px_rgba(220,38,38,0.65)] hover:from-accent-600 hover:to-accent-700 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
           >
             {loggingIn ? 'Signing In…' : 'Sign In'}
           </button>
         </form>
       </div>
+
+      <p className="mt-8 text-[11px] font-medium uppercase tracking-[0.2em] text-slate-400">
+        Authorized staff only
+      </p>
     </div>
   );
 }

@@ -1,144 +1,207 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { advanceInterview, startInterview } from '../../shared/api/intake';
-import { useGuestSession } from '../../shared/hooks/useGuestSession';
-import type { AdvanceInterviewPayload, InterviewQuestion, InterviewState } from '../../shared/types/domain';
+import { answerTriage, completeTriage, getTriage, startTriage } from '../../shared/api/triage';
+import {
+  clearTriageDraft,
+  loadTriageDraft,
+  saveTriageDraft,
+} from '../../shared/session';
+import type {
+  TriageMandatoryAnswers,
+  TriageQuestion,
+  TriageSession,
+} from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
-import { useToast } from '../../shared/ui/ToastContext';
 import { QuestionPage } from './QuestionPage';
 
 interface GuestChatbotPageProps {
+  chiefComplaint: string;
   onChooseHospital: () => void;
   onBack?: () => void;
+  onSessionChange?: (session: TriageSession) => void;
   mode?: 'guest' | 'authenticated';
 }
 
-export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: GuestChatbotPageProps) {
-  const { session } = useGuestSession();
-  const { showToast } = useToast();
+const EMPTY_MANDATORY: TriageMandatoryAnswers = {
+  onset: '',
+  severity: '',
+  progression: '',
+  relevantHistory: '',
+};
 
-  const [interview, setInterview] = useState<InterviewState | null>(null);
-  const [loading, setLoading] = useState(true);
+export function GuestChatbotPage({
+  chiefComplaint,
+  onChooseHospital,
+  onBack,
+  onSessionChange,
+  mode = 'guest',
+}: GuestChatbotPageProps) {
+  const storedDraft = useMemo(() => loadTriageDraft(mode), [mode]);
+  const [mandatoryAnswers, setMandatoryAnswers] = useState<TriageMandatoryAnswers>(
+    storedDraft?.mandatoryAnswers ?? EMPTY_MANDATORY,
+  );
+  const [triage, setTriage] = useState<TriageSession | null>(null);
+  const [answer, setAnswer] = useState(storedDraft?.currentAnswer ?? '');
+  const [loading, setLoading] = useState(Boolean(storedDraft?.sessionId));
   const [submitting, setSubmitting] = useState(false);
-  const [draftText, setDraftText] = useState('');
-  const [draftNumber, setDraftNumber] = useState('');
-  const [draftBoolean, setDraftBoolean] = useState<boolean | null>(null);
-  const [draftChoice, setDraftChoice] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState<(() => void) | null>(null);
+  const resumeAttempted = useRef(false);
 
-  const currentQuestion = interview?.currentQuestion ?? null;
+  const effectiveComplaint = storedDraft?.chiefComplaint || chiefComplaint;
+  const sessionId = triage?.sessionId ?? storedDraft?.sessionId;
+
+  const applySession = useCallback((next: TriageSession) => {
+    setTriage(next);
+    setAnswer('');
+    setError(null);
+    setRetry(null);
+    saveTriageDraft(mode, {
+      chiefComplaint: effectiveComplaint,
+      mandatoryAnswers,
+      sessionId: next.sessionId,
+      status: next.status,
+      currentAnswer: '',
+    });
+    onSessionChange?.(next);
+    if (next.status === 'submitted') {
+      clearTriageDraft(mode);
+      onChooseHospital();
+    }
+  }, [effectiveComplaint, mandatoryAnswers, mode, onChooseHospital, onSessionChange]);
+
+  const resumeSession = useCallback(async () => {
+    if (!storedDraft?.sessionId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      applySession(await getTriage(storedDraft.sessionId));
+    } catch (resumeError) {
+      setError(messageFor(resumeError, 'Could not restore your triage session.'));
+      setRetry(() => () => void resumeSession());
+    } finally {
+      setLoading(false);
+    }
+  }, [applySession, storedDraft?.sessionId]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadInterview() {
-      setLoading(true);
-      try {
-        const state = await startInterview();
-        if (!cancelled) {
-          setInterview(state);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          showToast(error instanceof Error ? error.message : 'Could not load the intake interview.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    void loadInterview();
-    return () => {
-      cancelled = true;
-    };
-  }, [showToast]);
+    if (resumeAttempted.current) return;
+    resumeAttempted.current = true;
+    void resumeSession();
+  }, [resumeSession]);
 
   useEffect(() => {
-    setDraftText('');
-    setDraftNumber('');
-    setDraftBoolean(null);
-    setDraftChoice('');
-  }, [currentQuestion?.publicId]);
+    if (!sessionId) {
+      saveTriageDraft(mode, {
+        chiefComplaint: effectiveComplaint,
+        mandatoryAnswers,
+        currentAnswer: answer,
+      });
+      return;
+    }
+    saveTriageDraft(mode, {
+      chiefComplaint: effectiveComplaint,
+      mandatoryAnswers,
+      sessionId,
+      status: triage?.status,
+      currentAnswer: answer,
+    });
+  }, [answer, effectiveComplaint, mandatoryAnswers, mode, sessionId, triage?.status]);
 
-  const progressLabel = useMemo(() => {
-    if (!interview) {
-      return 'Loading interview…';
-    }
-    if (currentQuestion?.publicId === 'safety_immediate_danger') {
-      return 'Safety check';
-    }
-    return `Question ${Math.min(interview.askedCount + 1, interview.maxQuestions)} of up to ${interview.maxQuestions}`;
-  }, [currentQuestion?.publicId, interview]);
-
-  const currentValue = useMemo(() => {
-    if (!currentQuestion) {
-      return '';
-    }
-    switch (currentQuestion.inputType) {
-      case 'boolean':
-        return draftBoolean == null ? '' : draftBoolean ? 'Yes' : 'No';
-      case 'number':
-        return draftNumber;
-      case 'single_select':
-        return draftChoice;
-      default:
-        return draftText;
-    }
-  }, [currentQuestion, draftBoolean, draftChoice, draftNumber, draftText]);
-
-  function buildQuestionSummary(question: InterviewQuestion) {
-    return (
-      <div style={{ display: 'grid', gap: '0.34rem' }}>
-        <div><strong>Phase:</strong> {formatPhaseLabel(interview?.phase ?? question.phase)}</div>
-        <div><strong>Queued next:</strong> {interview?.cachedQuestions.length ?? 0}</div>
-        {question.clinicalReason && <div><strong>Why we ask:</strong> {question.clinicalReason}</div>}
-        {interview?.summaryPreview && <div><strong>Current summary:</strong> {interview.summaryPreview}</div>}
-        {session?.chiefComplaint && <div><strong>Chief complaint:</strong> {session.chiefComplaint}</div>}
-      </div>
-    );
+  function updateMandatory(field: keyof TriageMandatoryAnswers, value: string) {
+    setMandatoryAnswers((current) => ({ ...current, [field]: value }));
   }
 
-  function renderQuestionInput(question: InterviewQuestion) {
-    if (question.inputType === 'boolean') {
-      return (
-        <div style={styles.optionGrid}>
-          {['Yes', 'No'].map((choice) => {
-            const selected = (choice === 'Yes' && draftBoolean === true) || (choice === 'No' && draftBoolean === false);
-            return (
-              <button
-                key={choice}
-                type="button"
-                style={{
-                  ...styles.choiceButton,
-                  ...(selected ? styles.choiceButtonSelected : null),
-                }}
-                onClick={() => setDraftBoolean(choice === 'Yes')}
-              >
-                {choice}
-              </button>
-            );
-          })}
-        </div>
-      );
-    }
+  async function handleStart(event: React.FormEvent) {
+    event.preventDefault();
+    await performStart();
+  }
 
-    if (question.inputType === 'single_select') {
+  async function performStart() {
+    if (!allMandatoryComplete(mandatoryAnswers) || submitting) return;
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      applySession(await startTriage({
+        chiefComplaint: effectiveComplaint.trim(),
+        mandatoryAnswers: mapTrimmedMandatory(mandatoryAnswers),
+      }));
+    } catch (startError) {
+      setError(messageFor(startError, 'Could not start triage.'));
+      setRetry(() => () => void performStart());
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleAnswer() {
+    const question = normalizeQuestion(triage?.question);
+    if (!triage || !question || !answer.trim() || submitting) return;
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      applySession(await answerTriage(triage.sessionId, {
+        questionId: question.id,
+        answer: answer.trim(),
+      }));
+    } catch (answerError) {
+      setError(messageFor(answerError, 'Could not save your answer.'));
+      setRetry(() => () => void handleAnswer());
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleComplete() {
+    if (!triage || submitting) return;
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      applySession(await completeTriage(triage.sessionId));
+    } catch (completeError) {
+      setError(messageFor(completeError, 'Could not submit your triage review.'));
+      setRetry(() => () => void handleComplete());
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function renderQuestionInput(question: TriageQuestion) {
+    if (question.inputType === 'boolean' || question.inputType === 'single_select') {
+      const options = question.inputType === 'boolean' ? ['Yes', 'No', 'Unknown'] : question.options;
       return (
-        <div style={styles.optionGrid}>
-          {question.choices.map((choice) => (
+        <div style={styles.optionGrid} role="group" aria-label={question.text}>
+          {options.map((option) => (
             <button
-              key={choice}
+              key={option}
               type="button"
+              aria-pressed={answer === option}
               style={{
                 ...styles.choiceButton,
-                ...(draftChoice === choice ? styles.choiceButtonSelected : null),
+                ...(answer === option ? styles.optionSelected : null),
               }}
-              onClick={() => setDraftChoice(choice)}
+              onClick={() => setAnswer(option)}
+              disabled={submitting}
             >
-              {choice}
+              {option}
             </button>
           ))}
+          {question.allowsOther && (
+            <input
+              style={styles.input}
+              value={options.includes(answer) ? '' : answer}
+              onChange={(event) => setAnswer(event.target.value)}
+              placeholder="Another answer"
+              aria-label="Another answer"
+              disabled={submitting}
+            />
+          )}
         </div>
       );
     }
@@ -147,230 +210,362 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
       return (
         <input
           style={styles.input}
-          value={draftNumber}
-          onChange={(event) => setDraftNumber(event.target.value.replace(/[^\d]/g, ''))}
+          type="number"
           inputMode="numeric"
-          placeholder={question.placeholder || 'Enter a number'}
+          value={answer}
+          onChange={(event) => setAnswer(event.target.value)}
+          aria-label={question.text}
+          disabled={submitting}
           autoFocus
         />
       );
     }
 
-    if (question.inputType === 'textarea') {
-      return (
-        <textarea
-          style={styles.textArea}
-          value={draftText}
-          onChange={(event) => setDraftText(event.target.value)}
-          placeholder={question.placeholder || ''}
-          autoFocus
-        />
-      );
-    }
-
-    return undefined;
-  }
-
-  async function handleAdvance() {
-    if (!currentQuestion || submitting) {
-      return;
-    }
-
-    const payload = buildAdvancePayload(currentQuestion, {
-      draftText,
-      draftNumber,
-      draftBoolean,
-      draftChoice,
-    });
-
-    setSubmitting(true);
-    try {
-      const nextState = await advanceInterview(payload);
-      setInterview(nextState);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not save your answer.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleEmergencyAcknowledge() {
-    if (submitting) {
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const nextState = await advanceInterview({ action: 'acknowledge_emergency' });
-      setInterview(nextState);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not continue the intake interview.');
-    } finally {
-      setSubmitting(false);
-    }
+    return question.inputType === 'textarea' ? (
+      <textarea
+        style={styles.textArea}
+        value={answer}
+        onChange={(event) => setAnswer(event.target.value)}
+        placeholder="Type your answer, or enter Unknown"
+        aria-label={question.text}
+        disabled={submitting}
+        autoFocus
+      />
+    ) : (
+      <input
+        style={styles.input}
+        value={answer}
+        onChange={(event) => setAnswer(event.target.value)}
+        placeholder="Type your answer, or enter Unknown"
+        aria-label={question.text}
+        disabled={submitting}
+        autoFocus
+      />
+    );
   }
 
   if (loading) {
+    return <StatusCard message="Restoring your triage session…" />;
+  }
+
+  if (error) {
     return (
       <main style={styles.page}>
-        <section style={styles.statusCard}>
-          <div style={styles.spinner} />
-          <p style={styles.statusText}>Loading your intake interview…</p>
+        <section style={styles.card} role="alert">
+          <h1 style={styles.title}>We could not continue triage</h1>
+          <p style={styles.body}>{error}</p>
+          <div style={styles.buttonRow}>
+            {onBack && <button type="button" style={styles.secondaryButton} onClick={onBack}>Exit safely</button>}
+            {retry && <button type="button" style={styles.primaryButton} onClick={retry}>Try again</button>}
+          </div>
         </section>
       </main>
     );
   }
 
-  if (!interview) {
+  if (!triage) {
     return (
       <main style={styles.page}>
-        <section style={styles.statusCard}>
-          {onBack && (
-            <button style={styles.backButton} onClick={onBack} type="button">
-              ← Back
-            </button>
-          )}
-          <h1 style={styles.title}>We could not load the interview</h1>
-          <p style={styles.subtitle}>
-            {mode === 'authenticated'
-              ? 'Please go back and restart this visit from your account.'
-              : 'Please go back and try starting guest check-in again.'}
-          </p>
-        </section>
-      </main>
-    );
-  }
-
-  if (interview.status === 'emergency_ack_required' && interview.emergencyAlert) {
-    return (
-      <main style={styles.page}>
-        <section style={styles.alertCard}>
-          {onBack && (
-            <button style={styles.backButton} onClick={onBack} type="button">
-              ← Back
-            </button>
-          )}
-          <span style={styles.alertBadge}>Emergency Warning</span>
-          <h1 style={styles.title}>{interview.emergencyAlert.title}</h1>
-          <p style={styles.subtitle}>{interview.emergencyAlert.body}</p>
-          <p style={styles.alertRecommendation}>{interview.emergencyAlert.recommendation}</p>
-          <button style={styles.primaryButton} type="button" onClick={() => void handleEmergencyAcknowledge()} disabled={submitting}>
-            {submitting ? 'Continuing…' : 'I understand, continue intake'}
-          </button>
-        </section>
-      </main>
-    );
-  }
-
-  if (interview.status === 'complete') {
-    return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
-          {onBack && (
-            <button style={styles.backButton} onClick={onBack} type="button">
-              ← Back
-            </button>
-          )}
-          <span style={styles.badge}>Interview Complete</span>
-          <h1 style={styles.title}>Your intake summary is ready</h1>
-          <p style={styles.subtitle}>
-            We captured the key details needed before you choose a hospital.
-          </p>
-          {interview.summaryPreview && (
-            <div style={styles.summaryCard}>
-              <strong style={styles.summaryTitle}>Summary preview</strong>
-              <p style={styles.summaryText}>{interview.summaryPreview}</p>
+        <section style={styles.card}>
+          <header style={styles.header}>
+            <span style={styles.badge}>Required baseline</span>
+            <h1 style={styles.title}>Tell us the four essentials</h1>
+            <p style={styles.body}>These answers are required before the guided questions begin.</p>
+          </header>
+          <aside style={styles.complaintCard}>
+            <strong>Main concern</strong>
+            <span>{effectiveComplaint}</span>
+          </aside>
+          <form style={styles.form} onSubmit={handleStart}>
+            <BaselineField
+              label="1. When did this start?"
+              value={mandatoryAnswers.onset}
+              onChange={(value) => updateMandatory('onset', value)}
+              placeholder="e.g. About two hours ago"
+              options={['Unknown']}
+            />
+            <fieldset style={styles.fieldset}>
+              <legend style={styles.legend}>2. How severe is it right now, from 0 to 10?</legend>
+              <div style={styles.optionRow}>
+                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={mandatoryAnswers.severity === value}
+                    style={{
+                      ...styles.optionButton,
+                      ...(mandatoryAnswers.severity === value ? styles.optionSelected : null),
+                    }}
+                    onClick={() => setMandatoryAnswers((current) => ({ ...current, severity: value }))}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+              <div style={styles.optionRow}>
+                {[
+                  ['unknown', 'Unknown'],
+                  ['prefer_not_to_answer', 'Prefer not to answer'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={mandatoryAnswers.severity === value}
+                    style={{
+                      ...styles.optionButton,
+                      ...(mandatoryAnswers.severity === value ? styles.optionSelected : null),
+                    }}
+                    onClick={() => setMandatoryAnswers((current) => ({
+                      ...current,
+                      severity: value as 'unknown' | 'prefer_not_to_answer',
+                    }))}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset style={styles.fieldset}>
+              <legend style={styles.legend}>3. Are the symptoms changing?</legend>
+              <div style={styles.optionGrid}>
+                {[
+                  ['better', 'Getting better'],
+                  ['worse', 'Getting worse'],
+                  ['same', 'Staying the same'],
+                  ['unknown', 'Unknown'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={mandatoryAnswers.progression === value}
+                    style={{
+                      ...styles.choiceButton,
+                      ...(mandatoryAnswers.progression === value ? styles.optionSelected : null),
+                    }}
+                    onClick={() => setMandatoryAnswers((current) => ({
+                      ...current,
+                      progression: value as TriageMandatoryAnswers['progression'],
+                    }))}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <BaselineField
+              label="4. What relevant health history should we know?"
+              value={mandatoryAnswers.relevantHistory}
+              onChange={(value) => updateMandatory('relevantHistory', value)}
+              placeholder="Conditions, medicines, allergies, pregnancy, or “none”"
+              multiline
+              options={['None', 'Unknown', 'Not applicable', 'Prefer not to answer']}
+            />
+            <div style={styles.buttonRow}>
+              {onBack && <button type="button" style={styles.secondaryButton} onClick={onBack}>Back</button>}
+              <button
+                type="submit"
+                style={styles.primaryButton}
+                disabled={!allMandatoryComplete(mandatoryAnswers) || submitting}
+              >
+                {submitting ? 'Starting triage…' : 'Start guided questions'}
+              </button>
             </div>
-          )}
-          <button style={styles.primaryButton} type="button" onClick={onChooseHospital}>
-            Choose hospital
-          </button>
+          </form>
         </section>
       </main>
     );
   }
 
-  if (!currentQuestion) {
+  if (triage.status === 'urgent_review') {
     return (
       <main style={styles.page}>
-        <section style={styles.statusCard}>
-          <div style={styles.spinner} />
-          <p style={styles.statusText}>Preparing the next question…</p>
+        <section style={styles.urgentCard} role="alert" aria-live="assertive">
+          <span style={styles.urgentBadge}>Urgent medical attention</span>
+          <h1 style={styles.title}>Do not wait for online check-in</h1>
+          <p style={styles.urgentMessage}>
+            {triage.patientMessage || 'Call emergency services or go to the nearest emergency department now.'}
+          </p>
+          {triage.urgencyReason && <p style={styles.body}><strong>Reason:</strong> {triage.urgencyReason}</p>}
+          {onBack && <button type="button" style={styles.secondaryButton} onClick={onBack}>Exit triage</button>}
         </section>
       </main>
     );
+  }
+
+  if (triage.status === 'complete') {
+    return (
+      <main style={styles.page}>
+        <section style={styles.card}>
+          <span style={styles.badge}>Review before submitting</span>
+          <h1 style={styles.title}>Check your triage summary</h1>
+          <p style={styles.body}>Make sure this reflects what you shared. Submitting locks this triage session.</p>
+          <ReviewSection title="Main concern" content={effectiveComplaint} />
+          <ReviewSection title="Summary" content={triage.summary.briefing || 'No summary was provided.'} />
+          <ReviewSection title="Your baseline answers" content={formatMandatory(triage.mandatoryAnswers ?? mandatoryAnswers)} />
+          {triage.answers && Array.isArray(triage.answers) && triage.answers.length > 0 && (
+            <ReviewSection
+              title="Your follow-up answers"
+              content={triage.answers.map((item) => `${item.question || item.questionId}: ${item.answer}`).join('\n')}
+            />
+          )}
+          {triage.patientMessage && <ReviewSection title="Message for you" content={triage.patientMessage} />}
+          <div style={styles.buttonRow}>
+            {onBack && <button type="button" style={styles.secondaryButton} onClick={onBack}>Save and exit</button>}
+            <button type="button" style={styles.primaryButton} onClick={() => void handleComplete()} disabled={submitting}>
+              {submitting ? 'Submitting…' : 'Submit and choose hospital'}
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  const question = normalizeQuestion(triage.question);
+  if (!question) {
+    return <StatusCard message="Preparing the next question…" />;
   }
 
   return (
     <QuestionPage
-      step={Math.min(interview.askedCount + 1, interview.maxQuestions)}
-      totalSteps={interview.maxQuestions}
-      progressLabel={progressLabel}
-      question={currentQuestion.prompt}
-      description={currentQuestion.helpText || `Focused ${formatPhaseLabel(currentQuestion.phase)} question`}
-      value={currentValue}
-      onChange={setDraftText}
-      onNext={() => void handleAdvance()}
+      step={Math.min(triage.questionCount + 1, Math.max(1, triage.maxQuestions))}
+      totalSteps={Math.max(1, triage.maxQuestions)}
+      progressLabel={`Question ${Math.min(triage.questionCount + 1, triage.maxQuestions)} of up to ${triage.maxQuestions}`}
+      question={question.text}
+      description={triage.patientMessage || 'Answer in your own words. Do not include information unrelated to your care.'}
+      value={answer}
+      onChange={setAnswer}
+      onNext={() => void handleAnswer()}
       onBack={onBack}
-      placeholder={currentQuestion.placeholder || ''}
-      multiline={currentQuestion.inputType === 'textarea'}
-      required={currentQuestion.required}
-      nextLabel={submitting ? 'Saving…' : currentQuestion.publicId === 'safety_immediate_danger' ? 'Continue' : 'Next'}
-      summary={buildQuestionSummary(currentQuestion)}
+      placeholder="Type your answer"
+      multiline={question.inputType === 'textarea'}
+      required={question.required}
+      busy={submitting}
+      nextLabel={submitting ? 'Saving…' : 'Next question'}
     >
-      {renderQuestionInput(currentQuestion)}
+      {renderQuestionInput(question)}
     </QuestionPage>
   );
 }
 
-function buildAdvancePayload(
-  question: InterviewQuestion,
-  values: {
-    draftText: string;
-    draftNumber: string;
-    draftBoolean: boolean | null;
-    draftChoice: string;
-  },
-): AdvanceInterviewPayload {
-  const payload: AdvanceInterviewPayload = {
-    questionPublicId: question.publicId,
+function BaselineField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  multiline = false,
+  options = [],
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  multiline?: boolean;
+  options?: string[];
+}) {
+  return (
+    <label style={styles.label}>
+      {label}
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          style={styles.textArea}
+          required
+        />
+      ) : (
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          style={styles.input}
+          required
+        />
+      )}
+      {options.length > 0 && (
+        <span style={styles.optionRow}>
+          {options.map((option) => (
+            <button
+              key={option}
+              type="button"
+              style={{
+                ...styles.optionButton,
+                ...(value === option ? styles.optionSelected : null),
+              }}
+              onClick={() => onChange(option)}
+            >
+              {option}
+            </button>
+          ))}
+        </span>
+      )}
+    </label>
+  );
+}
+
+function ReviewSection({ title, content }: { title: string; content: string }) {
+  return (
+    <section style={styles.reviewCard}>
+      <strong>{title}</strong>
+      <p style={styles.reviewText}>{content}</p>
+    </section>
+  );
+}
+
+function StatusCard({ message }: { message: string }) {
+  return (
+    <main style={styles.page}>
+      <section style={styles.card} role="status" aria-live="polite">
+        <div style={styles.spinner} />
+        <p style={{ ...styles.body, textAlign: 'center' }}>{message}</p>
+      </section>
+    </main>
+  );
+}
+
+function normalizeQuestion(question: TriageSession['question'] | undefined): TriageQuestion | null {
+  return question ?? null;
+}
+
+function allMandatoryComplete(answers: TriageMandatoryAnswers): boolean {
+  return answers.onset.trim().length > 0
+    && answers.severity !== ''
+    && answers.progression !== ''
+    && answers.relevantHistory.trim().length > 0;
+}
+
+function mapTrimmedMandatory(answers: TriageMandatoryAnswers): TriageMandatoryAnswers {
+  return {
+    onset: answers.onset.trim(),
+    severity: answers.severity,
+    progression: answers.progression,
+    relevantHistory: answers.relevantHistory.trim(),
   };
-
-  if (question.inputType === 'boolean') {
-    payload.valueBoolean = values.draftBoolean ?? undefined;
-    return payload;
-  }
-
-  if (question.inputType === 'number') {
-    payload.valueNumber = values.draftNumber ? Number.parseInt(values.draftNumber, 10) : undefined;
-    return payload;
-  }
-
-  if (question.inputType === 'single_select') {
-    payload.valueChoice = values.draftChoice;
-    return payload;
-  }
-
-  payload.valueText = values.draftText;
-  return payload;
 }
 
-function formatPhaseLabel(phase: string): string {
-  if (phase === 'urgent') return 'Urgent';
-  if (phase === 'emergent') return 'Emergent';
-  return 'History';
+function formatMandatory(answers: TriageMandatoryAnswers): string {
+  return [
+    `Onset: ${answers.onset}`,
+    `Severity: ${typeof answers.severity === 'number' ? `${answers.severity}/10` : answers.severity.replace(/_/g, ' ')}`,
+    `Progression: ${answers.progression}`,
+    `Relevant history: ${answers.relevantHistory}`,
+  ].join('\n');
 }
 
-const sharedInput: React.CSSProperties = {
+function messageFor(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+const inputStyle: React.CSSProperties = {
   width: '100%',
+  boxSizing: 'border-box',
   border: panelBorder,
   borderRadius: patientTheme.radius.sm,
   background: '#fff',
   color: patientTheme.colors.ink,
-  fontSize: '0.95rem',
+  padding: '0.75rem',
+  fontSize: '1rem',
   fontFamily: patientTheme.fonts.body,
-  padding: '0.72rem 0.78rem',
-  boxSizing: 'border-box',
 };
 
 const styles: Record<string, React.CSSProperties> = {
@@ -378,151 +573,137 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: '100vh',
     display: 'grid',
     placeItems: 'center',
-    background: heroBackdrop,
     padding: '1rem',
+    background: heroBackdrop,
     fontFamily: patientTheme.fonts.body,
+    color: patientTheme.colors.ink,
   },
-  statusCard: {
+  card: {
     width: '100%',
-    maxWidth: '620px',
+    maxWidth: '680px',
+    boxSizing: 'border-box',
     border: panelBorder,
     borderRadius: patientTheme.radius.xl,
     background: 'rgba(255, 253, 248, 0.98)',
     boxShadow: patientTheme.shadows.panel,
-    padding: '1rem',
+    padding: 'clamp(1rem, 4vw, 1.5rem)',
     display: 'grid',
-    gap: '0.8rem',
+    gap: '0.9rem',
   },
-  alertCard: {
+  urgentCard: {
     width: '100%',
-    maxWidth: '620px',
-    border: '1px solid #fca5a5',
+    maxWidth: '680px',
+    boxSizing: 'border-box',
+    border: '2px solid #dc2626',
     borderRadius: patientTheme.radius.xl,
-    background: 'rgba(255, 248, 248, 0.98)',
-    boxShadow: '0 18px 42px rgba(220, 38, 38, 0.14)',
-    padding: '1rem',
+    background: '#fff7f7',
+    boxShadow: '0 20px 48px rgba(185, 28, 28, 0.2)',
+    padding: 'clamp(1rem, 4vw, 1.5rem)',
     display: 'grid',
-    gap: '0.8rem',
-    fontFamily: patientTheme.fonts.body,
+    gap: '1rem',
   },
-  spinner: {
-    width: '36px',
-    height: '36px',
-    borderRadius: '50%',
-    border: '4px solid #dbe3f3',
-    borderTopColor: patientTheme.colors.accent,
-    animation: 'spin 0.9s linear infinite',
-    justifySelf: 'center',
-  },
-  statusText: {
-    margin: 0,
-    textAlign: 'center',
-    color: patientTheme.colors.inkMuted,
-  },
+  header: { display: 'grid', gap: '0.35rem' },
   badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
     width: 'fit-content',
-    border: panelBorder,
     borderRadius: '999px',
     background: '#e9f1ff',
     color: patientTheme.colors.accentStrong,
-    padding: '0.28rem 0.72rem',
-    fontSize: '0.74rem',
+    padding: '0.3rem 0.72rem',
+    fontSize: '0.78rem',
     fontWeight: 700,
   },
-  alertBadge: {
-    display: 'inline-flex',
-    alignItems: 'center',
+  urgentBadge: {
     width: 'fit-content',
-    border: '1px solid #fecaca',
     borderRadius: '999px',
     background: '#fee2e2',
-    color: '#b91c1c',
-    padding: '0.28rem 0.72rem',
-    fontSize: '0.74rem',
-    fontWeight: 700,
+    color: '#991b1b',
+    padding: '0.3rem 0.72rem',
+    fontSize: '0.8rem',
+    fontWeight: 800,
   },
-  title: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.35rem',
-    color: patientTheme.colors.ink,
-  },
-  subtitle: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-  },
-  alertRecommendation: {
-    margin: 0,
-    color: '#7f1d1d',
-    lineHeight: 1.45,
-    fontWeight: 700,
-  },
-  primaryButton: {
-    border: 'none',
-    borderRadius: patientTheme.radius.sm,
-    background: patientTheme.colors.accent,
-    color: '#fff',
-    padding: '0.75rem 0.92rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  backButton: {
-    border: 'none',
-    background: 'none',
-    color: patientTheme.colors.inkMuted,
-    fontWeight: 600,
-    fontSize: '0.84rem',
-    cursor: 'pointer',
-    padding: 0,
-    justifySelf: 'start',
-    fontFamily: patientTheme.fonts.body,
-  },
-  summaryCard: {
+  title: { margin: 0, fontFamily: patientTheme.fonts.heading, fontSize: 'clamp(1.35rem, 5vw, 1.8rem)' },
+  body: { margin: 0, color: patientTheme.colors.inkMuted, lineHeight: 1.55, whiteSpace: 'pre-line' },
+  urgentMessage: { margin: 0, color: '#7f1d1d', lineHeight: 1.55, fontSize: '1.05rem', fontWeight: 700 },
+  complaintCard: {
+    display: 'grid',
+    gap: '0.25rem',
     border: panelBorder,
     borderRadius: patientTheme.radius.md,
+    background: '#f7faff',
+    padding: '0.8rem',
+  },
+  form: { display: 'grid', gap: '0.85rem' },
+  label: { display: 'grid', gap: '0.35rem', fontSize: '0.9rem', fontWeight: 700 },
+  fieldset: { margin: 0, border: 0, padding: 0, display: 'grid', gap: '0.55rem' },
+  legend: { padding: 0, marginBottom: '0.35rem', fontSize: '0.9rem', fontWeight: 700 },
+  optionRow: { display: 'flex', flexWrap: 'wrap', gap: '0.45rem' },
+  optionGrid: { display: 'grid', gap: '0.5rem' },
+  optionButton: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
     background: '#fff',
-    padding: '0.75rem',
-    display: 'grid',
-    gap: '0.28rem',
-  },
-  summaryTitle: {
     color: patientTheme.colors.ink,
-    fontSize: '0.88rem',
-  },
-  summaryText: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.45,
-  },
-  optionGrid: {
-    display: 'grid',
-    gap: '0.55rem',
+    padding: '0.55rem 0.7rem',
+    fontFamily: patientTheme.fonts.body,
+    fontWeight: 700,
+    cursor: 'pointer',
   },
   choiceButton: {
     border: panelBorder,
-    borderRadius: patientTheme.radius.md,
+    borderRadius: patientTheme.radius.sm,
     background: '#fff',
     color: patientTheme.colors.ink,
-    padding: '0.82rem 0.86rem',
-    textAlign: 'left',
-    fontWeight: 700,
-    cursor: 'pointer',
+    padding: '0.72rem 0.8rem',
     fontFamily: patientTheme.fonts.body,
+    fontWeight: 700,
+    textAlign: 'left',
+    cursor: 'pointer',
   },
-  choiceButtonSelected: {
+  optionSelected: {
     borderColor: patientTheme.colors.accent,
-    boxShadow: '0 10px 24px rgba(25, 73, 184, 0.14)',
     background: '#eef5ff',
     color: patientTheme.colors.accentStrong,
+    boxShadow: '0 0 0 1px rgba(25, 73, 184, 0.12)',
   },
-  input: sharedInput,
-  textArea: {
-    ...sharedInput,
-    minHeight: '108px',
-    resize: 'vertical',
+  input: inputStyle,
+  textArea: { ...inputStyle, minHeight: '92px', resize: 'vertical' },
+  reviewCard: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.md,
+    background: '#fff',
+    padding: '0.8rem',
+  },
+  reviewText: { margin: '0.35rem 0 0', lineHeight: 1.55, whiteSpace: 'pre-line', color: patientTheme.colors.inkMuted },
+  buttonRow: { display: 'flex', flexWrap: 'wrap', gap: '0.65rem' },
+  primaryButton: {
+    flex: 1,
+    minWidth: '190px',
+    border: 0,
+    borderRadius: patientTheme.radius.sm,
+    background: patientTheme.colors.accent,
+    color: '#fff',
+    padding: '0.78rem 1rem',
+    fontWeight: 700,
+    fontFamily: patientTheme.fonts.body,
+    cursor: 'pointer',
+  },
+  secondaryButton: {
+    border: panelBorder,
+    borderRadius: patientTheme.radius.sm,
+    background: '#fff',
+    color: patientTheme.colors.ink,
+    padding: '0.78rem 1rem',
+    fontWeight: 700,
+    fontFamily: patientTheme.fonts.body,
+    cursor: 'pointer',
+  },
+  spinner: {
+    width: '38px',
+    height: '38px',
+    justifySelf: 'center',
+    border: '4px solid #dbe3f3',
+    borderTopColor: patientTheme.colors.accent,
+    borderRadius: '50%',
+    animation: 'spin 0.9s linear infinite',
   },
 };
