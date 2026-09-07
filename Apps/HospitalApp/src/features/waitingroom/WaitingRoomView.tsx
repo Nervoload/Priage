@@ -33,6 +33,15 @@ interface WaitingRoomViewProps {
 
 type FilterKey = 'all' | 'ctas12' | 'ctas3' | 'ctas45' | 'alerts';
 
+type SortKey = 'priority' | 'wait' | 'name' | 'ctas';
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'priority', label: 'Priority (default)' },
+  { key: 'wait', label: 'Longest waiting' },
+  { key: 'ctas', label: 'CTAS level' },
+  { key: 'name', label: 'Patient name' },
+];
+
 const FILTER_THEME: Record<FilterKey, { summary: string; pill: string }> = {
   all: {
     summary: 'border-slate-900 bg-slate-900 text-white shadow-[0_20px_45px_-28px_rgba(15,23,42,0.9)]',
@@ -76,6 +85,7 @@ export function WaitingRoomView({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [sortKey, setSortKey] = useState<SortKey>('priority');
   const [filtersVisible, setFiltersVisible] = useState(true);
 
   const [, forceUpdate] = useState(0);
@@ -136,8 +146,34 @@ export function WaitingRoomView({
         break;
     }
 
-    return sortByQueuePriority(list).map((entry) => entry.encounter);
-  }, [alertMap, encounters, filter, searchQuery]);
+    switch (sortKey) {
+      case 'wait': {
+        const withWait = list.map((encounter) => ({
+          encounter,
+          waitMinutes: queueMap.get(encounter.id)?.waitMinutes ?? 0,
+        }));
+        withWait.sort((a, b) => b.waitMinutes - a.waitMinutes);
+        return withWait.map((entry) => entry.encounter);
+      }
+      case 'ctas': {
+        const sorted = [...list];
+        sorted.sort((a, b) => {
+          const aLevel = a.currentCtasLevel ?? Number.POSITIVE_INFINITY;
+          const bLevel = b.currentCtasLevel ?? Number.POSITIVE_INFINITY;
+          return aLevel - bLevel;
+        });
+        return sorted;
+      }
+      case 'name': {
+        const sorted = [...list];
+        sorted.sort((a, b) => patientName(a.patient).localeCompare(patientName(b.patient)));
+        return sorted;
+      }
+      case 'priority':
+      default:
+        return sortByQueuePriority(list).map((entry) => entry.encounter);
+    }
+  }, [alertMap, encounters, filter, queueMap, searchQuery, sortKey]);
 
   const selectedEncounter = encounters.find((encounter) => encounter.id === selectedId) ?? null;
   const alertCount = Object.keys(alertMap).length;
@@ -230,6 +266,22 @@ export function WaitingRoomView({
                 Enter the Waiting Room
               </button>
             )}
+
+            <label className="flex items-center gap-2 rounded-[16px] border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Sort</span>
+              <select
+                value={sortKey}
+                onChange={(event) => setSortKey(event.target.value as SortKey)}
+                className="bg-transparent text-sm font-semibold text-slate-700 focus:outline-none cursor-pointer"
+                aria-label="Sort waiting room patients"
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             {hasCustomFilters && (
               <button
