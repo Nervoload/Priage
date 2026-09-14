@@ -575,7 +575,7 @@ export function SettingsPage({
         availableViews={availableViews}
       />
 
-      <div className="relative mx-auto max-w-[1500px] px-4 py-6 sm:px-5 lg:min-h-[calc(100vh-5rem)] lg:px-6 lg:pl-[20rem]">
+      <div data-showcase="hospital.settings.controls" className="relative mx-auto max-w-[1500px] px-4 py-6 sm:px-5 lg:min-h-[calc(100vh-5rem)] lg:px-6 lg:pl-[20rem]">
         <aside
           className="mb-6 lg:mb-0 lg:w-[240px] lg:fixed lg:top-1/2 lg:-translate-y-1/2"
           style={{

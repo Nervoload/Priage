@@ -132,7 +132,7 @@ function buildContextText(patient: InterviewPatientContext, answers: InterviewAn
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
-export function selectCtasCueFamilies(
+function selectCtasCueFamilies(
   patient: InterviewPatientContext,
   answers: InterviewAnswerRecord[],
 ): CueFamily[] {

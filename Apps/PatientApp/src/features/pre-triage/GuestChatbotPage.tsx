@@ -1,7 +1,9 @@
+import { isStaticDemoMode } from '../../../../DemoShared/src/staticDemo';
+import { PATIENT_TEXT_ANSWERS } from '../../../../DemoShared/src/patientScenario';
+import { useScenarioAutofill } from '../../shared/hooks/useScenarioAutofill';
 import { useEffect, useMemo, useState } from 'react';
 
 import { advanceInterview, startInterview } from '../../shared/api/intake';
-import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import type { AdvanceInterviewPayload, InterviewQuestion, InterviewState } from '../../shared/types/domain';
 import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
 import { useToast } from '../../shared/ui/ToastContext';
@@ -14,18 +16,19 @@ interface GuestChatbotPageProps {
 }
 
 export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: GuestChatbotPageProps) {
-  const { session } = useGuestSession();
   const { showToast } = useToast();
 
   const [interview, setInterview] = useState<InterviewState | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [draftText, setDraftText] = useState('');
   const [draftNumber, setDraftNumber] = useState('');
   const [draftBoolean, setDraftBoolean] = useState<boolean | null>(null);
   const [draftChoice, setDraftChoice] = useState('');
 
   const currentQuestion = interview?.currentQuestion ?? null;
+  const [draftText, setDraftText, textFilling] = useScenarioAutofill(
+    PATIENT_TEXT_ANSWERS[currentQuestion?.publicId ?? ''] || '', currentQuestion?.publicId,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -55,7 +58,6 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
   }, [showToast]);
 
   useEffect(() => {
-    setDraftText('');
     setDraftNumber('');
     setDraftBoolean(null);
     setDraftChoice('');
@@ -68,7 +70,7 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     if (currentQuestion?.publicId === 'safety_immediate_danger') {
       return 'Safety check';
     }
-    return `Question ${Math.min(interview.askedCount + 1, interview.maxQuestions)} of up to ${interview.maxQuestions}`;
+    return `Question ${Math.min(interview.askedCount + 1, interview.maxQuestions)} of ${interview.maxQuestions}`;
   }, [currentQuestion?.publicId, interview]);
 
   const currentValue = useMemo(() => {
@@ -87,27 +89,16 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     }
   }, [currentQuestion, draftBoolean, draftChoice, draftNumber, draftText]);
 
-  function buildQuestionSummary(question: InterviewQuestion) {
-    return (
-      <div style={{ display: 'grid', gap: '0.34rem' }}>
-        <div><strong>Phase:</strong> {formatPhaseLabel(interview?.phase ?? question.phase)}</div>
-        <div><strong>Queued next:</strong> {interview?.cachedQuestions.length ?? 0}</div>
-        {question.clinicalReason && <div><strong>Why we ask:</strong> {question.clinicalReason}</div>}
-        {interview?.summaryPreview && <div><strong>Current summary:</strong> {interview.summaryPreview}</div>}
-        {session?.chiefComplaint && <div><strong>Chief complaint:</strong> {session.chiefComplaint}</div>}
-      </div>
-    );
-  }
-
   function renderQuestionInput(question: InterviewQuestion) {
     if (question.inputType === 'boolean') {
       return (
-        <div style={styles.optionGrid}>
+        <div role="group" aria-label={question.prompt} style={styles.optionGrid}>
           {['Yes', 'No'].map((choice) => {
             const selected = (choice === 'Yes' && draftBoolean === true) || (choice === 'No' && draftBoolean === false);
             return (
               <button
                 key={choice}
+                aria-pressed={selected}
                 type="button"
                 style={{
                   ...styles.choiceButton,
@@ -115,7 +106,7 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
                 }}
                 onClick={() => setDraftBoolean(choice === 'Yes')}
               >
-                {choice}
+                <span>{choice}</span><span className="answer-indicator" aria-hidden="true">{selected ? '✓' : ''}</span>
               </button>
             );
           })}
@@ -125,10 +116,11 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
     if (question.inputType === 'single_select') {
       return (
-        <div style={styles.optionGrid}>
+        <div role="group" aria-label={question.prompt} style={styles.optionGrid}>
           {question.choices.map((choice) => (
             <button
               key={choice}
+              aria-pressed={draftChoice === choice}
               type="button"
               style={{
                 ...styles.choiceButton,
@@ -136,9 +128,24 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
               }}
               onClick={() => setDraftChoice(choice)}
             >
-              {choice}
+              <span>{choice}</span><span className="answer-indicator" aria-hidden="true">{draftChoice === choice ? '✓' : ''}</span>
             </button>
           ))}
+        </div>
+      );
+    }
+
+    if (question.publicId === 'head-pain') {
+      return (
+        <div>
+          <div className="pain-scale" role="group" aria-label={question.prompt}>
+            {Array.from({ length: 11 }, (_, number) => (
+              <button key={number} type="button" aria-pressed={draftNumber === String(number)}
+                style={{ ...styles.choiceButton, ...(draftNumber === String(number) ? styles.choiceButtonSelected : null) }}
+                onClick={() => setDraftNumber(String(number))}>{number}</button>
+            ))}
+          </div>
+          <div className="pain-labels"><span>No pain</span><span>Worst pain</span></div>
         </div>
       );
     }
@@ -146,12 +153,13 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     if (question.inputType === 'number') {
       return (
         <input
+          aria-label={question.prompt}
           style={styles.input}
           value={draftNumber}
           onChange={(event) => setDraftNumber(event.target.value.replace(/[^\d]/g, ''))}
           inputMode="numeric"
           placeholder={question.placeholder || 'Enter a number'}
-          autoFocus
+          autoFocus={!isStaticDemoMode()}
         />
       );
     }
@@ -159,11 +167,12 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     if (question.inputType === 'textarea') {
       return (
         <textarea
+          aria-label={question.prompt}
           style={styles.textArea}
           value={draftText}
           onChange={(event) => setDraftText(event.target.value)}
           placeholder={question.placeholder || ''}
-          autoFocus
+          autoFocus={!isStaticDemoMode()}
         />
       );
     }
@@ -172,7 +181,7 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
   }
 
   async function handleAdvance() {
-    if (!currentQuestion || submitting) {
+    if (!currentQuestion || submitting || textFilling) {
       return;
     }
 
@@ -187,6 +196,7 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     try {
       const nextState = await advanceInterview(payload);
       setInterview(nextState);
+      window.scrollTo({ top: 0, behavior: 'instant' });
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not save your answer.');
     } finally {
@@ -212,8 +222,8 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
   if (loading) {
     return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
+      <main data-showcase="patient.intake.interview" style={styles.page}>
+        <section className="patient-intake-card" style={styles.statusCard}>
           <div style={styles.spinner} />
           <p style={styles.statusText}>Loading your intake interview…</p>
         </section>
@@ -223,8 +233,8 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
   if (!interview) {
     return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
+      <main className="patient-intake" style={styles.page}>
+        <section className="patient-intake-card" style={styles.statusCard}>
           {onBack && (
             <button style={styles.backButton} onClick={onBack} type="button">
               ← Back
@@ -243,7 +253,7 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
   if (interview.status === 'emergency_ack_required' && interview.emergencyAlert) {
     return (
-      <main style={styles.page}>
+      <main className="patient-intake" style={styles.page}>
         <section style={styles.alertCard}>
           {onBack && (
             <button style={styles.backButton} onClick={onBack} type="button">
@@ -264,8 +274,8 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
   if (interview.status === 'complete') {
     return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
+      <main className="patient-intake" style={styles.page}>
+        <section className="patient-intake-card" style={styles.statusCard}>
           {onBack && (
             <button style={styles.backButton} onClick={onBack} type="button">
               ← Back
@@ -278,8 +288,11 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
           </p>
           {interview.summaryPreview && (
             <div style={styles.summaryCard}>
-              <strong style={styles.summaryTitle}>Summary preview</strong>
-              <p style={styles.summaryText}>{interview.summaryPreview}</p>
+              <strong style={styles.summaryTitle}>{interview.summaryPreview.split('\n\n')[0]}</strong>
+              <details className="visit-details">
+                <summary>Review your answers</summary>
+                <p style={{ ...styles.summaryText, whiteSpace: 'pre-line' }}>{interview.summaryPreview}</p>
+              </details>
             </div>
           )}
           <button style={styles.primaryButton} type="button" onClick={onChooseHospital}>
@@ -292,8 +305,8 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
   if (!currentQuestion) {
     return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
+      <main className="patient-intake" style={styles.page}>
+        <section className="patient-intake-card" style={styles.statusCard}>
           <div style={styles.spinner} />
           <p style={styles.statusText}>Preparing the next question…</p>
         </section>
@@ -303,11 +316,14 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
   return (
     <QuestionPage
+      key={currentQuestion.publicId}
+      disabled={submitting || textFilling}
+      autoFocus={!isStaticDemoMode()}
       step={Math.min(interview.askedCount + 1, interview.maxQuestions)}
       totalSteps={interview.maxQuestions}
       progressLabel={progressLabel}
       question={currentQuestion.prompt}
-      description={currentQuestion.helpText || `Focused ${formatPhaseLabel(currentQuestion.phase)} question`}
+      description={currentQuestion.helpText || undefined}
       value={currentValue}
       onChange={setDraftText}
       onNext={() => void handleAdvance()}
@@ -316,7 +332,6 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
       multiline={currentQuestion.inputType === 'textarea'}
       required={currentQuestion.required}
       nextLabel={submitting ? 'Saving…' : currentQuestion.publicId === 'safety_immediate_danger' ? 'Continue' : 'Next'}
-      summary={buildQuestionSummary(currentQuestion)}
     >
       {renderQuestionInput(currentQuestion)}
     </QuestionPage>
@@ -353,12 +368,6 @@ function buildAdvancePayload(
 
   payload.valueText = values.draftText;
   return payload;
-}
-
-function formatPhaseLabel(phase: string): string {
-  if (phase === 'urgent') return 'Urgent';
-  if (phase === 'emergent') return 'Emergent';
-  return 'History';
 }
 
 const sharedInput: React.CSSProperties = {
@@ -507,7 +516,13 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: patientTheme.radius.md,
     background: '#fff',
     color: patientTheme.colors.ink,
-    padding: '0.82rem 0.86rem',
+    padding: '0.95rem 1rem',
+    minHeight: '54px',
+    fontSize: '1rem',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
     textAlign: 'left',
     fontWeight: 700,
     cursor: 'pointer',

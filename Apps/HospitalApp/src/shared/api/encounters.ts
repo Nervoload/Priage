@@ -3,6 +3,13 @@
 // Uses the authenticated fetch wrapper from client.ts.
 
 import { client } from './client';
+import {
+  createDemoAdmittanceEncounter,
+  getDemoEncounter,
+  isStaticDemoMode,
+  listDemoEncounters,
+  transitionDemoEncounter,
+} from '../../../../DemoShared/src/staticDemo';
 import type {
   CreateAdmittanceEncounterPayload,
   EncounterDetail,
@@ -23,6 +30,9 @@ export interface ListEncountersParams {
 export async function listEncounters(
   params: ListEncountersParams = {},
 ): Promise<EncounterListResponse> {
+  if (isStaticDemoMode()) {
+    return listDemoEncounters(params.status) as EncounterListResponse;
+  }
   const query = new URLSearchParams();
   if (params.status) {
     params.status.forEach(s => query.append('status', s));
@@ -38,6 +48,9 @@ export async function listEncounters(
 // ─── Get a single encounter (with relations) ───────────────────────────────
 
 export async function getEncounter(id: number): Promise<EncounterDetail> {
+  if (isStaticDemoMode()) {
+    return getDemoEncounter(id) as EncounterDetail;
+  }
   return client<EncounterDetail>(`/encounters/${id}`);
 }
 
@@ -52,6 +65,15 @@ export interface CreateEncounterPayload {
 export async function createEncounter(
   payload: CreateEncounterPayload,
 ): Promise<EncounterListItem> {
+  if (isStaticDemoMode()) {
+    return createDemoAdmittanceEncounter({
+      email: `patient-${payload.patientId}@demo.local`,
+      firstName: 'Demo',
+      lastName: 'Patient',
+      chiefComplaint: payload.chiefComplaint,
+      details: payload.details,
+    }) as Promise<EncounterListItem>;
+  }
   return client<EncounterListItem>('/encounters', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -61,6 +83,9 @@ export async function createEncounter(
 export async function createAdmittanceEncounter(
   payload: CreateAdmittanceEncounterPayload,
 ): Promise<EncounterDetail> {
+  if (isStaticDemoMode()) {
+    return createDemoAdmittanceEncounter(payload) as Promise<EncounterDetail>;
+  }
   return client<EncounterDetail>('/encounters/admit', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -70,25 +95,43 @@ export async function createAdmittanceEncounter(
 // ─── Status transitions ────────────────────────────────────────────────────
 
 export async function confirmEncounter(id: number): Promise<EncounterListItem> {
+  if (isStaticDemoMode()) {
+    return transitionDemoEncounter(id, 'confirm') as Promise<EncounterListItem>;
+  }
   return client<EncounterListItem>(`/encounters/${id}/confirm`, { method: 'POST' });
 }
 
 export async function markArrived(id: number): Promise<EncounterListItem> {
+  if (isStaticDemoMode()) {
+    return transitionDemoEncounter(id, 'arrived') as Promise<EncounterListItem>;
+  }
   return client<EncounterListItem>(`/encounters/${id}/arrived`, { method: 'POST' });
 }
 
 export async function startExam(id: number): Promise<EncounterListItem> {
+  if (isStaticDemoMode()) {
+    return transitionDemoEncounter(id, 'start-exam') as Promise<EncounterListItem>;
+  }
   return client<EncounterListItem>(`/encounters/${id}/start-exam`, { method: 'POST' });
 }
 
 export async function moveToWaiting(id: number): Promise<EncounterListItem> {
+  if (isStaticDemoMode()) {
+    return transitionDemoEncounter(id, 'waiting') as Promise<EncounterListItem>;
+  }
   return client<EncounterListItem>(`/encounters/${id}/waiting`, { method: 'POST' });
 }
 
 export async function dischargeEncounter(id: number): Promise<EncounterListItem> {
+  if (isStaticDemoMode()) {
+    return transitionDemoEncounter(id, 'discharge') as Promise<EncounterListItem>;
+  }
   return client<EncounterListItem>(`/encounters/${id}/discharge`, { method: 'POST' });
 }
 
 export async function cancelEncounter(id: number): Promise<EncounterListItem> {
+  if (isStaticDemoMode()) {
+    return transitionDemoEncounter(id, 'cancel') as Promise<EncounterListItem>;
+  }
   return client<EncounterListItem>(`/encounters/${id}/cancel`, { method: 'POST' });
 }

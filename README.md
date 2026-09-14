@@ -213,10 +213,86 @@ The NestJS backend currently wires together these major modules:
 
 ### External Software
 
-- Node.js 20+
+- Node.js 20+ (Node.js 22+ for the checked-in Wrangler deployment tooling)
 - npm 9+
 - Docker Desktop
 - Docker Compose v2
+
+### Static Sales Demo Build
+
+The lightweight sales demo can be built without the Nest backend, PostgreSQL, or
+Redis. It produces a Cloudflare Worker Static Assets bundle with the public
+access portal at `/demo/access`, PatientApp at `/demo/patient/`, and the Care
+Team App at `/demo/care/`.
+
+```bash
+node scripts/build-static-demo.mjs
+```
+
+The generated files are written to `dist/static-demo`. Static demo mode uses
+browser-local demo data, `localStorage`, and `BroadcastChannel`. The scoped
+Worker in `cloudflare/demo-worker.ts` validates the landing service's signed
+HttpOnly cookie against the shared D1 database before serving either protected
+app. The production NestJS backend is not part of this demo deployment.
+
+For a fresh build, install the root deployment tooling and both app dependency
+trees before running the static demo build:
+
+```bash
+npm ci
+npm --prefix Apps/HospitalApp ci
+npm --prefix Apps/PatientApp ci
+node scripts/build-static-demo.mjs
+```
+
+Run the release check with:
+
+```bash
+npm run check:demo-release
+```
+
+For Cloudflare Workers Builds, keep the root directory blank/default so the
+build runs from this repository root. Configure:
+
+- Build command: `npm ci && npm --prefix Apps/HospitalApp ci && npm --prefix Apps/PatientApp ci && npm run check:demo-release`
+- Deploy command: `npm run deploy:demo:worker`
+
+The build command is required because `dist/static-demo` is generated output and
+is not committed to git. Running only `npx wrangler deploy` from a fresh clone
+will fail before the assets exist.
+
+Alternatively, leave the build command blank and set the deploy command to
+`npm run deploy:demo`. That single command installs app dependencies, builds the
+static demo, runs the release check, and then invokes Wrangler.
+
+The checked-in `wrangler.jsonc` publishes `dist/static-demo` through the
+`ASSETS` binding, runs the Worker before asset delivery, and routes only
+`priage.ca/demo/*`. It reuses the existing `priage-demo-access` D1 database.
+The Worker requires:
+
+- D1 binding: `DEMO_DB`, pointing to the landing service's existing database
+- Secret: `DEMO_SESSION_SECRET`, with exactly the same value as the landing service
+- Worker route: `priage.ca/demo/*`
+
+The separate landing application remains authoritative for demo-code creation,
+email, verification, session creation, events, and callback requests. DemoShell
+continues to call its same-origin root `/api/*` endpoints; the demo Worker does
+not route or proxy those APIs. No code or session identifier is forwarded in
+app URLs or stored in demo-local state.
+
+See [Cloudflare demo Worker deployment](docs/CLOUDFLARE_DEMO_WORKER.md) for the
+exact responsibility boundary, required Cloudflare configuration, deployment
+command, and verification steps. Deployment is intentionally a separate release
+operation after review.
+
+The landing deployment should retain its WAF/rate-limit controls for:
+
+- `POST /api/verify-demo-code`
+- `POST /api/demo-events`
+- `POST /api/callback-request`
+
+Those controls protect the landing service's dynamic D1 write path. The demo
+Worker only performs read-only session authorization and static asset delivery.
 
 ### Quick Start
 

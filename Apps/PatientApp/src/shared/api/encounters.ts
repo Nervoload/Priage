@@ -2,6 +2,15 @@
 // Patient-facing API calls — encounters, messaging, queue.
 
 import { client } from './client';
+import {
+  getDemoPatientEncounter,
+  getDemoQueueInfo,
+  isStaticDemoMode,
+  listDemoPatientEncounters,
+  listDemoMessages,
+  sendDemoPatientMessage,
+  transitionDemoEncounter,
+} from '../../../../DemoShared/src/staticDemo';
 import type {
   Encounter,
   EncounterSummary,
@@ -14,21 +23,34 @@ import { sendDurablePatientCommand } from '../patientCommandOutbox';
 
 /** GET /patient/encounters — list own encounters */
 export async function listMyEncounters(): Promise<EncounterSummary[]> {
+  if (isStaticDemoMode()) {
+    return listDemoPatientEncounters() as EncounterSummary[];
+  }
   return client<EncounterSummary[]>('/patient/encounters');
 }
 
 /** GET /patient/encounters/:id — get own encounter detail */
 export async function getMyEncounter(id: number): Promise<Encounter> {
+  if (isStaticDemoMode()) {
+    return getDemoPatientEncounter(id) as Encounter;
+  }
   return client<Encounter>(`/patient/encounters/${id}`);
 }
 
 /** GET /patient/encounters/:id/queue — estimated queue position */
 export async function getQueueInfo(id: number): Promise<QueueInfo> {
+  if (isStaticDemoMode()) {
+    return getDemoQueueInfo(id);
+  }
   return client<QueueInfo>(`/patient/encounters/${id}/queue`);
 }
 
 /** POST /patient/encounters/:id/cancel — cancel own encounter */
 export async function cancelMyEncounter(id: number): Promise<Encounter> {
+  if (isStaticDemoMode()) {
+    await transitionDemoEncounter(id, 'cancel');
+    return getDemoPatientEncounter(id) as Encounter;
+  }
   return sendDurablePatientCommand<Encounter>(`/patient/encounters/${id}/cancel`, 'POST', {});
 }
 
@@ -44,6 +66,9 @@ export async function listMyMessages(
   encounterId: number,
   params: ListMyMessagesParams = {},
 ): Promise<Message[]> {
+  if (isStaticDemoMode()) {
+    return listDemoMessages(encounterId, params.afterMessageId).data as Message[];
+  }
   const query = new URLSearchParams();
 
   if (params.afterMessageId != null) {
@@ -64,6 +89,10 @@ export async function sendPatientMessage(
   isWorsening: boolean,
   idempotencyKey: string,
 ): Promise<Message> {
+  if (isStaticDemoMode()) {
+    void idempotencyKey;
+    return sendDemoPatientMessage(encounterId, content, isWorsening) as Message;
+  }
   return client<Message>(`/patient/encounters/${encounterId}/messages`, {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },

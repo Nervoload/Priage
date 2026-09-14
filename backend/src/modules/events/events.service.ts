@@ -3,6 +3,7 @@
 
 import { Inject, Injectable, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import { EncounterEvent, EventType, Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { Observable } from 'rxjs';
 
 import { LoggingService } from '../logging/logging.service';
@@ -17,6 +18,7 @@ import {
   AlertResolvedPayload,
 } from '../realtime/realtime.events';
 import { PatientRealtimeService } from './patient-realtime.service';
+import { getEventDispatchConfig } from './event-dispatch.config';
 
 export type EncounterEventActor = {
   actorUserId?: number;
@@ -241,25 +243,24 @@ export class EventsService {
   }
 
   async dispatchEncounterEventAndMarkProcessed(event: EncounterEvent): Promise<boolean> {
-    if (event.processedAt) {
+    if (event.processedAt || event.deadLetteredAt) {
       return true;
     }
 
+    const claimToken = randomUUID();
     try {
-      const dispatched = await this.dispatchEncounterEvent(event);
-      if (!dispatched) {
-        return false;
+      const claimed = await this.claimEventForDispatch(event.id, claimToken);
+      if (!claimed) {
+        // Another immediate dispatcher or the polling worker already owns this
+        // event. The outbox row remains the source of truth, so this is not a
+        // failed delivery and must not trigger a duplicate retry.
+        return true;
       }
 
-      await this.prisma.encounterEvent.updateMany({
-        where: { id: event.id, processedAt: null },
-        data: { processedAt: new Date() },
-      });
-
-      return true;
+      return this.dispatchClaimedEncounterEvent(claimed, claimToken);
     } catch (error) {
       await this.loggingService.error(
-        'Event was dispatched but could not be marked processed',
+        'Failed to claim or process encounter event',
         {
           service: 'EventsService',
           operation: 'dispatchEncounterEventAndMarkProcessed',
@@ -285,6 +286,70 @@ export class EventsService {
     }
 
     return this.dispatchEncounterEventAndMarkProcessed(event);
+  }
+
+  /**
+   * Sends a row that has already been leased by a worker. The polling worker
+   * uses its own batch claim, while immediate post-commit dispatch acquires a
+   * claim through claimEventForDispatch. Both paths only mark the row complete
+   * when they still own that lease.
+   */
+  async dispatchClaimedEncounterEvent(event: EncounterEvent, claimToken: string): Promise<boolean> {
+    try {
+      const dispatched = await this.dispatchEncounterEvent(event);
+      if (!dispatched) {
+        await this.releaseFailedClaim(event.id, claimToken, 'Realtime dispatch returned false');
+        return false;
+      }
+
+      const marked = await this.prisma.encounterEvent.updateMany({
+        where: {
+          id: event.id,
+          claimToken,
+          processedAt: null,
+        },
+        data: {
+          processedAt: new Date(),
+          claimedAt: null,
+          claimToken: null,
+          lastError: null,
+        },
+      });
+
+      if (marked.count === 1) {
+        return true;
+      }
+
+      await this.loggingService.warn(
+        'Encounter event dispatch completed after its lease was lost',
+        {
+          service: 'EventsService',
+          operation: 'dispatchClaimedEncounterEvent',
+          eventId: event.id,
+          encounterId: event.encounterId,
+          hospitalId: event.hospitalId,
+        },
+      );
+      return false;
+    } catch (error) {
+      await this.releaseFailedClaim(
+        event.id,
+        claimToken,
+        error instanceof Error ? error.message : String(error),
+      );
+      await this.loggingService.error(
+        'Claimed encounter event dispatch failed',
+        {
+          service: 'EventsService',
+          operation: 'dispatchClaimedEncounterEvent',
+          eventId: event.id,
+          encounterId: event.encounterId,
+          hospitalId: event.hospitalId,
+        },
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      return false;
+    }
   }
 
   observeEncounterEvents(encounterId: number): Observable<EncounterEvent> {
@@ -324,5 +389,50 @@ export class EventsService {
       throw new NotFoundException('Dead-letter event not found');
     }
     return { ok: true };
+  }
+
+  private async claimEventForDispatch(eventId: number, claimToken: string): Promise<EncounterEvent | null> {
+    const staleBefore = new Date(Date.now() - getEventDispatchConfig().claimTtlMs);
+    const claimed = await this.prisma.encounterEvent.updateMany({
+      where: {
+        id: eventId,
+        processedAt: null,
+        deadLetteredAt: null,
+        OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
+      },
+      data: {
+        claimedAt: new Date(),
+        claimToken,
+        attemptCount: { increment: 1 },
+      },
+    });
+    if (claimed.count !== 1) {
+      return null;
+    }
+
+    return this.prisma.encounterEvent.findFirst({
+      where: { id: eventId, claimToken },
+    });
+  }
+
+  private async releaseFailedClaim(eventId: number, claimToken: string, error: string): Promise<void> {
+    const event = await this.prisma.encounterEvent.findFirst({
+      where: { id: eventId, claimToken, processedAt: null },
+      select: { attemptCount: true },
+    });
+    if (!event) {
+      return;
+    }
+
+    const maxAttempts = getEventDispatchConfig().maxAttempts;
+    await this.prisma.encounterEvent.updateMany({
+      where: { id: eventId, claimToken, processedAt: null },
+      data: {
+        claimedAt: null,
+        claimToken: null,
+        lastError: error.slice(0, 2000),
+        deadLetteredAt: event.attemptCount >= maxAttempts ? new Date() : null,
+      },
+    });
   }
 }

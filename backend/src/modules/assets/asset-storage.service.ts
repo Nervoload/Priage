@@ -33,7 +33,7 @@ type StorageProviderConfig =
       accessMode: AssetAccessMode;
       signedUrlTtlSeconds: number;
       retentionDays: number | null;
-      encryption: ServerSideEncryption;
+      encryption: ServerSideEncryption | null;
       kmsKeyId: string | null;
     };
 
@@ -77,7 +77,7 @@ export class AssetStorageService {
         Body: buffer,
         ContentType: options.mimeType,
         ChecksumSHA256: Buffer.from(sha256, 'hex').toString('base64'),
-        ServerSideEncryption: this.config.encryption,
+        ServerSideEncryption: this.config.encryption || undefined,
         SSEKMSKeyId: this.config.kmsKeyId || undefined,
         Metadata: { scanStatus: 'NOT_SCANNED', sha256 },
       }), 'upload');
@@ -156,7 +156,7 @@ export class AssetStorageService {
       Bucket: this.config.bucket,
       Key: promotedKey,
       CopySource: copySource,
-      ServerSideEncryption: this.config.encryption,
+      ServerSideEncryption: this.config.encryption || undefined,
       SSEKMSKeyId: this.config.kmsKeyId || undefined,
       MetadataDirective: 'COPY',
     }), 'promote');
@@ -193,7 +193,10 @@ export class AssetStorageService {
     const retentionDays = this.parsePositiveInteger(process.env.ASSET_RETENTION_DAYS) ?? null;
     if (provider === 's3') {
       const kmsKeyId = process.env.ASSET_S3_KMS_KEY_ID?.trim() || null;
-      if ((process.env.NODE_ENV || '').toLowerCase() === 'production' && !kmsKeyId) {
+      const production = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+      const encryptionDisabled = !production
+        && ['none', 'disabled'].includes((process.env.ASSET_STORAGE_ENCRYPTION || '').trim().toLowerCase());
+      if (production && !kmsKeyId) {
         throw new Error('ASSET_S3_KMS_KEY_ID is required for production object storage');
       }
       return {
@@ -208,7 +211,7 @@ export class AssetStorageService {
         accessMode: this.resolveAccessMode(process.env.ASSET_ACCESS_MODE, 'SIGNED_URL'),
         signedUrlTtlSeconds: this.parsePositiveInteger(process.env.ASSET_SIGNED_URL_TTL_SECONDS) ?? 300,
         retentionDays,
-        encryption: kmsKeyId ? 'aws:kms' : 'AES256',
+        encryption: encryptionDisabled ? null : kmsKeyId ? 'aws:kms' : 'AES256',
         kmsKeyId,
       };
     }

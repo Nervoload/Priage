@@ -16,7 +16,6 @@ import {
   EncounterEvent,
   EncounterStatus,
   EventType,
-  IntakeSession,
   IntakeSessionStatus,
   Prisma,
   ReviewState,
@@ -800,38 +799,6 @@ export class IntakeSessionsService {
         return false;
       }
       return true;
-    });
-  }
-
-  private async buildPatientBindingProjectionTx(
-    tx: Prisma.TransactionClient,
-    intakeSessionId: number,
-  ): Promise<DraftProjection> {
-    const items = await tx.contextItem.findMany({
-      where: { intakeSessionId },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      include: {
-        supersededBy: {
-          select: { id: true },
-        },
-      },
-    });
-
-    return this.projectItems(items, (item) => {
-      if (item.reviewState === ReviewState.REJECTED) {
-        return false;
-      }
-      if (item.supersededBy.length > 0) {
-        return false;
-      }
-      if (item.sourceType === ContextSourceType.AI) {
-        return false;
-      }
-      return (
-        item.sourceType === ContextSourceType.PATIENT
-        || item.reviewState === ReviewState.PATIENT_CONFIRMED
-        || item.reviewState === ReviewState.STAFF_REVIEWED
-      );
     });
   }
 

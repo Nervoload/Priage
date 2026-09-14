@@ -6,19 +6,22 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build:demo": "tsc && vite build --base=/demo/patient/ --outDir ../../dist/static-demo/demo/patient --emptyOutDir",
+    "check:unused": "../../backend/node_modules/.bin/knip --config knip.json --include files,exports,dependencies",
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.22.0",
-    "socket.io-client": "^4.8.3"
+    "react-router-dom": "^6.22.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
     "typescript": "^5.0.0",
-    "vite": "^5.0.0"
+    "vite": "^5.0.0",
+    "vitest": "^3.2.7"
   }
 }

@@ -1,4 +1,4 @@
-import { IsInt, IsString, Length, Min } from 'class-validator';
+import { IsString, Length } from 'class-validator';
 
 export class VerifyMfaDto {
   @IsString()
@@ -9,11 +9,5 @@ export class VerifyMfaDto {
 export class SsoLoginDto {
   @IsString()
   assertion!: string;
-}
-
-export class RevokeStaffSessionDto {
-  @IsInt()
-  @Min(1)
-  sessionId!: number;
 }
 

@@ -78,6 +78,27 @@ function isLoopbackAddress(value: string | null): boolean {
   );
 }
 
+function isLoopbackHost(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const first = value.split(',')[0]?.trim();
+  if (!first) {
+    return false;
+  }
+
+  let host = first;
+  try {
+    host = new URL(first.includes('://') ? first : `http://${first}`).hostname;
+  } catch {
+    host = first;
+  }
+
+  const normalized = host.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  return normalized === 'localhost' || isLoopbackAddress(normalized);
+}
+
 function extractRequestAddresses(req: Record<string, any>): string[] {
   const candidates = [
     req.ip,
@@ -103,7 +124,14 @@ export function shouldSkipThrottleForLoopback(context: ExecutionContext): boolea
   }
 
   const request = context.switchToHttp().getRequest();
-  return extractRequestAddresses(request).some((address) => isLoopbackAddress(address));
+  if (extractRequestAddresses(request).some((address) => isLoopbackAddress(address))) {
+    return true;
+  }
+
+  const headers = request.headers || {};
+  return [headers.origin, headers.referer, headers.host]
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .some((value) => isLoopbackHost(value));
 }
 
 function buildThrottle(limitEnv: string, ttlEnv: string, limitFallback: number, ttlFallback: number): NamedThrottle {

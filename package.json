@@ -1,0 +1,16 @@
+{
+  "name": "priage-demo-deployment",
+  "private": true,
+  "scripts": {
+    "install:demo-apps": "npm --prefix Apps/HospitalApp ci && npm --prefix Apps/PatientApp ci",
+    "build:demo": "node scripts/build-static-demo.mjs",
+    "check:demo-release": "node scripts/build-static-demo.mjs && node scripts/check-static-demo-release.mjs",
+    "deploy": "npm run deploy:demo",
+    "deploy:demo": "npm run install:demo-apps && npm run check:demo-release && npm run deploy:demo:worker",
+    "deploy:demo:dry-run": "npm run install:demo-apps && npm run check:demo-release && wrangler deploy --dry-run --outdir /tmp/priage-demo-worker-dryrun",
+    "deploy:demo:worker": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.110.0"
+  }
+}

@@ -23,6 +23,28 @@ variable "backup_role_arn" {
   type        = string
   description = "IAM role AWS Backup uses for backup and restore."
 }
+variable "enable_rds_proxy" {
+  type    = bool
+  default = false
+}
+variable "rds_proxy_subnet_ids" {
+  type    = list(string)
+  default = []
+}
+variable "rds_proxy_security_group_ids" {
+  type    = list(string)
+  default = []
+}
+variable "rds_proxy_secret_arn" {
+  type        = string
+  default     = ""
+  description = "Secrets Manager ARN containing the PostgreSQL username/password for RDS Proxy."
+}
+variable "rds_proxy_target_db_instance_identifier" {
+  type        = string
+  default     = ""
+  description = "RDS PostgreSQL instance identifier registered behind the proxy."
+}
 
 resource "aws_kms_key" "priage" {
   description             = "Priage PHI encryption and backup key"
@@ -32,6 +54,80 @@ resource "aws_kms_key" "priage" {
 
 resource "aws_s3_bucket" "assets" {
   bucket_prefix = "${var.name}-assets-"
+}
+
+resource "aws_s3_bucket" "audit" {
+  bucket_prefix       = "${var.name}-audit-"
+  object_lock_enabled = true
+}
+
+resource "aws_s3_bucket_public_access_block" "audit" {
+  bucket                  = aws_s3_bucket.audit.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_policy" "audit_tls_only" {
+  bucket = aws_s3_bucket.audit.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        aws_s3_bucket.audit.arn,
+        "${aws_s3_bucket.audit.arn}/*",
+      ]
+      Condition = {
+        Bool = {
+          "aws:SecureTransport" = "false"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_s3_bucket_versioning" "audit" {
+  bucket = aws_s3_bucket.audit.id
+  versioning_configuration { status = "Enabled" }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "audit" {
+  bucket = aws_s3_bucket.audit.id
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.priage.arn
+      sse_algorithm     = "aws:kms"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "audit" {
+  bucket = aws_s3_bucket.audit.id
+  rule {
+    default_retention {
+      mode = "COMPLIANCE"
+      days = 2557
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "audit" {
+  bucket = aws_s3_bucket.audit.id
+  rule {
+    id     = "immutable-audit-archive"
+    status = "Enabled"
+    filter {}
+    transition {
+      days          = 90
+      storage_class = "GLACIER_IR"
+    }
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "assets" {
@@ -210,6 +306,96 @@ resource "aws_secretsmanager_secret" "backend" {
   recovery_window_in_days = 30
 }
 
+resource "aws_iam_role" "rds_proxy" {
+  count = var.enable_rds_proxy ? 1 : 0
+  name  = "${var.name}-rds-proxy"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = { Service = "rds.amazonaws.com" }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "rds_proxy" {
+  count = var.enable_rds_proxy ? 1 : 0
+  role  = aws_iam_role.rds_proxy[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.rds_proxy_secret_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [aws_kms_key.priage.arn]
+      }
+    ]
+  })
+}
+
+resource "aws_db_proxy" "priage" {
+  count                  = var.enable_rds_proxy ? 1 : 0
+  name                   = "${var.name}-postgres"
+  debug_logging          = false
+  engine_family          = "POSTGRESQL"
+  idle_client_timeout    = 1800
+  require_tls            = true
+  role_arn               = aws_iam_role.rds_proxy[0].arn
+  vpc_security_group_ids = var.rds_proxy_security_group_ids
+  vpc_subnet_ids         = var.rds_proxy_subnet_ids
+
+  auth {
+    auth_scheme = "SECRETS"
+    iam_auth    = "DISABLED"
+    secret_arn  = var.rds_proxy_secret_arn
+  }
+}
+
+resource "aws_db_proxy_default_target_group" "priage" {
+  count         = var.enable_rds_proxy ? 1 : 0
+  db_proxy_name = aws_db_proxy.priage[0].name
+
+  connection_pool_config {
+    connection_borrow_timeout    = 10
+    max_connections_percent      = 80
+    max_idle_connections_percent = 40
+    session_pinning_filters      = ["EXCLUDE_VARIABLE_SETS"]
+  }
+}
+
+resource "aws_db_proxy_target" "priage" {
+  count                  = var.enable_rds_proxy ? 1 : 0
+  db_instance_identifier = var.rds_proxy_target_db_instance_identifier
+  db_proxy_name          = aws_db_proxy.priage[0].name
+  target_group_name      = aws_db_proxy_default_target_group.priage[0].name
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_proxy_connection_pressure" {
+  count               = var.enable_rds_proxy ? 1 : 0
+  alarm_name          = "${var.name}-rds-proxy-connection-pressure"
+  namespace           = "AWS/RDS"
+  metric_name         = "DatabaseConnections"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 5
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 80
+  treat_missing_data  = "breaching"
+  dimensions = {
+    DBProxyName = aws_db_proxy.priage[0].name
+  }
+}
+
 output "asset_bucket" { value = aws_s3_bucket.assets.id }
+output "audit_archive_bucket" { value = aws_s3_bucket.audit.id }
 output "kms_key_arn" { value = aws_kms_key.priage.arn }
 output "backend_secret_arn" { value = aws_secretsmanager_secret.backend.arn }
+output "rds_proxy_endpoint" {
+  value = var.enable_rds_proxy ? aws_db_proxy.priage[0].endpoint : null
+}

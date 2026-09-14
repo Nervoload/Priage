@@ -11,14 +11,18 @@ import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 
 import { PrismaPg } from '@prisma/adapter-pg';
+import {
+  buildDatabasePoolConfig,
+  getDatabasePoolSettings,
+} from '../../common/config/database-pool.config';
 import { LoggingService } from '../logging/logging.service';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
   private readonly pool: Pool;
+  private readonly poolSettings = getDatabasePoolSettings();
   private connectionAttempts = 0;
-  private readonly MAX_CONNECTION_ATTEMPTS = 3;
   private loggingService?: LoggingService;
 
   constructor() {
@@ -33,12 +37,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     Logger.log('Initializing PrismaService with connection pool', 'PrismaService');
 
     // Create PostgreSQL pool for the adapter with proper limits
-    const pool = new Pool({
-      connectionString,
-      max: 20, // Maximum number of clients in the pool
-      idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-      connectionTimeoutMillis: 2000, // Timeout for acquiring a connection
-    });
+    const pool = new Pool(buildDatabasePoolConfig(connectionString));
 
     // Monitor pool events for debugging and performance tracking
     pool.on('connect', () => {
@@ -106,9 +105,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     }
 
     Logger.log('PrismaService pool configuration:', 'PrismaService');
-    Logger.log(`  - Max connections: 20`, 'PrismaService');
-    Logger.log(`  - Idle timeout: 30s`, 'PrismaService');
-    Logger.log(`  - Connection timeout: 2s`, 'PrismaService');
+    Logger.log(`  - Proxy mode: ${this.poolSettings.proxyMode}`, 'PrismaService');
+    Logger.log(`  - Connections: ${this.poolSettings.min}-${this.poolSettings.max}`, 'PrismaService');
+    Logger.log(`  - Idle timeout: ${this.poolSettings.idleTimeoutMillis}ms`, 'PrismaService');
+    Logger.log(`  - Connection timeout: ${this.poolSettings.connectionTimeoutMillis}ms`, 'PrismaService');
   }
 
   setLoggingService(loggingService: LoggingService) {
@@ -118,7 +118,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleInit(): Promise<void> {
     this.logger.log('Connecting to database...');
     
-    while (this.connectionAttempts < this.MAX_CONNECTION_ATTEMPTS) {
+    while (this.connectionAttempts < this.poolSettings.connectionAttempts) {
       try {
         this.connectionAttempts++;
         await this.$connect();
@@ -164,20 +164,20 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             error instanceof Error ? error : new Error(String(error)),
             {
               attempt: this.connectionAttempts,
-              maxAttempts: this.MAX_CONNECTION_ATTEMPTS,
+              maxAttempts: this.poolSettings.connectionAttempts,
             },
           );
         } else {
           this.logger.error({
             message: 'Failed to connect to database',
             attempt: this.connectionAttempts,
-            maxAttempts: this.MAX_CONNECTION_ATTEMPTS,
+            maxAttempts: this.poolSettings.connectionAttempts,
             error: error instanceof Error ? error.message : String(error),
             stack: error instanceof Error ? error.stack : undefined,
           });
         }
 
-        if (this.connectionAttempts >= this.MAX_CONNECTION_ATTEMPTS) {
+        if (this.connectionAttempts >= this.poolSettings.connectionAttempts) {
           this.logger.error('Max connection attempts reached. Service will be unavailable.');
           throw error;
         }
@@ -276,6 +276,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       totalCount: this.pool.totalCount,
       idleCount: this.pool.idleCount,
       waitingCount: this.pool.waitingCount,
+      maxConnections: this.poolSettings.max,
+      minConnections: this.poolSettings.min,
+      proxyMode: this.poolSettings.proxyMode,
     };
 
     if (this.loggingService) {

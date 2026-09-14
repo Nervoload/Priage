@@ -5,16 +5,15 @@
 // Initialize Socket.IO client pointing at the local NestJS backend.
 
 import { io, Socket } from 'socket.io-client';
-import {
-  API_BASE_URL,
-  isDemoAccessRequiredResponse,
-  notifyAuthExpired,
-  notifyDemoAccessRequired,
-} from '../api/client';
+import { API_BASE_URL, notifyDemoAccessRequired } from '../api/client';
 import type { Message } from '../types/domain';
+import {
+  isStaticDemoMode,
+  sendDemoStaffMessage,
+  trackDemoEvent,
+} from '../../../../DemoShared/src/staticDemo';
 
 let _socket: Socket | null = null;
-let demoAccessProbeInFlight: Promise<void> | null = null;
 
 type SocketConnectError = Error & {
   description?: unknown;
@@ -47,42 +46,11 @@ function socketErrorDetails(error: SocketConnectError): string {
     .join(' ');
 }
 
-async function probeDemoAccessGate(): Promise<void> {
-  if (demoAccessProbeInFlight) {
-    return demoAccessProbeInFlight;
-  }
-
-  demoAccessProbeInFlight = (async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/me`, {
-        credentials: 'include',
-      });
-      const body = response.ok ? '' : await response.text().catch(() => '');
-      if (response.status === 401) {
-        notifyAuthExpired();
-        return;
-      }
-      if (isDemoAccessRequiredResponse(response.status, body)) {
-        notifyDemoAccessRequired();
-      }
-    } catch {
-      // If the backend is down we leave normal reconnect/error handling alone.
-    } finally {
-      demoAccessProbeInFlight = null;
-    }
-  })();
-
-  return demoAccessProbeInFlight;
-}
-
 function handleSocketAccessError(error: SocketConnectError): void {
   const details = socketErrorDetails(error);
   if (details.includes('Demo access required') || details.includes('403')) {
     notifyDemoAccessRequired();
-    return;
   }
-
-  void probeDemoAccessGate();
 }
 
 /**
@@ -92,6 +60,9 @@ function handleSocketAccessError(error: SocketConnectError): void {
  * reconnect reconciliation.
  */
 export function getSocket(): Socket {
+  if (isStaticDemoMode()) {
+    throw new Error('Static demo mode does not create a Socket.IO connection');
+  }
   if (!_socket) {
     _socket = io(API_BASE_URL, {
       withCredentials: true,
@@ -100,11 +71,6 @@ export function getSocket(): Socket {
     });
     _socket.on('connect_error', (error) => {
       handleSocketAccessError(error as SocketConnectError);
-    });
-    _socket.on('disconnect', (reason) => {
-      if (reason === 'io server disconnect') {
-        void probeDemoAccessGate();
-      }
     });
   }
   return _socket;
@@ -142,6 +108,7 @@ async function ensureConnected(socket: Socket): Promise<void> {
 
 /** Connect the socket (call after login) */
 export function connectSocket(): void {
+  if (isStaticDemoMode()) return;
   const socket = getSocket();
   if (!socket.connected) {
     socket.connect();
@@ -149,6 +116,10 @@ export function connectSocket(): void {
 }
 
 export async function subscribeToEncounterRealtime(encounterIds: number[]): Promise<number[]> {
+  if (isStaticDemoMode()) {
+    trackDemoEvent('static_demo_realtime_subscribed', { encounterCount: encounterIds.length });
+    return encounterIds;
+  }
   const socket = getSocket();
   await ensureConnected(socket);
   const ack = await new Promise<EncounterSubscribeAck>((resolve, reject) => {
@@ -168,6 +139,9 @@ export async function sendMessageViaSocket(
   content: string,
   isInternal = false,
 ): Promise<Message> {
+  if (isStaticDemoMode()) {
+    return sendDemoStaffMessage(encounterId, content) as Message;
+  }
   const socket = getSocket();
   await ensureConnected(socket);
 
@@ -197,6 +171,7 @@ export async function sendMessageViaSocket(
 
 /** Disconnect and destroy the socket (call on logout) */
 export function disconnectSocket(): void {
+  if (isStaticDemoMode()) return;
   if (_socket) {
     _socket.disconnect();
     _socket = null;

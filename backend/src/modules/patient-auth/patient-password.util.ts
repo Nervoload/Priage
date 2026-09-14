@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 
-export const BCRYPT_ROUNDS = 10;
+const BCRYPT_ROUNDS = 10;
 const GUEST_PLACEHOLDER_SECRET = `guest-placeholder:${randomUUID()}`;
 let guestPlaceholderPasswordHashPromise: Promise<string> | null = null;
 

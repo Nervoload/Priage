@@ -213,6 +213,39 @@ export class AuthService {
     };
   }
 
+  async createDemoStaffSession(userId: number, auditContext?: SessionAuditContext) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { hospital: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Demo staff user not found');
+    }
+
+    const { sessionToken, session } = await this.createSession(user.id, auditContext, 'demo', true);
+    return {
+      sessionToken,
+      maxAgeMs: Math.max(0, (session.expiresAt?.getTime() ?? Date.now() + STAFF_AUTH_TTL_MS) - Date.now()),
+      session: {
+        id: session.id,
+        createdAt: session.createdAt.toISOString(),
+        expiresAt: session.expiresAt?.toISOString() ?? null,
+      },
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        hospitalId: user.hospitalId,
+        hospital: {
+          id: user.hospital.id,
+          name: user.hospital.name,
+          slug: user.hospital.slug,
+        },
+      },
+    };
+  }
+
   async beginMfaEnrollment(userId: number) {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
     if (!user) throw new NotFoundException('Staff user not found');

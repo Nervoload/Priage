@@ -85,7 +85,10 @@ export function NavBar({ currentView, onNavigate, onLogout, user, availableViews
   const homeView = visibleTabs.find((tab) => tab.key === 'waiting')?.key ?? visibleTabs[0]?.key ?? 'settings';
 
   return (
-    <nav className="sticky top-0 z-50 overflow-visible border-b border-white/10 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg">
+    <nav
+      data-showcase="hospital.nav.shell"
+      className="sticky top-0 z-50 overflow-visible border-b border-white/10 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg"
+    >
       <div className="relative h-16 px-6">
         <div className="absolute left-6 top-1/2 z-30 flex min-w-[220px] -translate-y-1/2 items-center justify-start">
           <button
@@ -108,6 +111,7 @@ export function NavBar({ currentView, onNavigate, onLogout, user, availableViews
               return (
                 <button
                   key={tab.key}
+                  data-showcase={`hospital.nav.${tab.key}`}
                   onClick={() => onNavigate(tab.key)}
                   className={`
                     group relative flex min-h-[46px] min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap px-3 pb-3 pt-2 text-center

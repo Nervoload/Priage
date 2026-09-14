@@ -88,7 +88,7 @@ export function TriageView({
         availableViews={availableViews}
       />
 
-      <div className="p-6 max-w-[1200px] mx-auto">
+      <div data-showcase="hospital.triage.workspace" className="p-6 max-w-[1200px] mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -108,7 +108,7 @@ export function TriageView({
           )}
         </div>
 
-        {loading ? (
+        {loading && encounters.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-xl border border-gray-200 text-gray-500 text-sm">
             Loading triage patients…
           </div>

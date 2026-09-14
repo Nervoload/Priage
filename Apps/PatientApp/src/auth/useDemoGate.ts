@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { API_BASE_URL, DEMO_ACCESS_REQUIRED_EVENT } from '../shared/api/client';
+import { isStaticDemoMode, trackDemoEvent } from '../../../DemoShared/src/staticDemo';
 
 interface DemoGateState {
   /** True while the initial probe is in flight */
@@ -23,6 +24,11 @@ export function useDemoGate(): DemoGateState {
     // Probe a guarded endpoint with raw fetch (not the app client wrapper)
     // to avoid triggering the patient-session-expired side-effect on 401/403.
     (async () => {
+      if (isStaticDemoMode()) {
+        trackDemoEvent('static_demo_patient_gate_bypassed');
+        if (!cancelled) setChecking(false);
+        return;
+      }
       try {
         const res = await fetch(`${API_BASE_URL}/patient-auth/me`, {
           credentials: 'include',
@@ -56,6 +62,11 @@ export function useDemoGate(): DemoGateState {
   const verify = useCallback(async (code: string) => {
     setError(null);
     try {
+      if (isStaticDemoMode()) {
+        trackDemoEvent('static_demo_patient_code_entered', { hasCode: Boolean(code) });
+        setGateActive(false);
+        return;
+      }
       const res = await fetch(`${API_BASE_URL}/demo-access`, {
         method: 'POST',
         credentials: 'include',

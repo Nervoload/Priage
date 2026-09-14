@@ -25,7 +25,7 @@ import type Redis from 'ioredis';
 
 import { readCookie, STAFF_AUTH_COOKIE } from '../../common/http/auth-cookie.util';
 import { getAllowedCorsOrigins } from '../../common/http/cors.util';
-import { DEMO_COOKIE_NAME } from '../demo-access/demo-access.guard';
+import { DemoSessionsService } from '../demo-sessions/demo-sessions.service';
 import { LoggingService } from '../logging/logging.service';
 import { CreateMessageDto } from '../messaging/dto/create-message.dto';
 import { MessagingService } from '../messaging/messaging.service';
@@ -103,6 +103,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     private readonly realtimeRedisAdapter: RealtimeRedisAdapterService,
     private readonly realtimeAuthService: RealtimeAuthService,
     private readonly clinicalAccess: ClinicalAccessService,
+    private readonly demoSessions: DemoSessionsService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     @Inject(forwardRef(() => MessagingService))
     private readonly messagingService: MessagingService,
@@ -163,16 +164,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       return;
     }
 
-    // Demo gate: reject WebSocket connections when DEMO_ACCESS_CODE is set
-    // and the client doesn't carry a valid demo cookie.
-    const demoCode = process.env.DEMO_ACCESS_CODE?.trim();
-    if (demoCode) {
-      const demoCookie = readCookie(client.handshake.headers?.cookie, DEMO_COOKIE_NAME);
-      if (demoCookie !== demoCode) {
-        this.logger.warn({ message: 'WebSocket rejected - missing demo access cookie', clientId });
-        client.disconnect();
-        return;
-      }
+    if (!await this.demoSessions.isDemoAccessAllowed(client.handshake.headers?.cookie)) {
+      this.logger.warn({ message: 'WebSocket rejected - missing demo access cookie', clientId });
+      client.disconnect();
+      return;
     }
 
     this.logger.log({

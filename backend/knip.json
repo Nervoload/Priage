@@ -1,0 +1,8 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/main.ts", "scripts/**/*.js"],
+  "project": ["src/**/*.ts", "scripts/**/*.js"],
+  "ignoreIssues": {
+    "src/modules/clinical-access/clinical-access.policy.ts": ["exports"]
+  }
+}

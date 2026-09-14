@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
+import { createHmac, randomBytes } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,10 @@ const patientAppDir = join(projectRoot, 'Apps', 'PatientApp');
 const hospitalAppDir = join(projectRoot, 'Apps', 'HospitalApp');
 const versionFile = join(projectRoot, 'VERSION');
 const runtimeDir = join(projectRoot, '.priage-dev');
+const demoAccessFile = join(runtimeDir, 'demo-access.json');
+const prismaConnectionRetryLimit = 10;
+const prismaConnectionRetryDelayMs = 1000;
+const demoPort = 5175;
 
 const args = new Set(process.argv.slice(2));
 const wantsHelp = args.has('--help') || args.has('-h');
@@ -22,8 +27,19 @@ const wantsSmoke = args.has('test') || args.has('-t');
 const wantsLogs = args.has('logs') || args.has('-l');
 const wantsVerbose = args.has('--verbose') || args.has('-v');
 const wantsKill = args.has('kill') || args.has('-k') || args.has('--kill');
+const wantsCloud = args.has('cloud');
+const wantsDemo = args.has('demo');
 
-const services = [
+if (wantsCloud) {
+  const cloudArgs = process.argv.slice(2).filter((value) => value !== 'cloud');
+  const result = spawnSync('node', [join(projectRoot, 'scripts', 'cloud-stack.mjs'), ...(cloudArgs.length > 0 ? cloudArgs : ['up'])], {
+    cwd: projectRoot,
+    stdio: 'inherit',
+  });
+  process.exit(result.status ?? 1);
+}
+
+const baseServices = [
   {
     id: 'backend',
     name: 'backend',
@@ -55,12 +71,23 @@ const services = [
     env: () => ({}),
   },
 ];
-const backendService = services[0];
-const hospitalService = services[1];
-const patientService = services[2];
+const demoService = {
+  id: 'demo',
+  name: 'demo',
+  title: 'Priage Dev: Demo',
+  cwd: projectRoot,
+  port: demoPort,
+  command: `node scripts/local-demo-server.mjs --port ${demoPort}`,
+  env: () => ({}),
+};
+const services = wantsDemo || wantsKill ? [...baseServices, demoService] : baseServices;
+const backendService = baseServices[0];
+const hospitalService = baseServices[1];
+const patientService = baseServices[2];
 const backendReadinessUrl = `http://localhost:${backendService.port}/health/ready`;
 const hospitalAppUrl = `http://localhost:${hospitalService.port}`;
 const patientAppUrl = `http://localhost:${patientService.port}`;
+const demoAppUrl = `http://localhost:${demoService.port}/demo/access`;
 
 if (wantsHelp) {
   printUsage();
@@ -92,7 +119,7 @@ async function main() {
   const stackStatus = await getStackStatus();
   logStackStatus(stackStatus);
 
-  const shouldRunStartup = !stackStatus.ready;
+  const shouldRunStartup = !stackStatus.coreReady;
   if (shouldRunStartup) {
     console.log('\n== Startup ==');
     console.log('[priage-dev] Stack is not fully ready; running startup flow.');
@@ -125,6 +152,13 @@ async function main() {
     });
     devAccountEnv = loadDevAccountEnv();
   }
+  if (wantsDemo && !devAccountEnv.PRIAGE_DEV_ADMIN_EMAIL) {
+    runStep('Ensuring local admin for demo access', 'node', ['scripts/bootstrap-dev-accounts.js'], {
+      cwd: backendDir,
+      env: { PRIAGE_DEV_RUNTIME_DIR: runtimeDir },
+    });
+    devAccountEnv = loadDevAccountEnv();
+  }
 
   if (wantsReseed || wantsFullseed) {
     runStep('Reseeding patient-facing dev data', 'node', ['scripts/reseed-dev.js'], {
@@ -141,9 +175,25 @@ async function main() {
     });
   }
 
-  const launchedServices = shouldRunStartup ? launchServices(version, devAccountEnv) : new Set();
+  let demoAccess = null;
+  if (wantsDemo) {
+    ensureDependenciesInstalled('PatientApp', patientAppDir);
+    ensureDependenciesInstalled('HospitalApp', hospitalAppDir);
+    runStep('Building protected static demo bundle', 'node', ['scripts/build-static-demo.mjs'], {
+      cwd: projectRoot,
+    });
+    demoAccess = writeLocalDemoAccess(devAccountEnv);
+  }
+
+  const servicesToLaunch = services.filter((service) => !isServiceReady(service, stackStatus));
+  const launchedServices = servicesToLaunch.length > 0
+    ? launchServices(version, devAccountEnv, servicesToLaunch)
+    : new Set();
   if (shouldRunStartup && (wantsSmoke || wantsLogs)) {
     await waitForBackend(launchedServices);
+  }
+  if (wantsDemo && launchedServices.has(demoService.id)) {
+    console.log(`[priage-dev] Demo server launch requested on ${demoAppUrl}.`);
   }
   if (wantsLogs && !wantsSmoke) {
     const loggingScript = wantsVerbose ? 'test:logging:verbose' : 'test:logging';
@@ -163,12 +213,17 @@ async function main() {
     });
   }
   console.log('Dev stack launcher finished.');
+  if (demoAccess) {
+    printDemoAccess(demoAccess);
+  }
 }
 
 function printUsage() {
-  console.log(`Usage: ./priage-dev [newuser|-u] [reseed|fullseed] [test|-t] [logs|-l] [--verbose|-v]
+  console.log(`Usage: ./priage-dev [demo] [newuser|-u] [reseed|fullseed] [test|-t] [logs|-l] [--verbose|-v]
 
 Options:
+  cloud [up|test|load|chaos|restore|down]
+            Run the Dockerized cloud-shaped developer environment
   kill, -k, --kill
             Stop Priage dev services and close their Terminal windows
   newuser, -u
@@ -176,6 +231,8 @@ Options:
   reseed    Wipe patient-facing dev data and run backend/scripts/seed.js
   fullseed  Wipe patient-facing dev data and run backend/scripts/demo-seed.js
             for a fuller waiting room, admit queue, and triage board
+  demo      Build and serve the protected static sales demo at http://localhost:${demoPort}/demo/access
+            with a generated local email/code pair
   test, -t  Wait for the API and run the backend confidence pipeline
   logs, -l  Wait for the API and run the logging test suite
   --verbose, -v
@@ -266,18 +323,22 @@ function ensureRuntimeDir() {
 
 async function getStackStatus() {
   const docker = getDockerStatus();
-  const [backendReady, hospitalReady, patientReady] = await Promise.all([
+  const [backendReady, hospitalReady, patientReady, demoReady] = await Promise.all([
     checkBackendReady(),
     checkFrontendReady(hospitalAppUrl),
     checkFrontendReady(patientAppUrl),
+    wantsDemo ? checkFrontendReady(demoAppUrl) : Promise.resolve(false),
   ]);
+  const coreReady = docker.ready && backendReady && hospitalReady && patientReady;
 
   return {
     docker,
     backendReady,
     hospitalReady,
     patientReady,
-    ready: docker.ready && backendReady && hospitalReady && patientReady,
+    demoReady,
+    coreReady,
+    ready: coreReady && (!wantsDemo || demoReady),
   };
 }
 
@@ -287,6 +348,9 @@ function logStackStatus(stackStatus) {
   console.log(`[priage-dev] Backend: ${stackStatus.backendReady ? 'ready' : 'not ready'}.`);
   console.log(`[priage-dev] Hospital app: ${stackStatus.hospitalReady ? 'ready' : 'not ready'}.`);
   console.log(`[priage-dev] Patient app: ${stackStatus.patientReady ? 'ready' : 'not ready'}.`);
+  if (wantsDemo) {
+    console.log(`[priage-dev] Demo app: ${stackStatus.demoReady ? 'ready' : 'not ready'}.`);
+  }
 }
 
 function formatDockerStatus(dockerStatus) {
@@ -425,7 +489,40 @@ function ensureDependenciesInstalled(name, cwd) {
 function runPrismaSetup() {
   console.log('\n== Prisma ==');
   runStep('Generating Prisma client', 'npx', ['prisma', 'generate'], { cwd: backendDir });
-  runStep('Applying Prisma migrations', 'npx', ['prisma', 'migrate', 'deploy'], { cwd: backendDir });
+  runPrismaMigrations();
+}
+
+function runPrismaMigrations() {
+  console.log('\n[priage-dev] Applying Prisma migrations');
+
+  for (let attempt = 1; attempt <= prismaConnectionRetryLimit; attempt += 1) {
+    const result = spawnSync('npx', ['prisma', 'migrate', 'deploy'], {
+      cwd: backendDir,
+      encoding: 'utf8',
+      env: process.env,
+    });
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    process.stdout.write(result.stdout ?? '');
+    process.stderr.write(result.stderr ?? '');
+
+    if (result.status === 0) {
+      return;
+    }
+
+    const cannotReachDatabase = /P1001|Can't reach database server/i.test(output);
+    if (!cannotReachDatabase || attempt === prismaConnectionRetryLimit) {
+      throw new Error(`Applying Prisma migrations failed with exit code ${result.status ?? 'unknown'}.`);
+    }
+
+    console.warn(
+      `[priage-dev] PostgreSQL is still starting (attempt ${attempt}/${prismaConnectionRetryLimit}); retrying in ${prismaConnectionRetryDelayMs / 1000}s.`,
+    );
+    sleepSync(prismaConnectionRetryDelayMs);
+  }
+}
+
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
 function runStep(label, cmd, commandArgs, options = {}) {
@@ -453,10 +550,10 @@ function capture(cmd, commandArgs, options = {}) {
   return result.stdout ?? '';
 }
 
-function launchServices(version, sharedEnv = {}) {
+function launchServices(version, sharedEnv = {}, servicesToLaunch = services) {
   console.log('\n== Dev Servers ==');
   const launched = new Set();
-  for (const service of services) {
+  for (const service of servicesToLaunch) {
     clearStalePidFile(service);
     removeWindowFile(service);
     removeCommandFile(service);
@@ -479,6 +576,14 @@ function launchServices(version, sharedEnv = {}) {
     console.log(`[priage-dev] Opened ${service.name} on port ${service.port}.`);
   }
   return launched;
+}
+
+function isServiceReady(service, stackStatus) {
+  if (service.id === backendService.id) return stackStatus.backendReady;
+  if (service.id === hospitalService.id) return stackStatus.hospitalReady;
+  if (service.id === patientService.id) return stackStatus.patientReady;
+  if (service.id === demoService.id) return stackStatus.demoReady;
+  return false;
 }
 
 function stopServices() {
@@ -824,11 +929,15 @@ async function waitForFrontendService(service, url, launchedServices = new Set()
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    ensureManagedServiceAlive(service, launchedServices);
     if (await checkFrontendReady(url)) {
       console.log(`[priage-dev] ${service.name} is ready via ${url}.`);
       return;
     }
+    if (service.id === demoService.id && findPortOwner(service.port)) {
+      console.log(`[priage-dev] ${service.name} is listening on port ${service.port}; continuing with local demo access.`);
+      return;
+    }
+    ensureManagedServiceAlive(service, launchedServices);
 
     await sleep(intervalMs);
   }
@@ -843,12 +952,71 @@ function ensureManagedServiceAlive(service, launchedServices) {
 
   const pid = readManagedPid(service);
   if (!pid) {
+    const portOwner = findPortOwner(service.port);
+    if (portOwner) {
+      return;
+    }
+
     throw new Error(`${service.title} exited before readiness completed.`);
   }
 }
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function writeLocalDemoAccess(devAccountEnv) {
+  const email = devAccountEnv.PRIAGE_DEV_ADMIN_EMAIL;
+  if (!email) {
+    throw new Error('Cannot create demo access code because no local admin email is registered.');
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  const code = formatDemoCode(randomBytes(4).toString('hex').slice(0, 8).toUpperCase());
+  const normalizedCode = normalizeDemoCode(code);
+  const codePepper = randomBytes(32).toString('hex');
+  const sessionSecret = randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + 48 * 60 * 60 * 1000;
+  const codeHash = hmacHex(codePepper, `${normalizedEmail}:${normalizedCode}`);
+  const access = {
+    email,
+    code,
+    codeHash,
+    codePepper,
+    sessionSecret,
+    expiresAt,
+    createdAt: Date.now(),
+  };
+
+  writeFileSync(demoAccessFile, `${JSON.stringify(access, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(demoAccessFile, 0o600);
+  return access;
+}
+
+function printDemoAccess(access) {
+  console.log('\n== Demo Access ==');
+  console.log(`[priage-dev] Demo portal: ${demoAppUrl}`);
+  console.log(`[priage-dev] Demo email:  ${access.email}`);
+  console.log(`[priage-dev] Demo code:   ${access.code}`);
+  console.log('[priage-dev] Patient and care-team URLs are protected on the local demo server.');
+  console.log(`[priage-dev] Open ${demoAppUrl}, enter the email/code above, then launch Patient App or Care Team App.`);
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeDemoCode(value) {
+  return String(value || '').replace(/[^a-z0-9]/gi, '').toUpperCase();
+}
+
+function formatDemoCode(value) {
+  const normalized = normalizeDemoCode(value).padEnd(8, '0').slice(0, 8);
+  return `${normalized.slice(0, 4)}-${normalized.slice(4)}`;
+}
+
+function hmacHex(secret, message) {
+  return createHmac('sha256', secret).update(message).digest('hex');
 }
 
 function loadDevAccountEnv() {

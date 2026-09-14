@@ -8,6 +8,12 @@ import type { AuthUser, LoginResponse } from '../shared/types/domain';
 import { login as apiLogin, getMe, logout as apiLogout } from '../shared/api/auth';
 import { ApiError, AUTH_EXPIRED_EVENT } from '../shared/api/client';
 import { disconnectSocket } from '../shared/realtime/socket';
+import {
+  getDemoStaffAuthUser,
+  getDemoStaffLoginResponse,
+  isStaticDemoMode,
+  trackDemoEvent,
+} from '../../../DemoShared/src/staticDemo';
 
 // ─── Context shape ──────────────────────────────────────────────────────────
 
@@ -29,21 +35,63 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const SESSION_HINT_KEY = 'priage:hospital-session';
+
+function hasSessionHint(): boolean {
+  try {
+    return window.localStorage.getItem(SESSION_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setSessionHint(): void {
+  try {
+    window.localStorage.setItem(SESSION_HINT_KEY, '1');
+  } catch {
+    // Storage can be unavailable in private or restricted browsing modes.
+  }
+}
+
+export function markHospitalSessionHint(): void {
+  setSessionHint();
+}
+
+function clearSessionHint(): void {
+  try {
+    window.localStorage.removeItem(SESSION_HINT_KEY);
+  } catch {
+    // Storage can be unavailable in private or restricted browsing modes.
+  }
+}
 
 // ─── Provider ───────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [initializing, setInitializing] = useState(true);
+  const [user, setUser] = useState<AuthUser | null>(() => (
+    isStaticDemoMode() ? getDemoStaffAuthUser() as AuthUser : null
+  ));
+  const [initializing, setInitializing] = useState(!isStaticDemoMode());
   const [loggingIn, setLoggingIn] = useState(false);
 
   const logout = useCallback(() => {
     disconnectSocket();
+    if (isStaticDemoMode()) {
+      trackDemoEvent('static_demo_staff_logout');
+      setUser(getDemoStaffAuthUser() as AuthUser);
+      return;
+    }
     void apiLogout().catch(() => undefined);
+    clearSessionHint();
     setUser(null);
   }, []);
 
   const refreshUser = useCallback(async () => {
+    if (isStaticDemoMode()) {
+      const demoUser = getDemoStaffAuthUser() as AuthUser;
+      setUser(demoUser);
+      return demoUser;
+    }
     try {
       const me = await getMe();
       setUser(me);
@@ -51,6 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         disconnectSocket();
+        clearSessionHint();
         setUser(null);
         return null;
       }
@@ -61,13 +110,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // On mount: if there's a stored session cookie, validate it via GET /auth/me
   useEffect(() => {
     let cancelled = false;
+    if (isStaticDemoMode()) {
+      setInitializing(false);
+      return () => { cancelled = true; };
+    }
+    if (!hasSessionHint()) {
+      setInitializing(false);
+      return () => { cancelled = true; };
+    }
+
     (async () => {
       try {
-        const me = await getMe();
+        const me = await getMe({ suppressAuthExpired: true });
         if (!cancelled) {
           setUser(me);
         }
       } catch {
+        clearSessionHint();
         // No active cookie-backed session.
       } finally {
         if (!cancelled) setInitializing(false);
@@ -79,6 +138,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string, mfaCode?: string) => {
     setLoggingIn(true);
     try {
+      if (isStaticDemoMode()) {
+        void password;
+        void mfaCode;
+        trackDemoEvent('static_demo_staff_login', { email });
+        const result = getDemoStaffLoginResponse() as LoginResponse;
+        setUser({
+          userId: result.user.id,
+          email: result.user.email,
+          role: result.user.role,
+          hospitalId: result.user.hospitalId,
+          hospital: result.user.hospital,
+        });
+        setSessionHint();
+        return result;
+      }
       const result = await apiLogin(email, password, mfaCode);
       // Map the login response user shape → AuthUser shape
       setUser({
@@ -88,6 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hospitalId: result.user.hospitalId,
         hospital: result.user.hospital,
       });
+      setSessionHint();
       return result;
     } finally {
       setLoggingIn(false);

@@ -60,7 +60,7 @@ const PAGE_ORDER = new Map<HospitalPageKey, number>(
 const DEFAULT_PAGE_ACCESS: Record<Role, HospitalPageKey[]> = {
   [Role.ADMIN]: [...HOSPITAL_PAGE_KEYS],
   [Role.NURSE]: ['triage', 'waiting', 'analytics', 'settings'],
-  [Role.STAFF]: ['admit', 'waiting', 'settings'],
+  [Role.STAFF]: ['admit', 'settings'],
   [Role.DOCTOR]: ['triage', 'waiting', 'analytics', 'settings'],
 };
 
@@ -209,7 +209,7 @@ function normalizeSurveyArray(value: unknown): HospitalFeedbackSurveyQuestion[] 
     .filter((item): item is HospitalFeedbackSurveyQuestion => item !== null);
 }
 
-export function getDefaultHospitalConfig(): HospitalOperationalConfig {
+function getDefaultHospitalConfig(): HospitalOperationalConfig {
   return {
     version: 1,
     pageAccess: {

@@ -26,7 +26,11 @@ export function WelcomePage() {
             </button>
           )}
 
-          <button style={styles.primaryAction} onClick={() => navigate('/guest/start')}>
+          <button
+            data-showcase="patient.welcome.quick"
+            style={styles.primaryAction}
+            onClick={() => navigate('/guest/start')}
+          >
             <strong style={styles.actionTitle}>Quick Check-In</strong>
             <span style={styles.actionBody}>Start as a guest and notify the hospital immediately.</span>
           </button>

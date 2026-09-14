@@ -9,7 +9,7 @@ import type {
   UpgradeGuestPayload,
 } from '../types/domain';
 import { registerPatient, loginPatient, logout as logoutApi, getMe, upgradeGuestAccount } from '../api/auth';
-import { PATIENT_SESSION_EXPIRED_EVENT } from '../api/client';
+import { isPatientSessionInvalidError, PATIENT_SESSION_EXPIRED_EVENT } from '../api/client';
 import { clearAuthSession, clearGuestSessionStorage, loadAuthSession, saveAuthSession } from '../session';
 
 interface AuthContextValue {
@@ -61,9 +61,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setPatient(profile);
           setSession(prev => prev ? { ...prev, patient: profile } : null);
         }
-      } catch {
-        // Session invalid
-        if (!cancelled) {
+      } catch (error) {
+        // Only an explicit authorization denial invalidates local session
+        // state. Network and server failures must not become a logout.
+        if (!cancelled && isPatientSessionInvalidError(error)) {
           clearSession();
         }
       } finally {

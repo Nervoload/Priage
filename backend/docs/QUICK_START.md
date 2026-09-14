@@ -272,7 +272,7 @@ BASE_URL=http://localhost:4000 npm run test:logging
 ```
 
 ### Add Custom Tests
-See `scripts/TEST_LOGGING_README.md` for detailed examples.
+See [TESTING.md](./TESTING.md) for the supported test sequence and detailed examples.
 
 ## 🎓 Best Practices
 
@@ -284,7 +284,7 @@ See `scripts/TEST_LOGGING_README.md` for detailed examples.
 
 ## 📚 Additional Resources
 
-- Full documentation: `scripts/TEST_LOGGING_README.md`
+- Supported test guide: [TESTING.md](./TESTING.md)
 - Logging implementation: `src/modules/logging/README.md`
 - Quick start guide: `src/modules/logging/QUICKSTART.md`
 - Verification report: `LOGGING_VERIFICATION_REPORT.md`

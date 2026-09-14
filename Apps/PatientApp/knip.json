@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignoreFiles": ["src/shared/api/assets.ts"],
+  "ignoreIssues": {
+    "src/shared/api/client.ts": ["exports"],
+    "src/shared/api/priage.ts": ["exports"],
+    "src/shared/encounters.ts": ["exports"],
+    "src/shared/hospitalDirectory.ts": ["exports"],
+    "src/shared/patientCommandOutbox.ts": ["exports"],
+    "src/shared/session.ts": ["exports"],
+    "src/shared/types/domain.ts": ["exports"]
+  }
+}

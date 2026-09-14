@@ -37,6 +37,21 @@ Priage is a comprehensive hospital management system that helps hospitals monito
    npm run test:smoke
    ```
 
+## Shared Sales Demo Setup
+
+The sales demo is isolated in the `demo-hospital` tenant. It can share a local
+database with private development hospitals without seeding those hospitals.
+
+```bash
+docker compose up -d postgres redis
+npm run demo:setup
+```
+
+`demo:setup` applies committed migrations, creates the demo hospital and a
+demo-only admin user, then seeds that exact hospital. Set `DEMO_HOSPITAL_SLUG`
+and `DEMO_STAFF_EMAIL` in `.env` to use different demo identifiers. It will
+never move an existing user from another hospital when an email conflicts.
+
 For detailed setup instructions, see [docs/QUICK_START.md](./docs/QUICK_START.md)
 
 ## Patient Encounter Workflow
@@ -141,7 +156,7 @@ node scripts/smoke-test-v2.js --skip-cleanup
 - Alert creation and management
 - Complete lifecycle workflow
 
-See [docs/SMOKE_TEST_README.md](./docs/SMOKE_TEST_README.md) for full documentation.
+See [docs/TESTING.md](./docs/TESTING.md) for current supported test commands.
 
 ### Logging Test
 
@@ -151,11 +166,11 @@ Validates the structured logging system:
 npm run test:logging
 ```
 
-See [docs/TEST_LOGGING_README.md](./docs/TEST_LOGGING_README.md) for details.
+See [docs/TESTING.md](./docs/TESTING.md) for current supported test commands.
 
 ### Quick Reference
 
-For all testing commands and options, see [docs/TESTING_QUICK_REFERENCE.md](./docs/TESTING_QUICK_REFERENCE.md)
+For all supported testing commands and options, see [docs/TESTING.md](./docs/TESTING.md)
 
 ## API Modules
 
@@ -280,9 +295,7 @@ EXPECTED → ADMITTED → TRIAGE → WAITING → COMPLETE
 ## Documentation
 
 - [Quick Start Guide](./docs/QUICK_START.md) - Setup instructions
-- [Smoke Test Documentation](./docs/SMOKE_TEST_README.md) - E2E testing
-- [Logging Test Documentation](./docs/TEST_LOGGING_README.md) - Logging tests
-- [Testing Quick Reference](./docs/TESTING_QUICK_REFERENCE.md) - All testing commands
+- [Testing guide](./docs/TESTING.md) - Supported test commands and safety gates
 - [Encounter Event Testing](./docs/encounter-event-testing.md) - Event system
 - [New Services Testing](./docs/NEW_SERVICES_TESTING.md) - Service patterns
 

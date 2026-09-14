@@ -50,7 +50,7 @@ export class PatientAuthService {
       service: 'PatientAuthService',
       operation: 'register',
       correlationId,
-    }, { email: dto.email });
+    }, { hasEmail: Boolean(dto.email) });
 
     // Check if email already exists
     const existing = await this.prisma.patientProfile.findUnique({
@@ -63,25 +63,43 @@ export class PatientAuthService {
     const hashedPassword = await hashPatientPassword(dto.password);
     const token = generatePatientSessionToken();
 
-    const patient = await this.prisma.patientProfile.create({
-      data: {
-        email: dto.email,
-        password: hashedPassword,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        phone: dto.phone,
-        age: dto.age,
-        gender: dto.gender,
-      },
-    });
+    // The profile and its first session are one account-creation operation.
+    // Without a transaction, a session insert failure leaves an account that
+    // cannot authenticate and appears as a confusing duplicate-email error on
+    // retry.
+    let patient;
+    try {
+      patient = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.patientProfile.create({
+          data: {
+            email: dto.email,
+            password: hashedPassword,
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            phone: dto.phone,
+            age: dto.age,
+            gender: dto.gender,
+          },
+        });
 
-    await this.prisma.patientSession.create({
-      data: {
-        token: hashPatientSessionToken(token),
-        patientId: patient.id,
-        expiresAt: this.buildSessionExpiry(),
-      },
-    });
+        await tx.patientSession.create({
+          data: {
+            token: hashPatientSessionToken(token),
+            patientId: created.id,
+            expiresAt: this.buildSessionExpiry(),
+          },
+        });
+
+        return created;
+      });
+    } catch (error) {
+      // The preflight lookup is only a friendly fast path. The unique index is
+      // authoritative under concurrent registrations.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('An account with this email already exists');
+      }
+      throw error;
+    }
 
     this.loggingService.info('Patient registered successfully', {
       service: 'PatientAuthService',
@@ -105,7 +123,7 @@ export class PatientAuthService {
       service: 'PatientAuthService',
       operation: 'login',
       correlationId,
-    }, { email: dto.email });
+    }, { hasEmail: Boolean(dto.email) });
 
     const patient = await this.prisma.patientProfile.findUnique({
       where: { email: dto.email },
@@ -169,7 +187,7 @@ export class PatientAuthService {
   /**
    * Get the current patient profile (from PatientGuard context).
    */
-  async getMe(patientId: number, correlationId?: string) {
+  async getMe(patientId: number, _correlationId?: string) {
     const patient = await this.prisma.patientProfile.findUnique({
       where: { id: patientId },
     });
@@ -337,7 +355,7 @@ export class PatientAuthService {
   /**
    * Logout — delete the current session.
    */
-  async logout(sessionId: number, correlationId?: string) {
+  async logout(sessionId: number, _correlationId?: string) {
     await this.prisma.patientSession.delete({
       where: { id: sessionId },
     }).catch(() => {

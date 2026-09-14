@@ -1,0 +1,33 @@
+name: Deployed Capacity
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+
+jobs:
+  five-hundred-patient-cloud-shape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - run: node scripts/cloud-stack.mjs up
+      - run: npm run test:deployed-stack
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://priage:priage@localhost:6432/priage?schema=public
+          DEPLOYED_TEST_BASE_URL: http://localhost:8080
+          DEPLOYED_TEST_PATIENT_COUNT: 500
+          DEPLOYED_TEST_STAFF_COUNT: 30
+          DEPLOYED_TEST_UPLOAD_COUNT: 30
+          DEPLOYED_TEST_SSE_COUNT: 100
+          DEPLOYED_TEST_RECONNECT_ROUNDS: 5
+      - if: always()
+        run: docker compose -f docker-compose.cloud.yml logs --tail=500
+      - if: always()
+        run: docker compose -f docker-compose.cloud.yml down -v

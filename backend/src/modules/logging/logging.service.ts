@@ -81,6 +81,7 @@ const SAFE_STRING_KEYS = new Set([
   'method',
   'path',
   'loginMethod',
+  'compatibilityUntil',
 ]);
 
 const SAFE_NUMERIC_KEYS = new Set([
@@ -96,6 +97,9 @@ const SAFE_NUMERIC_KEYS = new Set([
   'idleConnections',
   'waitingClients',
   'totalConnections',
+  'status',
+  'maxConnections',
+  'minConnections',
   'attachmentCount',
 ]);
 
