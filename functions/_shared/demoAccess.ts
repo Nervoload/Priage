@@ -1,14 +1,16 @@
-type D1Value = string | number | null;
+import {
+  DEMO_SESSION_COOKIE_NAME,
+  constantTimeEquals,
+  hmacSha256Hex,
+  signSessionId,
+  validateDemoSession,
+  type D1Database,
+  type D1Value,
+  type DemoSession,
+} from '../../cloudflare/demo-session';
 
-type D1PreparedStatement = {
-  bind(...values: D1Value[]): D1PreparedStatement;
-  first<T = Record<string, D1Value>>(): Promise<T | null>;
-  run(): Promise<unknown>;
-};
-
-export type D1Database = {
-  prepare(query: string): D1PreparedStatement;
-};
+export { validateDemoSession };
+export type { D1Database, DemoSession };
 
 export type Env = {
   DEMO_DB?: D1Database;
@@ -24,14 +26,6 @@ export type PagesFunctionContext = {
 
 export type PagesFunction = (context: PagesFunctionContext) => Response | Promise<Response>;
 
-export type DemoSession = {
-  id: string;
-  requestId: string;
-  emailNormalized: string;
-  expiresAt: number;
-};
-
-const COOKIE_NAME = 'priage_demo_session';
 const SESSION_TTL_SECONDS = 48 * 60 * 60;
 const SESSION_TTL_MS = SESSION_TTL_SECONDS * 1000;
 const VERIFY_LIMIT_WINDOW_MS = 15 * 60 * 1000;
@@ -176,7 +170,7 @@ export async function handleVerifyDemoCode(request: Request, env: Env): Promise<
     const headers = new Headers();
     headers.set('set-cookie', buildSessionCookie(request, sessionId, signature, Math.floor((expiresAt - now) / 1000)));
 
-    return json({ ok: true, sessionId, expiresAt }, { headers });
+    return json({ ok: true, expiresAt }, { headers });
   } catch (error) {
     if (error instanceof DemoAccessError) {
       return json({ ok: false, error: error.message }, { status: error.status });
@@ -198,7 +192,6 @@ export async function handleDemoSession(request: Request, env: Env): Promise<Res
 
   return json({
     ok: true,
-    sessionId: session.id,
     email: session.emailNormalized,
     expiresAt: session.expiresAt,
   });
@@ -280,67 +273,9 @@ export async function handleCallbackRequest(request: Request, env: Env): Promise
   return json({ ok: true });
 }
 
-export async function validateDemoSession(
-  request: Request,
-  env: Env,
-  options: { touch?: boolean } = {},
-): Promise<DemoSession | null> {
-  const db = env.DEMO_DB;
-  const sessionSecret = env.DEMO_SESSION_SECRET;
-  if (!db || !sessionSecret) return null;
-
-  const cookieValue = parseCookies(request.headers.get('cookie') || '')[COOKIE_NAME];
-  if (!cookieValue) return null;
-
-  const [sessionId, signature] = cookieValue.split('.');
-  if (!sessionId || !signature) return null;
-
-  const expectedSignature = await signSessionId(sessionId, sessionSecret);
-  if (!constantTimeEquals(signature, expectedSignature)) return null;
-
-  const now = Date.now();
-  const row = await db
-    .prepare(
-      `SELECT
-        demo_sessions.id AS id,
-        demo_sessions.request_id AS request_id,
-        demo_sessions.email_normalized AS email_normalized,
-        demo_sessions.expires_at AS expires_at,
-        demo_sessions.revoked_at AS revoked_at,
-        demo_requests.status AS request_status
-      FROM demo_sessions
-      JOIN demo_requests ON demo_requests.id = demo_sessions.request_id
-      WHERE demo_sessions.id = ?
-      LIMIT 1`,
-    )
-    .bind(sessionId)
-    .first<Record<string, D1Value>>();
-
-  if (!row) return null;
-  if (row.revoked_at !== null) return null;
-  if (String(row.request_status) !== 'pending') return null;
-
-  const expiresAt = Number(row.expires_at);
-  if (!Number.isFinite(expiresAt) || expiresAt <= now) return null;
-
-  if (options.touch !== false) {
-    await db
-      .prepare('UPDATE demo_sessions SET last_seen_at = ? WHERE id = ?')
-      .bind(now, sessionId)
-      .run();
-  }
-
-  return {
-    id: String(row.id),
-    requestId: String(row.request_id),
-    emailNormalized: String(row.email_normalized),
-    expiresAt,
-  };
-}
-
 export function redirectToDemo(request: Request): Response {
   const url = new URL(request.url);
-  const demoUrl = new URL('/demo', url.origin);
+  const demoUrl = new URL('/demo/access', url.origin);
   demoUrl.searchParams.set('returnTo', url.pathname + url.search);
   return Response.redirect(demoUrl.toString(), 302);
 }
@@ -583,17 +518,7 @@ function buildSessionCookie(
   maxAgeSeconds = SESSION_TTL_SECONDS,
 ): string {
   const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
-  return `${COOKIE_NAME}=${sessionId}.${signature}; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=${maxAgeSeconds}`;
-}
-
-function parseCookies(header: string): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  for (const part of header.split(';')) {
-    const [name, ...valueParts] = part.trim().split('=');
-    if (!name) continue;
-    cookies[name] = valueParts.join('=');
-  }
-  return cookies;
+  return `${DEMO_SESSION_COOKIE_NAME}=${sessionId}.${signature}; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=${maxAgeSeconds}`;
 }
 
 function getClientIp(request: Request): string | null {
@@ -607,31 +532,6 @@ function getClientIp(request: Request): string | null {
 function coarseIpPrefix(ip: string): string {
   if (ip.includes(':')) return ip.split(':').slice(0, 4).join(':');
   return ip.split('.').slice(0, 3).join('.');
-}
-
-async function signSessionId(sessionId: string, sessionSecret: string): Promise<string> {
-  return hmacSha256Hex(sessionSecret, sessionId);
-}
-
-async function hmacSha256Hex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
-  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function constantTimeEquals(a: string, b: string): boolean {
-  let mismatch = a.length ^ b.length;
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    mismatch |= (a.charCodeAt(index) || 0) ^ (b.charCodeAt(index) || 0);
-  }
-  return mismatch === 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

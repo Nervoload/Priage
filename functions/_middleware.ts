@@ -2,8 +2,8 @@ import { redirectToDemo, validateDemoSession, type PagesFunction } from './_shar
 
 const PROTECTED_PREFIXES = [
   '/demo/patient',
-  '/demo/hospital',
   '/demo/care',
+  '/demo/hospital',
   '/patient',
   '/care',
   '/hospital',

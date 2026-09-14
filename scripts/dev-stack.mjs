@@ -87,7 +87,7 @@ const patientService = baseServices[2];
 const backendReadinessUrl = `http://localhost:${backendService.port}/health/ready`;
 const hospitalAppUrl = `http://localhost:${hospitalService.port}`;
 const patientAppUrl = `http://localhost:${patientService.port}`;
-const demoAppUrl = `http://localhost:${demoService.port}/demo`;
+const demoAppUrl = `http://localhost:${demoService.port}/demo/access`;
 
 if (wantsHelp) {
   printUsage();
@@ -231,7 +231,7 @@ Options:
   reseed    Wipe patient-facing dev data and run backend/scripts/seed.js
   fullseed  Wipe patient-facing dev data and run backend/scripts/demo-seed.js
             for a fuller waiting room, admit queue, and triage board
-  demo      Build and serve the protected static sales demo at http://localhost:${demoPort}/demo
+  demo      Build and serve the protected static sales demo at http://localhost:${demoPort}/demo/access
             with a generated local email/code pair
   test, -t  Wait for the API and run the backend confidence pipeline
   logs, -l  Wait for the API and run the logging test suite

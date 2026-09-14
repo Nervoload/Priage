@@ -32,15 +32,18 @@ Expected end-to-end flow:
 2. The landing page explains the Priage mission, target users, workflow, and value proposition.
 3. The prospect requests demo access by submitting a form with email, name, organization, role, organization type, and areas of interest.
 4. A small access service validates the request, applies abuse protection, generates a demo code or signed link, stores the request, and emails the prospect.
-5. The prospect opens the demo surface, for example `priage.ca/demo`.
+5. The prospect opens the demo surface at `priage.ca/demo/access`.
 6. The prospect enters email plus code or follows a signed link.
 7. The access service validates the code server-side and sets a short-lived authorized demo session.
 8. The demo shell loads the PatientApp and HospitalApp in demo mode.
 9. The prospect chooses guided tour, free explore, patient-only fullscreen, or hospital-only fullscreen.
-10. The demo records local and/or uploaded telemetry tied to an opaque demo session id.
+10. The demo records local telemetry and may upload events through the authenticated, same-origin landing endpoint.
 11. The prospect submits feedback, requests a callback, or schedules a full demo.
 
-The current branch implements the browser-local app runtime for steps 8-10. It does not yet implement the landing page, generated code service, email delivery, secure access gate, polished guided showcase, or production event collection.
+This repository implements the browser-local app runtime, guided surfaces, and
+the scoped Cloudflare Worker that protects app assets. The separate landing
+repository owns the landing page, code generation, email delivery, verification,
+session creation, and production event collection.
 
 ## 3. Demo Instance Model
 
@@ -49,7 +52,7 @@ Use the phrase "generated demo instance" carefully.
 In the current lightweight architecture, a generated demo instance means:
 
 - The prospect has passed a real access gate outside the static app.
-- The static demo app receives opaque metadata such as `demoCode` or `demoSessionId`.
+- Authorization remains in a signed HttpOnly cookie; the static app does not receive or persist the code or session ID.
 - The browser creates an isolated local scenario using seeded fictional data.
 - The scenario runs in the prospect's browser using static assets, `localStorage`, deterministic demo actions, and `BroadcastChannel` frame sync.
 
@@ -69,16 +72,11 @@ A later architecture may create true server-backed demo instances with an edge d
 
 The static frontend must not be trusted for real access control. A static app can hide UI, but it cannot securely protect its source bundle or enforce authorization by itself.
 
-Real access control must happen before or during asset serving through one of these:
+Real access control happens before asset serving in `cloudflare/demo-worker.ts`,
+using the signed HttpOnly cookie created by the landing service and its existing
+D1 session record.
 
-- Cloudflare Worker
-- Cloudflare Pages Function
-- Cloudflare Access
-- landing-page backend
-- signed URL
-- signed, HttpOnly cookie
-
-The generated demo code flow should eventually:
+The landing/access deployment's generated demo code flow must:
 
 1. Generate a random demo code or signed link.
 2. Store only a hashed code server-side.
@@ -89,22 +87,23 @@ The generated demo code flow should eventually:
 7. Allow demo shell and app routes only while the session is valid.
 8. Record request, verification, opening, conversion, and callback events.
 
-The static demo may receive `demoCode` or `demoSessionId` as opaque metadata, but it must not contain secrets or make trusted authorization decisions.
+The static demo must not receive a plaintext `demoCode`, expose a session ID in
+a URL, contain secrets, or make trusted authorization decisions in browser code.
 
 ## 5. Deployment Shape
 
 Intended public structure:
 
 - `priage.ca`: marketing landing page and demo request form
-- `priage.ca/demo`: code entry, validation, and demo shell
+- `priage.ca/demo/access`: code entry, validation, and demo shell
 - `priage.ca/demo/patient`: patient demo surface
-- `priage.ca/demo/hospital`: care-team demo surface
+- `priage.ca/demo/care`: care-team demo surface
 
 The current implementation assumes the shell, patient app, and hospital app are served under the same origin:
 
-- `/demo/`
+- `/demo/access`
 - `/demo/patient/`
-- `/demo/hospital/`
+- `/demo/care/`
 
 Same-origin hosting matters because the current runtime syncs both apps through browser-local state and `BroadcastChannel`. If patient and hospital are moved to separate subdomains, one of these must happen:
 
@@ -112,7 +111,9 @@ Same-origin hosting matters because the current runtime syncs both apps through 
 - introduce a small shared backend/session layer, or
 - use a hosting strategy that preserves same-origin frame access for the shell and apps.
 
-For the current Cloudflare Pages target, prefer one same-origin static deployment with `/demo`, `/demo/patient`, and `/demo/hospital` paths.
+The production target is one Worker Static Assets deployment, scoped only to
+`priage.ca/demo/*`. `/demo/hospital/*` is a compatibility redirect to
+`/demo/care/*`; it is not a build location.
 
 ## 6. Current Implementation Status
 
@@ -120,9 +121,7 @@ The branch currently has a static-only demo foundation that can be built into `d
 
 Working today:
 
-- Demo shell renders PatientApp and HospitalApp together.
-- Desktop shows both apps side by side.
-- Mobile/narrow layouts can switch visible app panels.
+- Demo shell authenticates through the same-origin landing API and launches PatientApp and HospitalApp.
 - PatientApp runs guest intake in static mode.
 - PatientApp can complete deterministic interview steps.
 - PatientApp can select `Priage Demo Hospital`.
@@ -133,7 +132,7 @@ Working today:
 - Shared state syncs across frames through `BroadcastChannel`.
 - Reset restores seeded state and clears local patient/hospital session/draft keys.
 - Feedback is stored locally and logged as a demo event.
-- Static build output includes Cloudflare-style redirects.
+- Static build output has separate DemoShell, PatientApp, and Care Team asset roots.
 
 Verified smoke result from the current branch:
 
@@ -144,14 +143,16 @@ Verified smoke result from the current branch:
 - Confirmed `Taylor Demo` appeared in HospitalApp admittance.
 - Submitted local feedback and saw the success message.
 
-Not built yet:
+Owned by the separate landing repository rather than this deployment:
 
 - landing page
 - generated-code request/verify flow
 - email sending
-- secure edge access gate
+- production telemetry and callback API endpoints
+
+Not built in this repository:
+
 - polished multi-app showcase/tour
-- production telemetry upload
 - callback scheduling
 - cross-device demo synchronization
 - server-backed demo instance
@@ -164,20 +165,23 @@ The current demo runtime has three layers:
 2. Shared static demo engine
 3. App static transport/runtime seams
 
-Future landing-page/access infrastructure should sit in front of these layers, not inside them.
+The landing-page/access infrastructure sits alongside these layers on the same
+origin and remains authoritative for `/api/*`.
 
 ```mermaid
 flowchart TB
     landing["Landing Page\npriage.ca\nrequest demo form"]
-    access["Access Service\nWorker / Pages Function / backend\ncode generation + validation"]
-    shell["Demo Shell\n/\nframes both apps + feedback"]
+    access["Landing Access Service\n/api/*\ncode generation + sessions"]
+    gate["Demo Worker\n/demo/*\nasset authorization"]
+    shell["Demo Shell\n/demo/access\nlaunchers + feedback"]
     patient["PatientApp\n/demo/patient\nstatic demo mode"]
-    hospital["HospitalApp\n/demo/hospital\nstatic demo mode"]
+    hospital["HospitalApp\n/demo/care\nstatic demo mode"]
     store["Browser-local Demo Engine\nlocalStorage + BroadcastChannel"]
     events["Optional Event Endpoint\nfuture upload"]
 
     landing --> access
-    access --> shell
+    access --> gate
+    gate --> shell
     shell --> patient
     shell --> hospital
     patient <--> store
@@ -197,17 +201,17 @@ Location:
 
 Purpose:
 
-The shell is the deployable demo entrypoint. It frames the experience, loads both apps, displays simple session metadata, collects feedback, and owns reset/view controls.
+The shell is the public demo entrypoint. It validates access through the landing
+API, launches both protected apps, displays session expiry/email context, and
+collects browser-local feedback.
 
 Current responsibilities:
 
-- Render demo header and session context.
-- Read opaque query metadata such as `demoCode` and `demoSessionId`.
-- Load PatientApp under `/demo/patient/?demo=static`.
-- Load HospitalApp under `/demo/hospital/?demo=static`.
-- Provide view toggles: both, patient, hospital.
-- Provide links to open patient/hospital fullscreen.
-- Reset the local scenario.
+- Render demo access and session context.
+- Call `/api/verify-demo-code` and `/api/demo-session` on the same origin.
+- Launch PatientApp under `/demo/patient/`.
+- Launch HospitalApp under the canonical `/demo/care/` path.
+- Keep the code and session ID out of launch URLs and local storage.
 - Capture feedback locally.
 - Display simple metrics such as encounter count and event count.
 
@@ -215,7 +219,7 @@ Expected future responsibilities:
 
 - Offer guided tour vs free explore entry choices.
 - Display conversion actions such as request callback or schedule full demo.
-- Pass opaque demo session metadata into telemetry.
+- Upload optional telemetry through the authenticated same-origin endpoint.
 - Surface clear demo-only/non-clinical labeling.
 - Potentially embed a code entry screen if access validation is implemented at the same host.
 
@@ -252,7 +256,6 @@ Primary exported API:
 - `dispatchDemoAction(action)`
 - `trackDemoEvent(type, metadata)`
 - `submitDemoFeedback(input)`
-- `getDemoSessionMetadata()`
 - `getDemoRuntimeProfile()`
 - `getDemoStaffAuthUser()`
 - `getDemoStaffLoginResponse()`
@@ -450,24 +453,30 @@ dist/static-demo
 The build script:
 
 - builds DemoShell to `/demo/`
-- builds HospitalApp to `/demo/hospital/`
+- builds HospitalApp to `/demo/care/`
 - builds PatientApp to `/demo/patient/`
-- writes Cloudflare Pages redirects
 - pins demo build env to `VITE_DEMO_MODE=static`
 - pins `VITE_API_URL=static-demo` during demo build so static bundles do not default to localhost
 
-Generated redirect file:
+Essential generated layout:
 
 ```txt
-/demo /demo/index.html 200
-/demo/patient/* /demo/patient/index.html 200
-/demo/hospital/* /demo/hospital/index.html 200
+demo/index.html
+demo/assets/
+demo/patient/index.html
+demo/patient/assets/
+demo/care/index.html
+demo/care/assets/
 ```
 
-Cloudflare Pages configuration:
+Cloudflare Worker configuration:
 
 - Build command: `node scripts/build-static-demo.mjs`
-- Publish directory: `dist/static-demo`
+- Static Assets directory: `dist/static-demo`
+- Worker entrypoint: `cloudflare/demo-worker.ts`
+- Route: `priage.ca/demo/*`
+- D1 binding: `DEMO_DB`
+- Secret: `DEMO_SESSION_SECRET`
 
 ## 14. Showcase And Tour Requirements
 
@@ -550,42 +559,41 @@ Current implementation:
 
 Production expectation:
 
-- Telemetry should be tied to opaque `demoSessionId`.
+- The landing endpoint derives session identity from the signed HttpOnly cookie.
 - The static app should not store raw personal data beyond explicit local form entries.
 - Personally identifiable request data should live in the landing-page/access system.
 - Event upload should not require frontend secrets.
 
 ## 16. Landing Page Integration Roadmap
 
-The landing page is not implemented in this branch, but the demo should be designed around it.
+The landing page is maintained in a separate repository. This deployment is
+designed around its same-origin API contract.
 
 Recommended first integration:
 
-1. Build or connect a landing-page request form.
-2. Store request records in a small backend, Cloudflare D1, KV, Supabase, or other low-friction service.
+1. Keep the landing-page request form authoritative.
+2. Reuse its existing D1 request and session records.
 3. Generate a short code or signed link.
 4. Store only a hash of the code.
 5. Email the prospect.
-6. Validate code on `priage.ca/demo`.
+6. Validate code on `priage.ca/demo/access` through `/api/verify-demo-code`.
 7. Set a short-lived HttpOnly cookie.
 8. Serve or unlock the static demo shell.
-9. Pass opaque `demoSessionId` into the shell query or runtime config.
-10. Attach optional event upload.
+9. Authorize protected assets from the HttpOnly cookie without URL metadata.
+10. Upload optional events through `/api/demo-events`.
 
 Important boundary:
 
-The static demo should not own code generation or trusted validation. It can display and carry opaque metadata after authorization.
+The static demo does not own code generation or trusted validation. It relies
+on the landing session cookie and never carries the code or session ID after
+authorization.
 
 ## 17. Current Gaps And Risks
 
 Known gaps:
 
-- no real landing page
-- no real generated demo code service
-- no email delivery
-- no secure edge access gate
+- landing/API production readiness is owned and verified in its separate repository
 - no polished guided tour across both apps
-- no production event upload
 - no callback scheduler
 - no server-backed cross-device sync
 - no analytics dashboard for sales
@@ -620,7 +628,7 @@ git diff --check
 Manual smoke test:
 
 1. Serve `dist/static-demo`.
-2. Open `/?demo=static&demoCode=SMOKE`.
+2. Open `/demo/access` and authenticate with the local demo server's generated code.
 3. Confirm PatientApp and HospitalApp frames load.
 4. Click reset.
 5. Start patient quick check-in.
