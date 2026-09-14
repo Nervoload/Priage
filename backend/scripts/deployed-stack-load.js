@@ -62,7 +62,7 @@ async function main() {
     staff.push(await fixtures.createUser({
       hospitalId: hospital.id,
       password,
-      role: index === 0 ? 'ADMIN' : index % 2 === 0 ? 'DOCTOR' : 'NURSE',
+      role: index === 0 ? 'CLINICAL_ADMIN' : index % 2 === 0 ? 'DOCTOR' : 'NURSE',
       emailPrefix: `deployed-staff-${testId}-${index}`,
     }));
   }

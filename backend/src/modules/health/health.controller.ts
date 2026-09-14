@@ -41,9 +41,9 @@ export class HealthController {
 
   @Get('metrics')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
-  getOperationalMetrics(@CurrentUser() user: { hospitalId: number }) {
-    return this.healthService.getOperationalMetrics(user.hospitalId);
+  @Roles(Role.ADMIN, Role.IT_ADMIN, Role.CLINICAL_ADMIN)
+  getOperationalMetrics(@CurrentUser() user: { hospitalId: number; role: Role }) {
+    return this.healthService.getOperationalMetrics(user.hospitalId, user.role !== Role.IT_ADMIN);
   }
 
   @Get('prometheus')

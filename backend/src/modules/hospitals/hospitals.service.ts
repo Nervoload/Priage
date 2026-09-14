@@ -53,7 +53,7 @@ export class HospitalsService {
         _count: {
           select: {
             encounters: true,
-            users: true,
+            memberships: { where: { isActive: true } },
           },
         },
       },
@@ -76,15 +76,23 @@ export class HospitalsService {
       hospitalId: id,
     }, {
       encounterCount: hospital._count.encounters,
-      userCount: hospital._count.users,
+      userCount: hospital._count.memberships,
     });
 
-    return hospital;
+    return {
+      ...hospital,
+      _count: {
+        encounters: hospital._count.encounters,
+        users: hospital._count.memberships,
+      },
+    };
   }
 
   async updateHospitalDetails(
     hospitalId: number,
     adminUserId: number,
+    membershipId: number,
+    role: Role,
     dto: UpdateHospitalDetailsDto,
     correlationId?: string,
   ) {
@@ -99,7 +107,7 @@ export class HospitalsService {
       hasSlugChange: true,
     });
 
-    const [hospital, adminUser] = await Promise.all([
+    const [hospital, adminUser, membership] = await Promise.all([
       this.prisma.hospital.findUnique({
         where: { id: hospitalId },
         select: {
@@ -112,10 +120,12 @@ export class HospitalsService {
         where: { id: adminUserId },
         select: {
           id: true,
-          hospitalId: true,
           password: true,
-          role: true,
         },
+      }),
+      this.prisma.hospitalMembership.findFirst({
+        where: { id: membershipId, userId: adminUserId, hospitalId, role, isActive: true },
+        select: { id: true },
       }),
     ]);
 
@@ -123,7 +133,11 @@ export class HospitalsService {
       throw new NotFoundException(`Hospital ${hospitalId} not found`);
     }
 
-    if (!adminUser || adminUser.hospitalId !== hospitalId || adminUser.role !== Role.ADMIN) {
+    if (
+      !adminUser
+      || !membership
+      || !(new Set<Role>([Role.ADMIN, Role.IT_ADMIN, Role.CLINICAL_ADMIN])).has(role)
+    ) {
       throw new UnauthorizedException('Administrator confirmation is required');
     }
 

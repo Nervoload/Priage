@@ -8,18 +8,18 @@ import * as bcrypt from 'bcrypt';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
+import { UpdateMembershipDto } from './dto/update-membership.dto';
 
-type UserWithHospital = {
+type UserWithMembership = {
   id: number;
   email: string;
-  role: Role;
-  hospitalId: number;
   password?: string;
-  hospital: {
+  hospitalMemberships: Array<{
     id: number;
-    name: string;
-    slug: string;
-  };
+    role: Role;
+    hospitalId: number;
+    hospital: { id: number; name: string; slug: string };
+  }>;
 };
 
 @Injectable()
@@ -39,23 +39,25 @@ export class UsersService {
       roleFilter: role,
     });
 
-    const where: any = { hospitalId };
-    if (role) {
-      where.role = role;
-    }
-
-    const users = await this.prisma.user.findMany({
-      where,
+    const memberships = await this.prisma.hospitalMembership.findMany({
+      where: { hospitalId, isActive: true, ...(role ? { role } : {}) },
       select: {
         id: true,
-        email: true,
         role: true,
         createdAt: true,
         hospitalId: true,
-        // Don't return password
+        user: { select: { id: true, email: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
+    const users = memberships.map((membership) => ({
+      id: membership.user.id,
+      membershipId: membership.id,
+      email: membership.user.email,
+      role: membership.role,
+      createdAt: membership.createdAt,
+      hospitalId: membership.hospitalId,
+    }));
 
     this.loggingService.debug('Hospital users fetched', {
       service: 'UsersService',
@@ -70,7 +72,7 @@ export class UsersService {
     return users;
   }
 
-  async getUser(id: number, correlationId?: string) {
+  async getUser(id: number, hospitalId: number, correlationId?: string) {
     this.loggingService.debug('Fetching user by ID', {
       service: 'UsersService',
       operation: 'getUser',
@@ -82,15 +84,10 @@ export class UsersService {
       select: {
         id: true,
         email: true,
-        role: true,
         createdAt: true,
-        hospitalId: true,
-        hospital: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
+        hospitalMemberships: {
+          where: { hospitalId, isActive: true },
+          include: { hospital: true },
         },
       },
     });
@@ -110,17 +107,19 @@ export class UsersService {
       operation: 'getUser',
       correlationId,
       userId: id,
-      hospitalId: user.hospitalId,
+      hospitalId,
     }, {
-      role: user.role,
+      role: user.hospitalMemberships[0]?.role,
     });
 
-    return user;
+    return this.toAuthUser(user);
   }
 
   async updateProfile(
     userId: number,
     dto: UpdateUserProfileDto,
+    hospitalId: number,
+    membershipId: number,
     correlationId?: string,
     currentSessionId?: number,
   ) {
@@ -137,17 +136,14 @@ export class UsersService {
     const existing = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        hospital: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
+        hospitalMemberships: {
+          where: { id: membershipId, hospitalId, isActive: true },
+          include: { hospital: true },
         },
       },
     });
 
-    if (!existing) {
+    if (!existing || existing.hospitalMemberships.length !== 1) {
       throw new NotFoundException(`User ${userId} not found`);
     }
 
@@ -188,12 +184,9 @@ export class UsersService {
         where: { id: userId },
         data: updates,
         include: {
-          hospital: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
+          hospitalMemberships: {
+            where: { id: membershipId, hospitalId, isActive: true },
+            include: { hospital: true },
           },
         },
       });
@@ -220,7 +213,7 @@ export class UsersService {
       operation: 'updateProfile',
       correlationId,
       userId,
-      hospitalId: updated.hospitalId,
+      hospitalId,
     }, {
       isEmailChange: typeof updates.email === 'string',
       isPasswordChange: typeof updates.password === 'string',
@@ -244,16 +237,25 @@ export class UsersService {
       hospitalId,
     });
     
-    const users = await this.prisma.user.findMany({
-      where: { hospitalId },
+    const memberships = await this.prisma.hospitalMembership.findMany({
+      where: { hospitalId, isActive: true },
       select: {
         id: true,
-        email: true,
         role: true,
         createdAt: true,
+        hospitalId: true,
+        user: { select: { id: true, email: true } },
       },
       orderBy: { role: 'asc' },
     });
+    const users = memberships.map((membership) => ({
+      id: membership.user.id,
+      membershipId: membership.id,
+      email: membership.user.email,
+      role: membership.role,
+      createdAt: membership.createdAt,
+      hospitalId: membership.hospitalId,
+    }));
 
     this.loggingService.debug('Users by hospital fetched', {
       service: 'UsersService',
@@ -267,16 +269,70 @@ export class UsersService {
     return users;
   }
 
-  private toAuthUser(user: UserWithHospital) {
+  async updateMembership(
+    hospitalId: number,
+    membershipId: number,
+    dto: UpdateMembershipDto,
+    actorUserId: number,
+    correlationId?: string,
+  ) {
+    if (dto.role === Role.ADMIN) {
+      throw new BadRequestException('Legacy ADMIN cannot be assigned to a membership');
+    }
+    const existing = await this.prisma.hospitalMembership.findFirst({
+      where: { id: membershipId, hospitalId },
+    });
+    if (!existing) throw new NotFoundException('Hospital membership not found');
+    const roleChanged = dto.role !== undefined && dto.role !== existing.role;
+    const activeChanged = dto.isActive !== undefined && dto.isActive !== existing.isActive;
+    if (!roleChanged && !activeChanged) return existing;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const membership = await tx.hospitalMembership.update({
+        where: { id: existing.id },
+        data: {
+          role: dto.role,
+          isActive: dto.isActive,
+          disabledAt: dto.isActive === false ? new Date() : dto.isActive === true ? null : undefined,
+        },
+      });
+      await tx.staffSession.updateMany({
+        where: { membershipId: existing.id, revokedAt: null },
+        data: {
+          revokedAt: new Date(),
+          revokedReason: roleChanged ? 'membership_role_changed' : 'membership_status_changed',
+        },
+      });
+      return membership;
+    });
+    await this.loggingService.info('Hospital membership updated and active sessions revoked', {
+      service: 'UsersService',
+      operation: 'updateMembership',
+      correlationId,
+      hospitalId,
+      userId: actorUserId,
+    }, {
+      membershipId,
+      previousRole: existing.role,
+      role: updated.role,
+      isActive: updated.isActive,
+    });
+    return updated;
+  }
+
+  private toAuthUser(user: UserWithMembership) {
+    const membership = user.hospitalMemberships[0];
+    if (!membership) throw new NotFoundException('Active hospital membership not found');
     return {
       userId: user.id,
       email: user.email,
-      role: user.role,
-      hospitalId: user.hospitalId,
+      role: membership.role,
+      membershipId: membership.id,
+      hospitalId: membership.hospitalId,
       hospital: {
-        id: user.hospital.id,
-        name: user.hospital.name,
-        slug: user.hospital.slug,
+        id: membership.hospital.id,
+        name: membership.hospital.name,
+        slug: membership.hospital.slug,
       },
     };
   }

@@ -78,7 +78,7 @@ export function NavBar({ currentView, onNavigate, onLogout, user, availableViews
   const visibleTabs = tabs
     .filter((tab) => !availableViews || availableViews.includes(tab.key))
     .map((tab) => (
-      tab.key === 'settings' && user?.role === 'ADMIN'
+      tab.key === 'settings' && (user?.role === 'ADMIN' || user?.role === 'IT_ADMIN' || user?.role === 'CLINICAL_ADMIN')
         ? { ...tab, label: 'Admin Settings' }
         : tab
     ));

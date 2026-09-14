@@ -1,10 +1,16 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { AssetStatus, LogRecordLevel } from '@prisma/client';
+import {
+  AssetStatus,
+  LogRecordLevel,
+  WebhookDeliveryStatus,
+  WebhookSubscriptionStatus,
+} from '@prisma/client';
 import type Redis from 'ioredis';
 
 import { Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
+import { SafetyMetricsService } from '../../common/metrics/safety-metrics.service';
 
 type DependencyStatus = {
   ok: boolean;
@@ -31,6 +37,7 @@ export class HealthService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly safetyMetrics: SafetyMetricsService,
   ) {}
 
   getLiveness() {
@@ -70,7 +77,7 @@ export class HealthService {
     };
   }
 
-  async getOperationalMetrics(hospitalId: number) {
+  async getOperationalMetrics(hospitalId: number, includeClinicalAlertCounts = true) {
     const now = Date.now();
     const recentWindow = new Date(now - 15 * 60 * 1000);
     const [
@@ -83,6 +90,11 @@ export class HealthService {
       recentWarnings,
       sensitiveReads,
       breakGlassReads,
+      activeAlerts,
+      pendingWebhookDeliveries,
+      failedWebhookDeliveries,
+      oldestPendingWebhook,
+      workingEscalationTargets,
       pool,
     ] = await Promise.all([
       this.prisma.encounterEvent.count({ where: { hospitalId, processedAt: null, deadLetteredAt: null } }),
@@ -98,10 +110,47 @@ export class HealthService {
       this.prisma.logRecord.count({ where: { hospitalId, level: LogRecordLevel.WARN, createdAt: { gte: recentWindow } } }),
       this.prisma.sensitiveReadAuditLog.count({ where: { hospitalId, createdAt: { gte: recentWindow } } }),
       this.prisma.breakGlassAccess.count({ where: { hospitalId, createdAt: { gte: recentWindow } } }),
+      includeClinicalAlertCounts
+        ? this.prisma.alert.groupBy({
+            by: ['severity'],
+            where: { hospitalId, resolvedAt: null },
+            _count: { _all: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.webhookDelivery.count({
+        where: {
+          status: WebhookDeliveryStatus.PENDING,
+          webhookSubscription: { hospitalId },
+        },
+      }),
+      this.prisma.webhookDelivery.count({
+        where: {
+          status: WebhookDeliveryStatus.FAILED,
+          webhookSubscription: { hospitalId },
+        },
+      }),
+      this.prisma.webhookDelivery.findFirst({
+        where: {
+          status: WebhookDeliveryStatus.PENDING,
+          webhookSubscription: { hospitalId },
+        },
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      }),
+      this.prisma.webhookSubscription.count({
+        where: {
+          hospitalId,
+          status: WebhookSubscriptionStatus.ACTIVE,
+          lastSuccessfulDeliveryAt: { not: null },
+        },
+      }),
       this.prisma.getPoolStats(),
     ]);
     const oldestPendingAgeSeconds = oldestPending
       ? Math.max(0, Math.floor((now - oldestPending.createdAt.getTime()) / 1000))
+      : 0;
+    const oldestWebhookBacklogAgeSeconds = oldestPendingWebhook
+      ? Math.max(0, Math.floor((now - oldestPendingWebhook.createdAt.getTime()) / 1000))
       : 0;
     const thresholds = {
       eventLagWarningSeconds: readPositiveIntegerEnv('SLO_EVENT_LAG_WARN_SECONDS', 30),
@@ -139,6 +188,18 @@ export class HealthService {
       assets: {
         pendingDeletes: pendingAssetDeletes,
       },
+      safety: {
+        process: this.safetyMetrics.snapshot(),
+        ...(includeClinicalAlertCounts
+          ? { activeAlerts: Object.fromEntries(activeAlerts.map((row) => [row.severity, row._count._all])) }
+          : {}),
+        webhooks: {
+          pending: pendingWebhookDeliveries,
+          failed: failedWebhookDeliveries,
+          oldestBacklogAgeSeconds: oldestWebhookBacklogAgeSeconds,
+          workingEscalationTargets,
+        },
+      },
       database: {
         pool,
       },
@@ -162,12 +223,39 @@ export class HealthService {
   }
 
   async getPrometheusMetrics(): Promise<string> {
-    const [pool, pendingEvents, deadLetters, pendingAssetDeletes] = await Promise.all([
+    const [
+      pool,
+      pendingEvents,
+      deadLetters,
+      pendingAssetDeletes,
+      activeAlerts,
+      pendingWebhooks,
+      failedWebhooks,
+      hospitalsWithoutWorkingEscalation,
+    ] = await Promise.all([
       this.prisma.getPoolStats(),
       this.prisma.encounterEvent.count({ where: { processedAt: null, deadLetteredAt: null } }),
       this.prisma.encounterEvent.count({ where: { deadLetteredAt: { not: null } } }),
       this.prisma.asset.count({ where: { status: AssetStatus.DELETE_PENDING } }),
+      this.prisma.alert.groupBy({
+        by: ['severity'],
+        where: { resolvedAt: null },
+        _count: { _all: true },
+      }),
+      this.prisma.webhookDelivery.count({ where: { status: WebhookDeliveryStatus.PENDING } }),
+      this.prisma.webhookDelivery.count({ where: { status: WebhookDeliveryStatus.FAILED } }),
+      this.prisma.hospital.count({
+        where: {
+          webhookSubscriptions: {
+            none: {
+              status: WebhookSubscriptionStatus.ACTIVE,
+              lastSuccessfulDeliveryAt: { not: null },
+            },
+          },
+        },
+      }),
     ]);
+    const safety = this.safetyMetrics.snapshot();
 
     return [
       '# HELP priage_database_pool_connections Database connections by state.',
@@ -182,6 +270,30 @@ export class HealthService {
       '# HELP priage_asset_deletion_backlog Assets waiting for storage deletion reconciliation.',
       '# TYPE priage_asset_deletion_backlog gauge',
       `priage_asset_deletion_backlog ${pendingAssetDeletes}`,
+      '# HELP priage_active_alerts Active server alerts by severity.',
+      '# TYPE priage_active_alerts gauge',
+      ...activeAlerts.map((row) => `priage_active_alerts{severity="${row.severity.toLowerCase()}"} ${row._count._all}`),
+      '# HELP priage_webhook_deliveries Webhook delivery rows by backlog state.',
+      '# TYPE priage_webhook_deliveries gauge',
+      `priage_webhook_deliveries{state="pending"} ${pendingWebhooks}`,
+      `priage_webhook_deliveries{state="failed"} ${failedWebhooks}`,
+      '# HELP priage_hospitals_without_working_escalation Hospitals without a successfully tested active escalation target.',
+      '# TYPE priage_hospitals_without_working_escalation gauge',
+      `priage_hospitals_without_working_escalation ${hospitalsWithoutWorkingEscalation}`,
+      '# HELP priage_alert_rule_evaluations Alert rule evaluations in this process.',
+      '# TYPE priage_alert_rule_evaluations counter',
+      `priage_alert_rule_evaluations ${safety.alertEvaluations}`,
+      '# HELP priage_alert_rule_dedupe_conflicts Concurrent active-alert conflicts in this process.',
+      '# TYPE priage_alert_rule_dedupe_conflicts counter',
+      `priage_alert_rule_dedupe_conflicts ${safety.alertDedupeConflicts}`,
+      '# HELP priage_alert_rule_missing_timestamps Missing lifecycle timestamps observed in this process.',
+      '# TYPE priage_alert_rule_missing_timestamps counter',
+      `priage_alert_rule_missing_timestamps ${safety.missingLifecycleTimestamps}`,
+      '# HELP priage_webhook_delivery_attempts Webhook outcomes in this process.',
+      '# TYPE priage_webhook_delivery_attempts counter',
+      `priage_webhook_delivery_attempts{outcome="delivered"} ${safety.webhookDelivered}`,
+      `priage_webhook_delivery_attempts{outcome="retry"} ${safety.webhookRetried}`,
+      `priage_webhook_delivery_attempts{outcome="failed"} ${safety.webhookPermanentlyFailed}`,
       '',
     ].join('\n');
   }

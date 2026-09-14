@@ -13,7 +13,7 @@ export type EncounterStatus =
   | 'UNRESOLVED'
   | 'CANCELLED';
 
-export type Role = 'ADMIN' | 'NURSE' | 'STAFF' | 'DOCTOR';
+export type Role = 'ADMIN' | 'IT_ADMIN' | 'CLINICAL_ADMIN' | 'NURSE' | 'STAFF' | 'DOCTOR';
 
 export type SenderType = 'PATIENT' | 'USER' | 'SYSTEM';
 
@@ -308,6 +308,9 @@ export interface Alert {
   createdAt: string;
   type: string;
   severity: AlertSeverity;
+  source: 'MANUAL' | 'RULE_ENGINE';
+  ruleKey: string | null;
+  ruleVersion: string | null;
   metadata: Record<string, unknown> | null;
 
   acknowledgedAt: string | null;
@@ -331,6 +334,7 @@ export interface LoginResponse {
     id: number;
     email: string;
     role: Role;
+    membershipId: number;
     hospitalId: number;
     hospital: {
       id: number;
@@ -344,6 +348,7 @@ export interface AuthUser {
   userId: number;
   email: string;
   role: Role;
+  membershipId: number;
   hospitalId: number;
   hospital?: {
     id: number;
@@ -385,6 +390,7 @@ export const RealtimeEvents = {
   EncounterUpdated: 'encounter.updated',
   MessageCreated: 'message.created',
   AlertCreated: 'alert.created',
+  AlertEscalated: 'alert.escalated',
   AlertAcknowledged: 'alert.acknowledged',
   AlertResolved: 'alert.resolved',
 } as const;

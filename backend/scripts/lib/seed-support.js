@@ -46,16 +46,23 @@ async function resolveTargetHospital(prisma, argv = process.argv.slice(2), env =
 }
 
 async function resolveHospitalActors(prisma, hospitalId) {
-  const users = await prisma.user.findMany({
-    where: { hospitalId },
+  const memberships = await prisma.hospitalMembership.findMany({
+    where: { hospitalId, isActive: true },
     select: {
       id: true,
-      email: true,
       role: true,
       hospitalId: true,
+      user: { select: { id: true, email: true } },
     },
     orderBy: { createdAt: 'asc' },
   });
+  const users = memberships.map((membership) => ({
+    id: membership.user.id,
+    membershipId: membership.id,
+    email: membership.user.email,
+    role: membership.role,
+    hospitalId: membership.hospitalId,
+  }));
 
   if (users.length === 0) {
     throw new Error(
@@ -65,10 +72,10 @@ async function resolveHospitalActors(prisma, hospitalId) {
 
   return {
     allUsers: users,
-    adminUser: pickUser(users, [Role.ADMIN, Role.DOCTOR, Role.NURSE, Role.STAFF]),
-    nurseUser: pickUser(users, [Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.STAFF]),
-    doctorUser: pickUser(users, [Role.DOCTOR, Role.NURSE, Role.ADMIN, Role.STAFF]),
-    staffUser: pickUser(users, [Role.STAFF, Role.ADMIN, Role.NURSE, Role.DOCTOR]),
+    adminUser: pickUser(users, [Role.CLINICAL_ADMIN, Role.ADMIN, Role.DOCTOR, Role.NURSE, Role.STAFF]),
+    nurseUser: pickUser(users, [Role.NURSE, Role.DOCTOR, Role.CLINICAL_ADMIN, Role.ADMIN, Role.STAFF]),
+    doctorUser: pickUser(users, [Role.DOCTOR, Role.NURSE, Role.CLINICAL_ADMIN, Role.ADMIN, Role.STAFF]),
+    staffUser: pickUser(users, [Role.STAFF, Role.CLINICAL_ADMIN, Role.ADMIN, Role.NURSE, Role.DOCTOR]),
   };
 }
 

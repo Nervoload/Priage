@@ -37,6 +37,9 @@ async function bootstrap(): Promise<void> {
     logger: logLevels,
     bodyParser: false,
   });
+  // Register process signal handlers so Nest runs lifecycle hooks for Prisma,
+  // Redis, Socket.IO, and BullMQ during deploys and replica scale-in.
+  app.enableShutdownHooks();
   app.use(json({ limit: process.env.REQUEST_JSON_LIMIT || '1mb' }));
   app.use(urlencoded({ limit: process.env.REQUEST_FORM_LIMIT || '256kb', extended: true }));
 
@@ -86,7 +89,6 @@ async function bootstrap(): Promise<void> {
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);
 
-  // eslint-disable-next-line no-console
   console.log(`[priage-backend] listening on http://localhost:${port}`);
 }
 

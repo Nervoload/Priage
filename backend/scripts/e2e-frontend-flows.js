@@ -290,7 +290,7 @@ async function seedTestUser() {
   const user = await context.fixtures.createUser({
     hospitalId: hospital.id,
     password: FIXTURE_PASSWORD,
-    role: 'ADMIN',
+    role: 'CLINICAL_ADMIN',
     emailPrefix: 'e2e',
   });
   console.log(`  Created hospital: ${hospital.name} (id=${hospital.id})`);
@@ -540,6 +540,8 @@ async function flowSendMessage(encounterId) {
 
   const createdPayload = await messageCreated;
   assert('Receives message.created event', createdPayload?.metadata?.messageId === ack?.message?.id);
+  assert('Realtime event includes the created message', createdPayload?.message?.id === ack?.message?.id);
+  assert('Realtime message content matches', createdPayload?.message?.content === outgoing);
 
   section('12. Reject invalid socket message payload');
   const invalidAck = await new Promise((resolve) => {

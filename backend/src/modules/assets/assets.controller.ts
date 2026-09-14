@@ -34,7 +34,7 @@ export class AssetsController {
   ) {}
 
   @Post('encounters/:encounterId/message-images')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   @UseInterceptors(FilesInterceptor('files', ASSET_MAX_FILES_PER_REQUEST, {
     limits: { fileSize: ASSET_MAX_FILE_SIZE_BYTES },
   }))
@@ -53,7 +53,7 @@ export class AssetsController {
   }
 
   @Get('encounters/:encounterId')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async listForEncounter(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Req() req: Request,
@@ -69,7 +69,7 @@ export class AssetsController {
   }
 
   @Get(':assetId/content')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async streamStaffAsset(
     @Param('assetId', ParseIntPipe) assetId: number,
     @CurrentUser() user: { userId: number; hospitalId: number; role: Role },

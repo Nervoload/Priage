@@ -15,6 +15,8 @@ const { extractPatientCookieHeader } = require('./lib/session-cookies');
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const BASE_URL_API = process.env.BASE_URL_API || BASE;
 const BASE_URL_SOCKET = process.env.BASE_URL_SOCKET || BASE_URL_API;
+const BASE_URL_SOCKET_SECONDARY = process.env.BASE_URL_SOCKET_SECONDARY || '';
+const HOSPITAL_SLUG = process.env.REALTIME_TEST_HOSPITAL_SLUG || process.env.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG || '';
 const EMAIL = process.env.REALTIME_TEST_EMAIL || process.env.PRIAGE_DEV_ADMIN_EMAIL || '';
 const PASSWORD = process.env.REALTIME_TEST_PASSWORD || process.env.PRIAGE_DEV_ADMIN_PASSWORD || process.env.DEMO_STAFF_PASSWORD || '';
 const FIXTURE_PASSWORD = 'TestPassword123!';
@@ -106,7 +108,7 @@ async function api(path, options = {}) {
   return { res, text, json, headers: res.headers };
 }
 
-async function login(email = EMAIL, password = PASSWORD) {
+async function login(email = EMAIL, password = PASSWORD, hospitalSlug = HOSPITAL_SLUG) {
   if (!password) {
     throw new Error('REALTIME_TEST_PASSWORD or PRIAGE_DEV_ADMIN_PASSWORD must be set to log into an existing user');
   }
@@ -114,7 +116,7 @@ async function login(email = EMAIL, password = PASSWORD) {
   const { res, json, text, headers } = await api('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, hospitalSlug: hospitalSlug || undefined }),
   });
 
   const sessionToken = extractStaffSessionToken(headers);
@@ -170,13 +172,14 @@ async function createEphemeralRealtimeLogin() {
   const user = await context.fixtures.createUser({
     hospitalId: hospital.id,
     password: FIXTURE_PASSWORD,
-    role: 'ADMIN',
+    role: 'CLINICAL_ADMIN',
     emailPrefix: 'realtime-smoke',
   });
 
   return {
     email: user.email,
     password: FIXTURE_PASSWORD,
+    hospitalSlug: hospital.slug,
   };
 }
 
@@ -190,7 +193,7 @@ async function loginWithFallback() {
   }
 
   const fixtureLogin = await createEphemeralRealtimeLogin();
-  return login(fixtureLogin.email, fixtureLogin.password);
+  return login(fixtureLogin.email, fixtureLogin.password, fixtureLogin.hospitalSlug);
 }
 
 function buildInterviewAnswer(question) {
@@ -350,10 +353,10 @@ async function resolveAlert(alertId, token) {
   return json;
 }
 
-function openSocket(token) {
+function openSocket(token, baseUrl = BASE_URL_SOCKET, encounterIds = []) {
   const socketAuth = buildSocketAuth(token);
-  return io(BASE_URL_SOCKET, {
-    auth: socketAuth.auth,
+  return io(baseUrl, {
+    auth: { ...socketAuth.auth, encounterIds },
     extraHeaders: socketAuth.extraHeaders,
     transports: ['websocket'],
     autoConnect: false,
@@ -401,8 +404,8 @@ async function expectRejectedSocket(token, label) {
   console.log(`Verified websocket rejection for ${label}`);
 }
 
-async function connectAuthorizedSocket(token) {
-  const socket = openSocket(token);
+async function connectAuthorizedSocket(token, baseUrl = BASE_URL_SOCKET, encounterIds = []) {
+  const socket = openSocket(token, baseUrl, encounterIds);
 
   await new Promise((resolve, reject) => {
     socket.once('connect', resolve);
@@ -488,6 +491,9 @@ async function sendStaffMessage(socket, encounterId) {
   if (created?.metadata?.messageId !== ack.message.id) {
     throw new Error(`Expected message.created for message ${ack.message.id}`);
   }
+  if (created?.message?.id !== ack.message.id || created?.message?.content !== outgoing) {
+    throw new Error(`Expected message.created to include message ${ack.message.id}`);
+  }
 
   console.log(`Received message.created for message ${ack.message.id}`);
 }
@@ -495,6 +501,7 @@ async function sendStaffMessage(socket, encounterId) {
 async function main() {
   console.log(`API base: ${BASE_URL_API}`);
   console.log(`Socket base: ${BASE_URL_SOCKET}`);
+  if (BASE_URL_SOCKET_SECONDARY) console.log(`Secondary socket base: ${BASE_URL_SOCKET_SECONDARY}`);
 
   const auth = await loginWithFallback();
   const token = auth.sessionToken || auth.bearerToken;
@@ -504,9 +511,13 @@ async function main() {
   await expectRejectedSocket('invalid-session-token', 'invalid token');
 
   const socket = await connectAuthorizedSocket(token);
+  const secondarySocket = BASE_URL_SOCKET_SECONDARY
+    ? await connectAuthorizedSocket(token, BASE_URL_SOCKET_SECONDARY)
+    : null;
   console.log('Verified websocket connection with valid staff session');
 
   let encounterEventPromise = null;
+  let reconnectedSocket = null;
   try {
     encounterEventPromise = waitForEvent(
       socket,
@@ -514,22 +525,46 @@ async function main() {
       (payload) => (
         payload?.encounterId &&
         payload?.metadata?.status === 'EXPECTED' &&
-        payload?.metadata?.source === 'patient_intake'
+        payload?.metadata?.intake === 'patient_intake'
       ),
       8000,
     );
+    const secondaryEncounterEventPromise = secondarySocket
+      ? waitForEvent(
+          secondarySocket,
+          'encounter.updated',
+          (payload) => payload?.metadata?.status === 'EXPECTED' && payload?.metadata?.intake === 'patient_intake',
+          8000,
+        )
+      : null;
 
     const encounter = await createEncounter(hospitalSlug);
     const encounterEvent = await encounterEventPromise;
+    const secondaryEncounterEvent = secondaryEncounterEventPromise
+      ? await secondaryEncounterEventPromise
+      : null;
     if (encounterEvent?.encounterId !== encounter.id) {
       throw new Error(`Expected encounter.updated for encounter ${encounter.id}`);
     }
+    if (secondarySocket && secondaryEncounterEvent?.encounterId !== encounter.id) {
+      throw new Error(`Expected cross-replica encounter.updated for encounter ${encounter.id}`);
+    }
     console.log(`Received encounter.updated for encounter ${encounter.id}`);
 
-    await sendStaffMessage(socket, encounter.id);
+    socket.close();
+    reconnectedSocket = await connectAuthorizedSocket(token, BASE_URL_SOCKET, [encounter.id]);
+    const reconciled = await api(`/encounters/${encounter.id}`, {
+      headers: buildStaffAuthHeaders(token),
+    });
+    if (!reconciled.res.ok || reconciled.json?.id !== encounter.id) {
+      throw new Error('REST reconciliation failed after WebSocket reconnect');
+    }
+    console.log('Verified WebSocket reconnect and REST reconciliation');
+
+    await sendStaffMessage(reconnectedSocket, encounter.id);
 
     const alertCreatedPromise = waitForEvent(
-      socket,
+      reconnectedSocket,
       'alert.created',
       (payload) => payload?.encounterId === encounter.id && payload?.metadata?.type === 'REALTIME_SMOKE',
     );
@@ -541,7 +576,7 @@ async function main() {
     console.log(`Received alert.created for alert ${createdAlert.id}`);
 
     const alertAcknowledgedPromise = waitForEvent(
-      socket,
+      reconnectedSocket,
       'alert.acknowledged',
       (payload) => payload?.metadata?.alertId === createdAlert.id,
     );
@@ -550,7 +585,7 @@ async function main() {
     console.log(`Received alert.acknowledged for alert ${createdAlert.id}`);
 
     const alertResolvedPromise = waitForEvent(
-      socket,
+      reconnectedSocket,
       'alert.resolved',
       (payload) => payload?.metadata?.alertId === createdAlert.id,
     );
@@ -560,6 +595,8 @@ async function main() {
   } finally {
     encounterEventPromise?.cancel?.();
     socket.close();
+    reconnectedSocket?.close();
+    secondarySocket?.close();
   }
 }
 

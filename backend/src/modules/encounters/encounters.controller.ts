@@ -42,7 +42,7 @@ export class EncountersController {
   ) {}
 
   @Post()
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async create(
     @Body() dto: CreateEncounterDto,
     @Req() req: Request,
@@ -58,7 +58,7 @@ export class EncountersController {
   }
 
   @Post('admit')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async createAdmittanceEncounter(
     @Body() dto: CreateAdmittanceEncounterDto,
     @Req() req: Request,
@@ -74,7 +74,7 @@ export class EncountersController {
   }
 
   @Get()
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async list(
     @Query() query: ListEncountersQueryDto,
     @Req() req: Request,
@@ -87,7 +87,7 @@ export class EncountersController {
   }
 
   @Get(':id')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async getOne(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
@@ -100,7 +100,7 @@ export class EncountersController {
   }
 
   @Post(':id/confirm')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async confirm(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
@@ -116,7 +116,7 @@ export class EncountersController {
   }
 
   @Post(':id/arrived')
-  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.STAFF, Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async markArrived(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
@@ -132,7 +132,7 @@ export class EncountersController {
   }
 
   @Post(':id/waiting')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async createWaiting(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
@@ -148,7 +148,7 @@ export class EncountersController {
   }
 
   @Post(':id/start-exam')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async startExam(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
@@ -164,7 +164,7 @@ export class EncountersController {
   }
 
   @Post(':id/discharge')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async discharge(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
@@ -180,7 +180,7 @@ export class EncountersController {
   }
 
   @Post(':id/cancel')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async cancel(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,

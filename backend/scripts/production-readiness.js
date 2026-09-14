@@ -14,6 +14,9 @@ const required = [
   'AUDIT_ARCHIVE_BUCKET',
   'DATABASE_PROXY_MODE',
   'DATABASE_POOL_MAX',
+  'WEBHOOK_SECRET_ENCRYPTION_KEY',
+  'WEBHOOK_ALLOWED_HOSTS',
+  'HOSPITAL_DASHBOARD_URL',
 ];
 const missing = required.filter((name) => !process.env[name]?.trim());
 if (missing.length > 0) {
@@ -47,6 +50,23 @@ for (const name of ['ALLOW_PATIENT_TOKEN_HEADER', 'ALLOW_LEGACY_RAW_PATIENT_TOKE
 }
 if ((process.env.ASSET_STORAGE_PROVIDER || '').trim().toLowerCase() !== 's3') {
   console.error('ASSET_STORAGE_PROVIDER must be s3');
+  process.exit(1);
+}
+if ((process.env.TRIAGE_INTERVIEW_MODE || '').trim().toLowerCase() !== 'deterministic') {
+  console.error('TRIAGE_INTERVIEW_MODE must be deterministic until the approved regional provider pass');
+  process.exit(1);
+}
+if (process.env.TRIAGE_AI_API_KEY?.trim() || process.env.TRIAGE_AI_BASE_URL?.trim()) {
+  console.error('External triage AI configuration is not permitted in production');
+  process.exit(1);
+}
+try {
+  const dashboardUrl = new URL(process.env.HOSPITAL_DASHBOARD_URL);
+  if (dashboardUrl.protocol !== 'https:' || dashboardUrl.username || dashboardUrl.password) {
+    throw new Error('invalid dashboard URL');
+  }
+} catch {
+  console.error('HOSPITAL_DASHBOARD_URL must be a credential-free HTTPS URL');
   process.exit(1);
 }
 if (!/[?&]sslmode=(require|verify-ca|verify-full)(?:&|$)/i.test(process.env.DATABASE_URL || '')) {

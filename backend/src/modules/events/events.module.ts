@@ -8,11 +8,13 @@ import { EventsService } from './events.service';
 import { RedisModule } from '../redis/redis.module';
 import { PatientRealtimeService } from './patient-realtime.service';
 import { EventsAdminController } from './events-admin.controller';
+import { JobQueueModule } from '../jobs/job-queue.module';
+import { AlertEvaluationScheduler } from './alert-evaluation.scheduler';
 
 @Module({
   controllers: [EventsAdminController],
-  providers: [EventsService, PatientRealtimeService],
-  imports: [forwardRef(() => RealtimeModule), RedisModule],
+  providers: [EventsService, PatientRealtimeService, AlertEvaluationScheduler],
+  imports: [forwardRef(() => RealtimeModule), RedisModule, JobQueueModule],
   exports: [EventsService, PatientRealtimeService],
 })
 export class EventsModule {}

@@ -13,7 +13,7 @@ import { LogLevel } from './types/log-entry.type';
 
 @Controller('logging')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN)
+@Roles(Role.ADMIN, Role.CLINICAL_ADMIN)
 export class LoggingController {
   constructor(
     private readonly errorReportService: ErrorReportService,
@@ -72,9 +72,10 @@ export class LoggingController {
    * GET /logging/correlation/:correlationId
    */
   @Get('correlation/:correlationId')
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN, Role.IT_ADMIN)
   async getLogsByCorrelation(
     @Param('correlationId') correlationId: string,
-    @CurrentUser() user: { hospitalId: number },
+    @CurrentUser() user: { hospitalId: number; role: Role },
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
@@ -87,7 +88,7 @@ export class LoggingController {
     return {
       correlationId,
       count: result.count,
-      logs: result.logs,
+      logs: user.role === Role.IT_ADMIN ? result.logs.map((log) => this.redactOperationalLog(log)) : result.logs,
       meta: result.meta,
     };
   }
@@ -97,8 +98,9 @@ export class LoggingController {
    * GET /logging/query?level=error&service=encounters
    */
   @Get('query')
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN, Role.IT_ADMIN)
   async queryLogs(
-    @CurrentUser() user: { hospitalId: number },
+    @CurrentUser() user: { hospitalId: number; role: Role },
     @Query('correlationId') correlationId?: string,
     @Query('level') level?: LogLevel,
     @Query('service') service?: string,
@@ -114,10 +116,10 @@ export class LoggingController {
       correlationId,
       level,
       service,
-      userId: this.parseNumberQuery(userId),
-      patientId: this.parseNumberQuery(patientId),
+      userId: user.role === Role.IT_ADMIN ? undefined : this.parseNumberQuery(userId),
+      patientId: user.role === Role.IT_ADMIN ? undefined : this.parseNumberQuery(patientId),
       hospitalId: user.hospitalId,
-      encounterId: this.parseNumberQuery(encounterId),
+      encounterId: user.role === Role.IT_ADMIN ? undefined : this.parseNumberQuery(encounterId),
       startTime: this.parseDateQuery(startTime),
       endTime: this.parseDateQuery(endTime),
       limit: this.parseNumberQuery(limit),
@@ -126,7 +128,7 @@ export class LoggingController {
 
     return {
       count: result.count,
-      logs: result.logs,
+      logs: user.role === Role.IT_ADMIN ? result.logs.map((log) => this.redactOperationalLog(log)) : result.logs,
       meta: result.meta,
     };
   }
@@ -136,6 +138,7 @@ export class LoggingController {
    * GET /logging/stats
    */
   @Get('stats')
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN, Role.IT_ADMIN)
   async getStats(@CurrentUser() user: { hospitalId: number }) {
     return this.loggingService.getStats(user.hospitalId);
   }
@@ -156,5 +159,18 @@ export class LoggingController {
 
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+
+  private redactOperationalLog(value: unknown) {
+    const log = value as Record<string, unknown>;
+    return {
+      id: log.id,
+      createdAt: log.createdAt,
+      level: log.level,
+      service: log.service,
+      operation: log.operation,
+      correlationId: log.correlationId,
+      errorCode: log.errorCode,
+    };
   }
 }

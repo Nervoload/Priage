@@ -1,7 +1,6 @@
 // backend/src/modules/jobs/jobs.module.ts
 
 import { Module } from '@nestjs/common';
-import { BullModule } from '@nestjs/bullmq';
 
 import { AlertsModule } from '../alerts/alerts.module';
 import { AssetsModule } from '../assets/assets.module';
@@ -12,34 +11,19 @@ import { EventsProcessor } from './processors/events.processor';
 import { LoggingProcessor } from './processors/logging.processor';
 import { JobsService } from './jobs.service';
 import { AssetsProcessor } from './processors/assets.processor';
-import { getRedisConnectionOptions } from '../../common/config/redis.config';
+import { JobQueueModule } from './job-queue.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
+import { WebhooksProcessor } from './processors/webhooks.processor';
 
 @Module({
   imports: [
-    BullModule.forRoot({
-      connection: getRedisConnectionOptions({ maxRetriesPerRequest: null }),
-    }),
-    BullModule.registerQueue({
-      name: 'events',
-      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
-    }),
-    BullModule.registerQueue({
-      name: 'alerts',
-      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
-    }),
-    BullModule.registerQueue({
-      name: 'logging',
-      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
-    }),
-    BullModule.registerQueue({
-      name: 'assets',
-      defaultJobOptions: { attempts: 5, backoff: { type: 'exponential', delay: 10000 } },
-    }),
+    JobQueueModule,
     PrismaModule,
     EventsModule,
     AlertsModule,
     AssetsModule,
+    WebhooksModule,
   ],
-  providers: [JobsService, EventsProcessor, AlertsProcessor, LoggingProcessor, AssetsProcessor],
+  providers: [JobsService, EventsProcessor, AlertsProcessor, LoggingProcessor, AssetsProcessor, WebhooksProcessor],
 })
 export class JobsModule {}

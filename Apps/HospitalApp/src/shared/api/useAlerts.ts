@@ -8,8 +8,14 @@
 //   const { alerts, acknowledgeAlert, resolveAlert, unacknowledgedCount } = useAlerts(encounters, hospitalId);
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { deriveAlertsFromEncounters, SEVERITY_COLORS } from './alertDerivation';
-import { listUnacknowledgedAlerts, acknowledgeAlert as ackAlertApi, resolveAlert as resolveAlertApi } from './alerts';
+import { deriveAlertsFromEncounters, SEVERITY_COLORS, type AlertRuleManifest } from './alertDerivation';
+import {
+  listActiveAlerts,
+  getAlertRuleManifest,
+  evaluateAlertRules,
+  acknowledgeAlert as ackAlertApi,
+  resolveAlert as resolveAlertApi,
+} from './alerts';
 import { getSocket } from '../realtime/socket';
 import type { Encounter, Alert, AlertSeverity } from '../types/domain';
 import { patientName as getPatientName, RealtimeEvents } from '../types/domain';
@@ -22,6 +28,7 @@ export interface UnifiedAlert {
   source: 'server' | 'derived';
   encounterId: number;
   type: string;
+  ruleKey: string | null;
   severity: AlertSeverity;
   message: string;
   patientName: string;
@@ -36,7 +43,7 @@ export interface UnifiedAlert {
 
 export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
   const [serverAlerts, setServerAlerts] = useState<Alert[]>([]);
-  const [acknowledgedDerived, setAcknowledgedDerived] = useState<Set<string>>(new Set());
+  const [ruleManifest, setRuleManifest] = useState<AlertRuleManifest | null>(null);
   const [loading, setLoading] = useState(false);
 
   // 1. Fetch server-side unacknowledged alerts
@@ -47,7 +54,7 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
     }
     try {
       setLoading(true);
-      const alerts = await listUnacknowledgedAlerts(hospitalId);
+      const alerts = await listActiveAlerts(hospitalId);
       setServerAlerts(alerts);
     } catch (err) {
       console.error('[useAlerts] Failed to fetch server alerts:', err);
@@ -61,6 +68,13 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
   useEffect(() => {
     fetchServerAlerts();
   }, [fetchServerAlerts]);
+
+  useEffect(() => {
+    if (!hospitalId) return;
+    void getAlertRuleManifest().then(setRuleManifest).catch((error) => {
+      console.error('[useAlerts] Failed to fetch alert rule manifest:', error);
+    });
+  }, [hospitalId]);
 
   // 2. Subscribe to real-time alert events
   useEffect(() => {
@@ -91,12 +105,14 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
 
     socket.on('connect', handleConnect);
     socket.on(RealtimeEvents.AlertCreated, handleAlertCreated);
+    socket.on(RealtimeEvents.AlertEscalated, handleAlertCreated);
     socket.on(RealtimeEvents.AlertAcknowledged, handleAlertAcknowledged);
     socket.on(RealtimeEvents.AlertResolved, handleAlertResolved);
 
     return () => {
       socket.off('connect', handleConnect);
       socket.off(RealtimeEvents.AlertCreated, handleAlertCreated);
+      socket.off(RealtimeEvents.AlertEscalated, handleAlertCreated);
       socket.off(RealtimeEvents.AlertAcknowledged, handleAlertAcknowledged);
       socket.off(RealtimeEvents.AlertResolved, handleAlertResolved);
     };
@@ -104,8 +120,8 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
 
   // 3. Derive alerts from encounters
   const derivedAlerts = useMemo(
-    () => deriveAlertsFromEncounters(encounters),
-    [encounters],
+    () => deriveAlertsFromEncounters(encounters, ruleManifest),
+    [encounters, ruleManifest],
   );
 
   // 4. Merge server + derived into a unified list
@@ -119,6 +135,7 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
         source: 'server',
         encounterId: sa.encounterId,
         type: sa.type,
+        ruleKey: sa.ruleKey,
         severity: sa.severity,
         message: `[${sa.type}] Alert on encounter #${sa.encounterId}`,
         patientName: '', // We could enrich from encounters
@@ -140,14 +157,22 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
       }
     }
 
-    // Derived alerts (skip if acknowledged locally)
+    const activeServerRules = new Set(
+      serverAlerts
+        .filter((alert) => alert.ruleKey)
+        .map((alert) => `${alert.encounterId}:${alert.ruleKey}`),
+    );
+
+    // Derived alerts are optimistic render-only. Once a server rule exists,
+    // its persistent lifecycle replaces the derived copy.
     for (const da of derivedAlerts) {
-      if (acknowledgedDerived.has(da.id)) continue;
+      if (activeServerRules.has(`${da.encounterId}:${da.ruleKey}`)) continue;
       unified.push({
         id: da.id,
         source: 'derived',
         encounterId: da.encounterId,
         type: da.type,
+        ruleKey: da.ruleKey,
         severity: da.severity,
         message: da.message,
         patientName: da.patientName,
@@ -165,7 +190,7 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
       LOW: 3,
     };
     return unified.sort((a, b) => order[a.severity] - order[b.severity]);
-  }, [serverAlerts, derivedAlerts, acknowledgedDerived, encounters]);
+  }, [serverAlerts, derivedAlerts, encounters]);
 
   // ─── Actions ───────────────────────────────────────────────────────────────
 
@@ -173,14 +198,21 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
     if (alert.source === 'server' && alert.serverAlertId) {
       try {
         await ackAlertApi(alert.serverAlertId);
-        setServerAlerts(prev => prev.filter(a => a.id !== alert.serverAlertId));
+        await fetchServerAlerts();
       } catch (err) {
         console.error('[useAlerts] Failed to acknowledge alert:', err);
       }
     } else if (alert.source === 'derived') {
-      setAcknowledgedDerived(prev => new Set(prev).add(alert.id));
+      try {
+        const materialized = await evaluateAlertRules(alert.encounterId);
+        const persistent = materialized.find((candidate) => candidate.ruleKey === alert.ruleKey);
+        if (persistent) await ackAlertApi(persistent.id);
+        await fetchServerAlerts();
+      } catch (err) {
+        console.error('[useAlerts] Failed to materialize derived alert:', err);
+      }
     }
-  }, []);
+  }, [fetchServerAlerts]);
 
   const resolve = useCallback(async (alert: UnifiedAlert) => {
     if (alert.source === 'server' && alert.serverAlertId) {
@@ -191,10 +223,11 @@ export function useAlerts(encounters: Encounter[], hospitalId: number | null) {
         console.error('[useAlerts] Failed to resolve alert:', err);
       }
     } else if (alert.source === 'derived') {
-      // For derived alerts, acknowledge = dismiss
-      setAcknowledgedDerived(prev => new Set(prev).add(alert.id));
+      // Rule-engine alerts are condition-resolved. A derived copy must first
+      // be materialized and acknowledged rather than dismissed locally.
+      await acknowledge(alert);
     }
-  }, []);
+  }, [acknowledge]);
 
   const unacknowledgedCount = alerts.filter(a => !a.acknowledged).length;
 

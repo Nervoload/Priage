@@ -3,6 +3,7 @@
 
 import { client } from './client';
 import type { Alert, AlertSeverity } from '../types/domain';
+import type { AlertRuleManifest } from './alertDerivation';
 
 // ─── Create an alert ────────────────────────────────────────────────────────
 
@@ -38,6 +39,18 @@ export async function resolveAlert(alertId: number): Promise<Alert> {
 
 export async function listUnacknowledgedAlerts(hospitalId: number): Promise<Alert[]> {
   return client<Alert[]>(`/alerts/hospitals/${hospitalId}/unacknowledged`);
+}
+
+export async function listActiveAlerts(hospitalId: number): Promise<Alert[]> {
+  return client<Alert[]>(`/alerts/hospitals/${hospitalId}/active`);
+}
+
+export async function getAlertRuleManifest(): Promise<AlertRuleManifest> {
+  return client<AlertRuleManifest>('/alerts/rules/manifest');
+}
+
+export async function evaluateAlertRules(encounterId: number): Promise<Alert[]> {
+  return client<Alert[]>(`/alerts/encounters/${encounterId}/evaluate`, { method: 'POST' });
 }
 
 // ─── List alerts for an encounter ───────────────────────────────────────────

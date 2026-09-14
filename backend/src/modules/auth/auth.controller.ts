@@ -63,7 +63,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const deviceId = readCookie(req.headers?.cookie, STAFF_DEVICE_COOKIE) || randomBytes(24).toString('base64url');
-    const result = await this.authService.loginWithSso(dto.assertion, req.correlationId, {
+    const result = await this.authService.loginWithSso(dto.assertion, dto.hospitalSlug, req.correlationId, {
       ipAddress: req.ip,
       userAgent: req.get('user-agent') ?? null,
       deviceId,
@@ -94,17 +94,17 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
-  listSessions(@CurrentUser() user: { userId: number }) {
-    return this.authService.listSessions(user.userId);
+  listSessions(@CurrentUser() user: { userId: number; membershipId: number }) {
+    return this.authService.listSessions(user.userId, user.membershipId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('sessions/:id/revoke')
   revokeSession(
-    @CurrentUser() user: { userId: number },
+    @CurrentUser() user: { userId: number; membershipId: number },
     @Param('id', ParseIntPipe) id: number,
   ) {
-    return this.authService.revokeSession(user.userId, id);
+    return this.authService.revokeSession(user.userId, user.membershipId, id);
   }
 
   @Post('logout')

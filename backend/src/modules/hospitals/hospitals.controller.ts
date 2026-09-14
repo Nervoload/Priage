@@ -33,12 +33,12 @@ export class HospitalsController {
   }
 
   @Patch(':id')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.IT_ADMIN, Role.CLINICAL_ADMIN)
   async updateHospital(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateHospitalDetailsDto,
-    @CurrentUser() user: { userId: number; hospitalId: number },
+    @CurrentUser() user: { userId: number; hospitalId: number; membershipId: number; role: Role },
   ) {
     if (user.hospitalId !== id) {
       throw new ForbiddenException('Cannot update another hospital');
@@ -46,6 +46,8 @@ export class HospitalsController {
     return this.hospitalsService.updateHospitalDetails(
       id,
       user.userId,
+      user.membershipId,
+      user.role,
       dto,
       req.correlationId,
     );
@@ -53,7 +55,7 @@ export class HospitalsController {
 
   // GET /hospitals/:id/dashboard - Dashboard analytics (ADMIN, NURSE, DOCTOR)
   @Get(':id/dashboard')
-  @Roles(Role.ADMIN, Role.NURSE, Role.DOCTOR)
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN, Role.NURSE, Role.DOCTOR)
   async getDashboard(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
@@ -68,7 +70,7 @@ export class HospitalsController {
 
   // GET /hospitals/:id/queue - Queue status (ADMIN, NURSE, DOCTOR, STAFF)
   @Get(':id/queue')
-  @Roles(Role.ADMIN, Role.NURSE, Role.DOCTOR, Role.STAFF)
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN, Role.NURSE, Role.DOCTOR, Role.STAFF)
   async getQueue(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
@@ -96,7 +98,7 @@ export class HospitalsController {
   }
 
   @Put(':id/config')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.IT_ADMIN, Role.CLINICAL_ADMIN)
   async updateConfig(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
@@ -110,7 +112,7 @@ export class HospitalsController {
   }
 
   @Get(':id/feedback')
-  @Roles(Role.ADMIN, Role.NURSE, Role.DOCTOR)
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN, Role.NURSE, Role.DOCTOR)
   async listAdmittanceFeedback(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
@@ -124,7 +126,7 @@ export class HospitalsController {
   }
 
   @Post(':id/feedback')
-  @Roles(Role.ADMIN, Role.NURSE, Role.DOCTOR, Role.STAFF)
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN, Role.NURSE, Role.DOCTOR, Role.STAFF)
   async submitAdmittanceFeedback(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,

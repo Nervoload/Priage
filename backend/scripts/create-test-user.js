@@ -37,7 +37,7 @@ async function createTestUsers() {
     
     // Create test users with different roles
     const users = [
-      { email: 'admin@test.com', role: 'ADMIN' },
+      { email: 'admin@test.com', role: 'CLINICAL_ADMIN' },
       { email: 'doctor@test.com', role: 'DOCTOR' },
       { email: 'nurse@test.com', role: 'NURSE' },
       { email: 'staff@test.com', role: 'STAFF' },
@@ -55,6 +55,7 @@ async function createTestUsers() {
             password: hashedPassword,
             role: userData.role,
             hospitalId: hospital.id,
+            hospitalMemberships: { create: { hospitalId: hospital.id, role: userData.role } },
           },
         });
         console.log(`✅ Created ${user.role}: ${user.email}`);

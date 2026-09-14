@@ -72,7 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     validate();
     return () => { cancelled = true; };
-  }, [clearSession]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clearSession]);
 
   // Persist session changes
   useEffect(() => {

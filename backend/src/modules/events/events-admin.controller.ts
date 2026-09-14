@@ -9,7 +9,7 @@ import { EventsService } from './events.service';
 
 @Controller('operations/events')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN)
+@Roles(Role.ADMIN, Role.CLINICAL_ADMIN)
 export class EventsAdminController {
   constructor(private readonly events: EventsService) {}
 

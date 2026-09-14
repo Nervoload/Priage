@@ -16,6 +16,7 @@ export class JobsService implements OnModuleInit {
     @InjectQueue('alerts') private readonly alertsQueue: Queue,
     @InjectQueue('logging') private readonly loggingQueue: Queue,
     @InjectQueue('assets') private readonly assetsQueue: Queue,
+    @InjectQueue('webhooks') private readonly webhooksQueue: Queue,
     private readonly loggingService: LoggingService,
   ) {
     this.logger.log('JobsService initialized');
@@ -49,9 +50,10 @@ export class JobsService implements OnModuleInit {
         },
       );
 
-      // Set up triage reassessment job
+      // Full server-owned alert rule recovery sweep. Immediate encounter
+      // changes are also queued from durable encounter events.
       await this.alertsQueue.add(
-        'triage-reassessment',
+        'sweep-alert-rules',
         {},
         {
           repeat: { every: 60000 },
@@ -61,7 +63,7 @@ export class JobsService implements OnModuleInit {
       );
 
       this.loggingService.info(
-        'Triage reassessment job configured',
+        'Alert rule sweep configured',
         {
           service: 'JobsService',
           operation: 'onModuleInit',
@@ -88,6 +90,16 @@ export class JobsService implements OnModuleInit {
         {},
         {
           repeat: { every: 5 * 60 * 1000 },
+          removeOnComplete: 100,
+          removeOnFail: 100,
+        },
+      );
+
+      await this.webhooksQueue.add(
+        'deliver-webhooks',
+        {},
+        {
+          repeat: { every: 15000 },
           removeOnComplete: 100,
           removeOnFail: 100,
         },

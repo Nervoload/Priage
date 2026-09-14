@@ -18,7 +18,7 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('hospitals/:id/encounters')
-  @Roles(Role.ADMIN, Role.NURSE, Role.DOCTOR)
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN, Role.NURSE, Role.DOCTOR)
   async getHospitalEncounterAnalytics(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
@@ -31,7 +31,7 @@ export class AnalyticsController {
 
     const effectiveQuery = {
       ...query,
-      range: user.role === Role.ADMIN ? query.range : 'week',
+      range: user.role === Role.ADMIN || user.role === Role.CLINICAL_ADMIN ? query.range : 'week',
     } satisfies GetHospitalAnalyticsQueryDto;
 
     return this.analyticsService.getHospitalAnalytics(id, effectiveQuery, req.correlationId);

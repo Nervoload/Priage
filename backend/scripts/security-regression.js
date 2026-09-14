@@ -26,6 +26,10 @@ function includes(file, expected, message) {
   assert.ok(read(file).includes(expected), message || `${file} should contain ${expected}`);
 }
 
+function excludes(file, unexpected, message) {
+  assert.ok(!read(file).includes(unexpected), message || `${file} should not contain ${unexpected}`);
+}
+
 function matches(file, pattern, message) {
   assert.match(read(file), pattern, message || `${file} should match ${pattern}`);
 }
@@ -245,7 +249,9 @@ check('patient app has a durable browser outbox and retries with stable idempote
   includes('Apps/PatientApp/src/shared/patientCommandOutbox.ts', 'sendDurablePatientUpload');
   includes('Apps/PatientApp/src/shared/api/assets.ts', 'sendDurablePatientUpload');
   includes('Apps/PatientApp/src/shared/api/intake.ts', 'sendDurablePatientCommand');
-  includes('Apps/PatientApp/src/shared/api/priage.ts', 'sendDurablePatientCommand');
+  excludes('Apps/PatientApp/src/shared/api/priage.ts', 'sendDurablePatientCommand');
+  excludes('Apps/PatientApp/src/shared/api/priage.ts', 'priageChat');
+  excludes('Apps/PatientApp/src/shared/api/priage.ts', 'priageAdmit');
 });
 
 check('staff clinical reads exclude STAFF role on high-risk resources', () => {

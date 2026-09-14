@@ -58,7 +58,9 @@ export function getSocket(): Socket {
   if (!_socket) {
     _socket = io(API_BASE_URL, {
       withCredentials: true,
-      transports: ['websocket', 'polling'],
+      // WebSocket-only avoids Socket.IO long-polling handshakes crossing
+      // replicas. REST hydration/reconciliation remains the fallback path.
+      transports: ['websocket'],
       autoConnect: false,
     });
     _socket.on('connect_error', (error) => {

@@ -267,7 +267,7 @@ export function AnalyticsPage({
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
-  const isAdmin = user?.role === 'ADMIN';
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'CLINICAL_ADMIN';
 
   const rangeLabels: Record<AnalyticsRange, string> = {
     day: 'Past Day',

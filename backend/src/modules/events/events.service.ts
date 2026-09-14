@@ -13,10 +13,12 @@ import {
   MessageCreatedPayload,
   MessageReadPayload,
   AlertCreatedPayload,
+  AlertEscalatedPayload,
   AlertAcknowledgedPayload,
   AlertResolvedPayload,
 } from '../realtime/realtime.events';
 import { PatientRealtimeService } from './patient-realtime.service';
+import { AlertEvaluationScheduler } from './alert-evaluation.scheduler';
 
 export type EncounterEventActor = {
   actorUserId?: number;
@@ -41,6 +43,7 @@ export class EventsService {
     private readonly loggingService: LoggingService,
     private readonly prisma: PrismaService,
     private readonly patientRealtime: PatientRealtimeService,
+    private readonly alertEvaluation: AlertEvaluationScheduler,
   ) {
     this.logger.log('EventsService initialized');
   }
@@ -152,13 +155,38 @@ export class EventsService {
             payloadBase as EncounterUpdatedPayload,
           );
           break;
-        case EventType.MESSAGE_CREATED:
+        case EventType.MESSAGE_CREATED: {
+          const messageId = this.readMetadataNumber(event.metadata, 'messageId');
+          const message = messageId == null
+            ? null
+            : await this.prisma.message.findFirst({
+                where: {
+                  id: messageId,
+                  encounterId: event.encounterId,
+                  hospitalId: event.hospitalId,
+                },
+                select: {
+                  id: true,
+                  createdAt: true,
+                  senderType: true,
+                  content: true,
+                  isInternal: true,
+                  createdByUserId: true,
+                  createdByPatientId: true,
+                  encounterId: true,
+                  hospitalId: true,
+                },
+              });
           await this.realtime.emitMessageCreated(
             event.hospitalId,
             event.encounterId,
-            payloadBase as MessageCreatedPayload,
+            {
+              ...payloadBase,
+              message: message ?? undefined,
+            } as MessageCreatedPayload,
           );
           break;
+        }
         case EventType.MESSAGE_READ:
           await this.realtime.emitMessageRead(
             event.hospitalId,
@@ -171,6 +199,13 @@ export class EventsService {
             event.hospitalId,
             event.encounterId,
             payloadBase as AlertCreatedPayload,
+          );
+          break;
+        case EventType.ALERT_ESCALATED:
+          await this.realtime.emitAlertEscalated(
+            event.hospitalId,
+            event.encounterId,
+            payloadBase as AlertEscalatedPayload,
           );
           break;
         case EventType.ALERT_ACKNOWLEDGED:
@@ -219,6 +254,7 @@ export class EventsService {
         },
       );
       await this.patientRealtime.publish(event);
+      await this.alertEvaluation.enqueueForEncounterEvent(event);
       return true;
     } catch (error) {
       await this.loggingService.error(
@@ -289,6 +325,15 @@ export class EventsService {
 
   observeEncounterEvents(encounterId: number): Observable<EncounterEvent> {
     return this.patientRealtime.observe(encounterId);
+  }
+
+  private readMetadataNumber(metadata: Prisma.JsonValue, key: string): number | null {
+    if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') {
+      return null;
+    }
+
+    const value = metadata[key];
+    return typeof value === 'number' && Number.isInteger(value) ? value : null;
   }
 
   listDeadLetters(hospitalId: number, limit = 100) {

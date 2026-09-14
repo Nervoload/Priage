@@ -165,7 +165,16 @@ export class ClinicalAccessService {
   ) {
     const encounter = await this.assertEncounterInHospital(encounterId, context.hospitalId);
     const target = await this.prisma.user.findFirst({
-      where: { id: dto.userId, hospitalId: context.hospitalId, role: { in: [Role.NURSE, Role.DOCTOR, Role.ADMIN] } },
+      where: {
+        id: dto.userId,
+        hospitalMemberships: {
+          some: {
+            hospitalId: context.hospitalId,
+            isActive: true,
+            role: { in: [Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN] },
+          },
+        },
+      },
       select: { id: true },
     });
     if (!target) {

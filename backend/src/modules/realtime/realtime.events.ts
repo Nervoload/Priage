@@ -15,6 +15,7 @@ export const RealtimeEvents = {
   MessageCreated: 'message.created',
   MessageRead: 'message.read',
   AlertCreated: 'alert.created',
+  AlertEscalated: 'alert.escalated',
   AlertAcknowledged: 'alert.acknowledged',
   AlertResolved: 'alert.resolved',
 } as const;
@@ -63,6 +64,23 @@ export interface MessageCreatedPayload extends BaseEventPayload {
     isInternal: boolean;
     attachmentCount?: number;
   };
+  /**
+   * Authorized staff sockets receive the created message inline so every
+   * connected workstation does not need to issue a follow-up REST request.
+   * Older event records may not resolve to a message, so clients retain a
+   * cursor-based reconciliation fallback.
+   */
+  message?: {
+    id: number;
+    createdAt: Date;
+    senderType: 'PATIENT' | 'USER' | 'SYSTEM';
+    content: string;
+    isInternal: boolean;
+    createdByUserId: number | null;
+    createdByPatientId: number | null;
+    encounterId: number;
+    hospitalId: number;
+  };
 }
 
 export interface MessageReadPayload extends BaseEventPayload {
@@ -89,6 +107,10 @@ export interface AlertAcknowledgedPayload extends BaseEventPayload {
   };
 }
 
+export interface AlertEscalatedPayload extends AlertCreatedPayload {
+  metadata: AlertCreatedPayload['metadata'] & { previousSeverity: string };
+}
+
 export interface AlertResolvedPayload extends BaseEventPayload {
   metadata: {
     alertId: number;
@@ -103,6 +125,7 @@ export interface RealtimeEventMap {
   [RealtimeEvents.MessageCreated]: MessageCreatedPayload;
   [RealtimeEvents.MessageRead]: MessageReadPayload;
   [RealtimeEvents.AlertCreated]: AlertCreatedPayload;
+  [RealtimeEvents.AlertEscalated]: AlertEscalatedPayload;
   [RealtimeEvents.AlertAcknowledged]: AlertAcknowledgedPayload;
   [RealtimeEvents.AlertResolved]: AlertResolvedPayload;
 }

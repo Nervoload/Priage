@@ -26,6 +26,7 @@ export interface StaffAuthUser {
   hospitalId: number;
   sessionId: number;
   sessionExpiresAt: string | null;
+  membershipId: number;
   hospital: {
     id: number;
     name: string;
@@ -38,6 +39,24 @@ type SessionAuditContext = {
   userAgent?: string | null;
   deviceId?: string | null;
 };
+
+type LoginMembership = {
+  id: number;
+  hospitalId: number;
+  role: string;
+  hospital: { id: number; name: string; slug: string };
+};
+
+export function selectMembershipForLogin(
+  memberships: LoginMembership[],
+  hospitalSlug?: string,
+): LoginMembership | null {
+  if (hospitalSlug) {
+    const normalized = hospitalSlug.trim().toLowerCase();
+    return memberships.find((membership) => membership.hospital.slug.toLowerCase() === normalized) ?? null;
+  }
+  return memberships.length === 1 ? memberships[0]! : null;
+}
 
 @Injectable()
 export class AuthService {
@@ -65,7 +84,10 @@ export class AuthService {
     try {
       const user = await this.prisma.user.findUnique({
         where: { email: dto.email },
-        include: { hospital: true },
+        include: {
+          hospital: true,
+          hospitalMemberships: { where: { isActive: true }, include: { hospital: true } },
+        },
       });
 
       if (!user) {
@@ -97,6 +119,9 @@ export class AuthService {
         throw new UnauthorizedException('Invalid credentials');
       }
 
+      const membership = selectMembershipForLogin(user.hospitalMemberships, dto.hospitalSlug);
+      if (!membership) throw new UnauthorizedException('Invalid credentials');
+
       const mfaRequired = user.mfaEnabled || this.readBooleanEnv('STAFF_MFA_REQUIRED', false);
       if (mfaRequired) {
         if (!user.mfaEnabled || !user.mfaSecretEncrypted) {
@@ -107,16 +132,22 @@ export class AuthService {
         }
       }
 
-      const { sessionToken, session } = await this.createSession(user.id, auditContext, 'password', mfaRequired);
+      const { sessionToken, session } = await this.createSession(
+        user.id,
+        membership.id,
+        auditContext,
+        'password',
+        mfaRequired,
+      );
 
       this.loggingService.info('Login successful', {
         service: 'AuthService',
         operation: 'login',
         correlationId,
         userId: user.id,
-        hospitalId: user.hospitalId,
+        hospitalId: membership.hospitalId,
       }, {
-        role: user.role,
+        role: membership.role,
         loginMethod: 'password',
       });
 
@@ -130,12 +161,13 @@ export class AuthService {
         user: {
           id: user.id,
           email: user.email,
-          role: user.role,
-          hospitalId: user.hospitalId,
+          role: membership.role,
+          membershipId: membership.id,
+          hospitalId: membership.hospitalId,
           hospital: {
-            id: user.hospital.id,
-            name: user.hospital.name,
-            slug: user.hospital.slug,
+            id: membership.hospital.id,
+            name: membership.hospital.name,
+            slug: membership.hospital.slug,
           },
         },
       };
@@ -156,7 +188,12 @@ export class AuthService {
     }
   }
 
-  async loginWithSso(assertion: string, correlationId?: string, auditContext?: SessionAuditContext) {
+  async loginWithSso(
+    assertion: string,
+    hospitalSlug?: string,
+    correlationId?: string,
+    auditContext?: SessionAuditContext,
+  ) {
     const verificationKey = process.env.SSO_JWT_PUBLIC_KEY?.replace(/\\n/g, '\n')
       || process.env.SSO_JWT_SECRET;
     if (!verificationKey) {
@@ -176,15 +213,27 @@ export class AuthService {
 
     let user = await this.prisma.user.findUnique({
       where: { ssoIssuer_ssoSubject: { ssoIssuer: issuer, ssoSubject: subject } },
-      include: { hospital: true },
+      include: {
+        hospital: true,
+        hospitalMemberships: { where: { isActive: true }, include: { hospital: true } },
+      },
     });
     if (!user && email && this.readBooleanEnv('SSO_ALLOW_EMAIL_LINK', false)) {
-      user = await this.prisma.user.findUnique({ where: { email }, include: { hospital: true } });
+      user = await this.prisma.user.findUnique({
+        where: { email },
+        include: {
+          hospital: true,
+          hospitalMemberships: { where: { isActive: true }, include: { hospital: true } },
+        },
+      });
       if (user) {
         user = await this.prisma.user.update({
           where: { id: user.id },
           data: { ssoIssuer: issuer, ssoSubject: subject },
-          include: { hospital: true },
+          include: {
+            hospital: true,
+            hospitalMemberships: { where: { isActive: true }, include: { hospital: true } },
+          },
         });
       }
     }
@@ -192,13 +241,22 @@ export class AuthService {
       throw new UnauthorizedException('SSO identity is not provisioned');
     }
 
-    const { sessionToken, session } = await this.createSession(user.id, auditContext, 'sso', true);
+    const membership = selectMembershipForLogin(user.hospitalMemberships, hospitalSlug);
+    if (!membership) throw new UnauthorizedException('SSO identity is not provisioned');
+
+    const { sessionToken, session } = await this.createSession(
+      user.id,
+      membership.id,
+      auditContext,
+      'sso',
+      true,
+    );
     await this.loggingService.info('SSO login successful', {
       service: 'AuthService',
       operation: 'loginWithSso',
       correlationId,
       userId: user.id,
-      hospitalId: user.hospitalId,
+      hospitalId: membership.hospitalId,
     });
     return {
       sessionToken,
@@ -206,9 +264,10 @@ export class AuthService {
       user: {
         id: user.id,
         email: user.email,
-        role: user.role,
-        hospitalId: user.hospitalId,
-        hospital: user.hospital,
+        role: membership.role,
+        membershipId: membership.id,
+        hospitalId: membership.hospitalId,
+        hospital: membership.hospital,
       },
     };
   }
@@ -236,9 +295,9 @@ export class AuthService {
     return { ok: true };
   }
 
-  async listSessions(userId: number) {
+  async listSessions(userId: number, membershipId: number) {
     return this.prisma.staffSession.findMany({
-      where: { userId, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+      where: { userId, membershipId, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
@@ -255,9 +314,9 @@ export class AuthService {
     });
   }
 
-  async revokeSession(userId: number, sessionId: number) {
+  async revokeSession(userId: number, membershipId: number, sessionId: number) {
     const result = await this.prisma.staffSession.updateMany({
-      where: { id: sessionId, userId, revokedAt: null },
+      where: { id: sessionId, userId, membershipId, revokedAt: null },
       data: { revokedAt: new Date(), revokedReason: 'revoked_by_user' },
     });
     if (result.count !== 1) throw new NotFoundException('Active session not found');
@@ -282,14 +341,13 @@ export class AuthService {
         where: { tokenHash },
         include: {
           user: {
-            include: {
-              hospital: true,
-            },
+            select: { id: true, email: true },
           },
+          membership: { include: { hospital: true } },
         },
       });
 
-      if (!session || !session.user) {
+      if (!session || !session.user || !session.membership) {
         await this.loggingService.warn('Staff session validation failed - session not found', {
           service: 'AuthService',
           operation: 'validateSessionToken',
@@ -298,13 +356,23 @@ export class AuthService {
         throw new UnauthorizedException('Invalid staff session');
       }
 
+      if (!session.membership.isActive || session.membership.disabledAt) {
+        await this.prisma.staffSession.updateMany({
+          where: { id: session.id, revokedAt: null },
+          data: { revokedAt: new Date(), revokedReason: 'membership_disabled' },
+        });
+        throw new UnauthorizedException('Staff membership is no longer active');
+      }
+
+      const membership = session.membership;
+
       if (session.revokedAt) {
         await this.loggingService.warn('Staff session validation failed - session revoked', {
           service: 'AuthService',
           operation: 'validateSessionToken',
           correlationId,
           userId: session.user.id,
-          hospitalId: session.user.hospitalId,
+          hospitalId: membership.hospitalId,
         }, {
           sessionId: session.id,
         });
@@ -317,7 +385,7 @@ export class AuthService {
           operation: 'validateSessionToken',
           correlationId,
           userId: session.user.id,
-          hospitalId: session.user.hospitalId,
+          hospitalId: membership.hospitalId,
         }, {
           sessionId: session.id,
         });
@@ -359,23 +427,24 @@ export class AuthService {
         operation: 'validateSessionToken',
         correlationId,
         userId: session.user.id,
-        hospitalId: session.user.hospitalId,
+        hospitalId: membership.hospitalId,
       }, {
-        role: session.user.role,
+        role: membership.role,
         sessionId: session.id,
       });
 
       return {
         userId: session.user.id,
         email: session.user.email,
-        role: session.user.role,
-        hospitalId: session.user.hospitalId,
+        role: membership.role,
+        membershipId: membership.id,
+        hospitalId: membership.hospitalId,
         sessionId: session.id,
         sessionExpiresAt: session.expiresAt?.toISOString() ?? null,
         hospital: {
-          id: session.user.hospital.id,
-          name: session.user.hospital.name,
-          slug: session.user.hospital.slug,
+          id: membership.hospital.id,
+          name: membership.hospital.name,
+          slug: membership.hospital.slug,
         },
       };
     } catch (error) {
@@ -405,11 +474,9 @@ export class AuthService {
       where: { tokenHash },
       include: {
         user: {
-          select: {
-            id: true,
-            hospitalId: true,
-          },
+          select: { id: true },
         },
+        membership: { select: { hospitalId: true } },
       },
     });
 
@@ -430,7 +497,7 @@ export class AuthService {
       operation: 'logout',
       correlationId,
       userId: existing.user.id,
-      hospitalId: existing.user.hospitalId,
+      hospitalId: existing.membership?.hospitalId,
     }, {
       sessionId: existing.id,
       reason,
@@ -451,13 +518,14 @@ export class AuthService {
 
   private async createSession(
     userId: number,
+    membershipId: number,
     auditContext: SessionAuditContext | undefined,
     authMethod: string,
     mfaVerified: boolean,
   ) {
     const maxSessions = this.readPositiveIntEnv('STAFF_MAX_ACTIVE_SESSIONS', 5);
     const active = await this.prisma.staffSession.findMany({
-      where: { userId, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+      where: { userId, membershipId, revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
       orderBy: { createdAt: 'desc' },
       select: { id: true },
     });
@@ -473,6 +541,7 @@ export class AuthService {
       data: {
         tokenHash: this.hashSessionToken(sessionToken),
         userId,
+        membershipId,
         expiresAt: this.buildSessionExpiry(),
         lastSeenAt: new Date(),
         createdIp: this.normalizeAuditField(auditContext?.ipAddress),

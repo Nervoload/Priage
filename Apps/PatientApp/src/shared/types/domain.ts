@@ -148,6 +148,7 @@ export interface PriageSummary {
   recommendedAction: string;
   generatedAt: string;
   generationMode: 'ai' | 'fallback';
+  governance?: InterviewGovernance;
 }
 
 export interface Encounter {
@@ -281,6 +282,22 @@ export interface InterviewState {
   cachedQuestions: InterviewQuestion[];
   emergencyAlert: InterviewEmergencyAlert | null;
   summaryPreview: string;
+  generationMode: 'ai' | 'fallback';
+  governance: InterviewGovernance;
+}
+
+export interface InterviewGovernance {
+  version: string;
+  generationMode: 'ai' | 'fallback';
+  decisionSupportOnly: true;
+  humanReviewRequired: true;
+  emergencyInstructions: string;
+  provider: {
+    name: 'openai' | 'deterministic' | 'none';
+    model: string | null;
+    promptVersion: string | null;
+  };
+  reviewState: 'UNREVIEWED';
 }
 
 export interface AdvanceInterviewPayload {
@@ -295,36 +312,6 @@ export interface AdvanceInterviewPayload {
 export interface LocationPingPayload {
   latitude: number;
   longitude: number;
-}
-
-export interface PriageChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-export interface PriageAssessment {
-  urgency: 'low' | 'medium' | 'high' | 'emergency';
-  suggestedAction: string;
-  summary: string;
-}
-
-export interface PriageChatResponse {
-  reply: string;
-  stage: string;
-  assessment?: PriageAssessment;
-  canAdmit: boolean;
-}
-
-export interface PriageAdmitPayload {
-  chiefComplaint: string;
-  details?: string;
-  hospitalSlug?: string;
-  severity?: number;
-}
-
-export interface PriageAdmitResponse {
-  encounter: Encounter;
-  message: string;
 }
 
 export interface Hospital {

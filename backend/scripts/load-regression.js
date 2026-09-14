@@ -169,17 +169,27 @@ check('patient messages page avoids 5 second active-thread polling', () => {
 
 check('hospital encounter realtime applies per-encounter deltas with full-refetch fallback', () => {
   const source = read('Apps/HospitalApp/src/app/HospitalApp.tsx');
+  const waitingRoom = read('Apps/HospitalApp/src/features/waitingroom/WaitingRoomView.tsx');
   const socket = read('Apps/HospitalApp/src/shared/realtime/socket.ts');
   const gateway = read('backend/src/modules/realtime/realtime.gateway.ts');
+  const events = read('backend/src/modules/events/events.service.ts');
   assert.ok(source.includes('applyEncounterDelta'), 'Hospital app should apply encounter deltas');
   assert.ok(source.includes('getEncounter(encounterId)'), 'Hospital app should fetch only the changed encounter');
   assert.ok(source.includes('subscribeToEncounterRealtime'), 'Hospital app should subscribe to assigned encounter deltas');
+  assert.ok(source.includes('connectSocket();'), 'Hospital realtime should connect for the authenticated session');
+  assert.ok(!source.includes('waitingRoomRealtimeEnabled'), 'Hospital realtime must not require a waiting-room opt in');
+  assert.ok(!waitingRoom.includes('Enter the Waiting Room'), 'Waiting room must not gate live updates behind a button');
   assert.ok(socket.includes("'encounters.subscribe'"), 'Socket client should request encounter subscriptions');
   assert.ok(gateway.includes("SubscribeMessage('encounters.subscribe')"), 'Socket server should authorize encounter subscriptions');
   assert.ok(gateway.includes('SOCKET_ENCOUNTER_SUBSCRIPTION_CAP'), 'Socket encounter subscriptions should be capped');
   assert.ok(source.includes('scheduleFetchEncounters'), 'Hospital app should schedule encounter refetches');
   assert.ok(source.includes('encounterRefreshTimer'), 'Hospital app should keep one pending refetch timer');
   assert.ok(source.includes('window.clearTimeout'), 'Hospital app should clear stale refetch timers');
+  assert.ok(extractNumericConstant(source, 'REALTIME_FALLBACK_REFRESH_MS') >= 30_000);
+  assert.ok(extractNumericConstant(source, 'MESSAGE_FALLBACK_BATCH_SIZE') <= 5);
+  assert.ok(source.includes('afterMessageId: currentCursor ?? 0'), 'An empty hydrated thread should accept its first live message');
+  assert.ok(events.includes('message: message ?? undefined'), 'Message events should carry the authorized message inline');
+  assert.ok(source.includes('payload.message'), 'Hospital app should apply inline realtime messages without REST polling');
 });
 
 check('legacy enroute paths use SSE and do not retain 5/10 second polling', () => {

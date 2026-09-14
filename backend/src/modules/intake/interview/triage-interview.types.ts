@@ -4,6 +4,20 @@ export type InterviewStatus = 'in_progress' | 'emergency_ack_required' | 'comple
 export type InterviewUrgency = 'low' | 'medium' | 'high' | 'emergency';
 export type InterviewGenerationMode = 'ai' | 'fallback';
 
+export interface InterviewGovernance {
+  version: string;
+  generationMode: InterviewGenerationMode;
+  decisionSupportOnly: true;
+  humanReviewRequired: true;
+  emergencyInstructions: string;
+  provider: {
+    name: 'openai' | 'deterministic' | 'none';
+    model: string | null;
+    promptVersion: string | null;
+  };
+  reviewState: 'UNREVIEWED';
+}
+
 export interface InterviewQuestion {
   publicId: string;
   phase: InterviewPhase;
@@ -60,7 +74,7 @@ export interface InterviewSummaryRecord {
 }
 
 export interface InterviewProviderState {
-  providerName: 'openai';
+  providerName: 'openai' | 'deterministic';
   model: string;
   responseId: string;
   promptVersion: string;
@@ -93,6 +107,7 @@ export interface InterviewStateSnapshot {
   completionReason: string;
   providerState: InterviewProviderState | null;
   generationMode: InterviewGenerationMode;
+  governance: InterviewGovernance;
 }
 
 export interface InterviewClientState {
@@ -105,6 +120,8 @@ export interface InterviewClientState {
   cachedQuestions: InterviewQuestion[];
   emergencyAlert: InterviewEmergencyAlert | null;
   summaryPreview: string;
+  generationMode: InterviewGenerationMode;
+  governance: InterviewGovernance;
 }
 
 export interface ProviderQuestionDraft {

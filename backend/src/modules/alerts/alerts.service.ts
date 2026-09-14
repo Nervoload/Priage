@@ -2,13 +2,14 @@
 // Alerts service for safety escalations.
 
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AlertSeverity, EventType, Prisma } from '@prisma/client';
+import { AlertResolutionReason, AlertSeverity, AlertSource, EventType, Prisma } from '@prisma/client';
 
 import { EventsService } from '../events/events.service';
 import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAlertDto } from './dto/create-alert.dto';
+import { WebhookOutboxService } from '../webhooks/webhook-outbox.service';
 
 export type CreateAlertTxArgs = {
   encounterId: number;
@@ -31,6 +32,7 @@ export class AlertsService {
     private readonly events: EventsService,
     private readonly loggingService: LoggingService,
     private readonly sensitiveReadAudit: SensitiveReadAuditService,
+    private readonly webhookOutbox: WebhookOutboxService,
   ) {
     this.logger.log('AlertsService initialized');
   }
@@ -164,6 +166,8 @@ export class AlertsService {
       actor: args.actor,
     });
 
+    await this.webhookOutbox.enqueueAlertLifecycleTx(tx, created, createdEvent, 'alert.triggered');
+
     return { alert: created, event: createdEvent };
   }
 
@@ -196,6 +200,7 @@ export class AlertsService {
             hospitalId: true,
             encounterId: true,
             acknowledgedAt: true,
+            resolvedAt: true,
           },
         });
         if (!existing) {
@@ -215,6 +220,9 @@ export class AlertsService {
         }
         if (existing.hospitalId !== hospitalId) {
           throw new NotFoundException(`Alert ${alertId} not found`);
+        }
+        if (existing.resolvedAt) {
+          throw new BadRequestException(`Alert ${alertId} is already resolved`);
         }
         if (existing.acknowledgedAt) {
           await this.loggingService.warn(
@@ -239,6 +247,7 @@ export class AlertsService {
             id: alertId,
             hospitalId,
             acknowledgedAt: null,
+            resolvedAt: null,
           },
           data: {
             acknowledgedAt: now,
@@ -253,10 +262,14 @@ export class AlertsService {
               id: true,
               hospitalId: true,
               acknowledgedAt: true,
+              resolvedAt: true,
             },
           });
           if (!current || current.hospitalId !== hospitalId) {
             throw new NotFoundException(`Alert ${alertId} not found`);
+          }
+          if (current.resolvedAt) {
+            throw new BadRequestException(`Alert ${alertId} is already resolved`);
           }
           throw new BadRequestException(`Alert ${alertId} already acknowledged`);
         }
@@ -276,6 +289,8 @@ export class AlertsService {
           },
           actor: { actorUserId },
         });
+
+        await this.webhookOutbox.enqueueAlertLifecycleTx(tx, updated, createdEvent, 'alert.acknowledged');
 
         return { alert: updated, event: createdEvent };
       });
@@ -350,6 +365,7 @@ export class AlertsService {
             hospitalId: true,
             encounterId: true,
             resolvedAt: true,
+            source: true,
           },
         });
         if (!existing) {
@@ -386,6 +402,9 @@ export class AlertsService {
           );
           throw new BadRequestException(`Alert ${alertId} already resolved`);
         }
+        if (existing.source === AlertSource.RULE_ENGINE) {
+          throw new BadRequestException('Rule-engine alerts resolve automatically when their condition clears');
+        }
 
         const now = new Date();
         const result = await tx.alert.updateMany({
@@ -397,6 +416,7 @@ export class AlertsService {
           data: {
             resolvedAt: now,
             resolvedByUserId: actorUserId,
+            resolutionReason: AlertResolutionReason.MANUAL,
           },
         });
 
@@ -430,6 +450,8 @@ export class AlertsService {
           },
           actor: { actorUserId },
         });
+
+        await this.webhookOutbox.enqueueAlertLifecycleTx(tx, updated, createdEvent, 'alert.resolved');
 
         return { alert: updated, event: createdEvent };
       });
@@ -496,6 +518,7 @@ export class AlertsService {
         where: {
           hospitalId,
           acknowledgedAt: null,
+          resolvedAt: null,
           ...(encounterScope === null ? {} : { encounterId: { in: encounterScope } }),
         },
         orderBy: { createdAt: 'desc' },
@@ -538,6 +561,32 @@ export class AlertsService {
       );
       throw error;
     }
+  }
+
+  async listActiveAlerts(
+    hospitalId: number,
+    correlationId?: string,
+    encounterScope: number[] | null = null,
+    actorUserId?: number,
+  ) {
+    const alerts = await this.prisma.alert.findMany({
+      where: {
+        hospitalId,
+        resolvedAt: null,
+        ...(encounterScope === null ? {} : { encounterId: { in: encounterScope } }),
+      },
+      orderBy: [{ severity: 'desc' }, { createdAt: 'desc' }],
+    });
+    if (actorUserId) {
+      await this.sensitiveReadAudit.record({
+        resource: 'ALERT',
+        actorUserId,
+        hospitalId,
+        correlationId,
+        metadata: { count: alerts.length, activeOnly: true },
+      });
+    }
+    return alerts;
   }
 
   async listAlertsForEncounter(

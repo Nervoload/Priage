@@ -1395,7 +1395,7 @@ async function setupTestData() {
     testState.user = await fixtures.createUser({
       hospitalId: testState.hospital.id,
       password: CONFIG.testPassword,
-      role: 'ADMIN',
+      role: 'CLINICAL_ADMIN',
       emailPrefix: 'test-logger',
     });
     testState.testEmail = testState.user.email;

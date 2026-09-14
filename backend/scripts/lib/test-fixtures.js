@@ -80,6 +80,9 @@ class TestFixtureTracker {
         password: passwordHash,
         role: options.role,
         hospitalId: options.hospitalId,
+        hospitalMemberships: {
+          create: { hospitalId: options.hospitalId, role: options.role },
+        },
       },
     });
     this.trackUser(user.id);
@@ -87,7 +90,7 @@ class TestFixtureTracker {
   }
 
   async createUserBundle(options) {
-    const roles = options.roles || ['ADMIN', 'NURSE', 'DOCTOR', 'STAFF'];
+    const roles = options.roles || ['CLINICAL_ADMIN', 'NURSE', 'DOCTOR', 'STAFF'];
     const users = {};
     for (const role of roles) {
       const emailPrefix = `${this.label.toLowerCase()}-${role.toLowerCase()}`;

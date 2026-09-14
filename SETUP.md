@@ -96,8 +96,11 @@ REDIS_PORT=6379
 # Logging
 LOG_LEVEL="log"
 
-# Jobs
-TRIAGE_REASSESSMENT_MINUTES=30
+# Server-owned alert rules remain non-materializing until pilot review
+ALERT_RULE_ENGINE_MODE="shadow"
+
+# Production must remain deterministic until the approved regional provider pass
+TRIAGE_INTERVIEW_MODE="deterministic"
 
 # App
 APP_VERSION="0.1.0"

@@ -23,7 +23,7 @@ export class MessagingController {
   ) {}
 
   @Get('encounters/:encounterId/messages')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async listForEncounter(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Query() query: ListMessagesQueryDto,
@@ -45,7 +45,7 @@ export class MessagingController {
   // for lower-latency staff chat. The messaging.ts API client on the frontend
   // already wraps this endpoint but isn't wired into ChatPanel yet.
   @Post('encounters/:encounterId/messages')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async create(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Body() dto: CreateMessageDto,
@@ -63,7 +63,7 @@ export class MessagingController {
   }
 
   @Post('messages/:messageId/read')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async markRead(
     @Param('messageId', ParseIntPipe) messageId: number,
     @Req() req: Request,
@@ -74,7 +74,7 @@ export class MessagingController {
   }
 
   @Get('encounters/:encounterId/read-state')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async getReadState(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Req() req: Request,

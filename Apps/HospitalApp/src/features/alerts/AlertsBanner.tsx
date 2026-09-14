@@ -124,7 +124,7 @@ export function AlertsBanner({
                   flexShrink: 0,
                 }}
               >
-                Dismiss
+                Acknowledge
               </button>
             </div>
           ))}

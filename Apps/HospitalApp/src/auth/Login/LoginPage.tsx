@@ -13,6 +13,15 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const { login, loggingIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [hospitalSlug, setHospitalSlug] = useState(() => {
+    const configuredClinic = import.meta.env.VITE_HOSPITAL_SLUG?.trim();
+    if (configuredClinic) return configuredClinic;
+    try {
+      return window.localStorage.getItem('priage:last-clinic') ?? '';
+    } catch {
+      return '';
+    }
+  });
   const [mfaCode, setMfaCode] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -21,11 +30,17 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     setError(null);
 
     try {
-      await login(email, password, mfaCode || undefined);
+      const normalizedClinic = hospitalSlug.trim().toLowerCase();
+      await login(email, password, normalizedClinic, mfaCode || undefined);
+      try {
+        window.localStorage.setItem('priage:last-clinic', normalizedClinic);
+      } catch {
+        // Storage can be unavailable in private or restricted browsing modes.
+      }
       onLogin?.();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 401) {
-        setError('Invalid email or password.');
+        setError('Invalid email, password, or clinic.');
       } else if (err instanceof ApiError) {
         setError(`Login failed (${err.status}). Please try again.`);
       } else {
@@ -63,6 +78,20 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               {error}
             </div>
           )}
+
+          <div>
+            <label htmlFor="hospitalSlug" className="block text-sm font-medium text-gray-700 mb-1">Clinic</label>
+            <input
+              id="hospitalSlug"
+              type="text"
+              autoComplete="organization"
+              value={hospitalSlug}
+              onChange={(e) => setHospitalSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+              required
+              placeholder="clinic-slug"
+              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
+            />
+          </div>
 
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>

@@ -45,6 +45,8 @@ const DEFAULT_HOSPITAL_CONFIG: HospitalOperationalConfig = {
   version: 1,
   pageAccess: {
     ADMIN: ['admit', 'triage', 'waiting', 'analytics', 'settings'],
+    IT_ADMIN: ['settings'],
+    CLINICAL_ADMIN: ['admit', 'triage', 'waiting', 'analytics', 'settings'],
     NURSE: ['triage', 'waiting', 'analytics', 'settings'],
     STAFF: ['admit', 'settings'],
     DOCTOR: ['triage', 'waiting', 'analytics', 'settings'],
@@ -52,6 +54,12 @@ const DEFAULT_HOSPITAL_CONFIG: HospitalOperationalConfig = {
   customIntakeQuestions: [],
   admittanceFeedbackSurvey: [],
 };
+
+// REST is only a safety net while the socket is unavailable. Keeping this
+// interval slow avoids turning a transient WebSocket outage into an API spike.
+const REALTIME_FALLBACK_REFRESH_MS = 30_000;
+const MESSAGE_FALLBACK_BATCH_SIZE = 5;
+const MAX_REMEMBERED_REALTIME_EVENTS = 1_000;
 
 function getLastChatMessageId(messages: ChatMessage[]): number | null {
   if (messages.length === 0) {
@@ -82,20 +90,25 @@ function appendUniqueChatMessages(existing: ChatMessage[], incoming: ChatMessage
 }
 
 function buildEncounterSignature(encounters: EncounterListItem[]): string {
-  return JSON.stringify(
-    encounters.map((encounter) => [
-      encounter.id,
-      encounter.status,
-      encounter.patient.firstName,
-      encounter.patient.lastName,
-      encounter.chiefComplaint ?? '',
-      encounter.currentCtasLevel ?? null,
-      encounter.currentPriorityScore ?? null,
-      encounter.arrivedAt ?? '',
-      encounter.triagedAt ?? '',
-      encounter.waitingAt ?? '',
-    ]),
-  );
+  return JSON.stringify(encounters);
+}
+
+function rememberRealtimeEvent(seen: Set<number>, eventId: number | undefined): boolean {
+  if (typeof eventId !== 'number' || !Number.isInteger(eventId)) {
+    return true;
+  }
+  if (seen.has(eventId)) {
+    return false;
+  }
+
+  seen.add(eventId);
+  if (seen.size > MAX_REMEMBERED_REALTIME_EVENTS) {
+    const oldest = seen.values().next().value;
+    if (oldest !== undefined) {
+      seen.delete(oldest);
+    }
+  }
+  return true;
 }
 
 export function HospitalApp() {
@@ -108,7 +121,7 @@ export function HospitalApp() {
   const [encounters, setEncounters] = useState<EncounterListItem[]>([]);
   const [chatMessages, setChatMessages] = useState<Record<number, ChatMessage[]>>({});
   const [loadingEncounters, setLoadingEncounters] = useState(false);
-  const [waitingRoomRealtimeEnabled, setWaitingRoomRealtimeEnabled] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
   const isMounted = useRef(true);
   const activeUserId = useRef<number | null>(null);
   const loadedMessageEncounters = useRef<Set<number>>(new Set());
@@ -124,13 +137,14 @@ export function HospitalApp() {
   const encounterOwnerUserId = useRef<number | null>(null);
   const encounterIdsRef = useRef<number[]>([]);
   const realtimeSubscriptionKey = useRef('');
+  const seenRealtimeEventIds = useRef<Set<number>>(new Set());
   const effectiveConfig = hospitalConfig ?? DEFAULT_HOSPITAL_CONFIG;
   const availableViews = useMemo<View[]>(
     () => (user ? effectiveConfig.pageAccess[user.role] : []),
     [effectiveConfig, user],
   );
   const clinicalMessagingEnabled =
-    user?.role === 'ADMIN' || user?.role === 'NURSE' || user?.role === 'DOCTOR';
+    user?.role === 'ADMIN' || user?.role === 'CLINICAL_ADMIN' || user?.role === 'NURSE' || user?.role === 'DOCTOR';
 
   const visibleEncounterStatuses = useMemo<EncounterStatus[]>(() => {
     const statuses = new Set<EncounterStatus>();
@@ -215,7 +229,7 @@ export function HospitalApp() {
       encounterDataSignature.current = '';
       encountersRef.current = [];
       setEncounters([]);
-      setWaitingRoomRealtimeEnabled(false);
+      setRealtimeConnected(false);
       setChatMessages({});
       loadedMessageEncounters.current.clear();
       messageCursorByEncounter.current.clear();
@@ -223,6 +237,7 @@ export function HospitalApp() {
       messageRetryAt.current.clear();
       encounterIdsRef.current = [];
       realtimeSubscriptionKey.current = '';
+      seenRealtimeEventIds.current.clear();
       if (encounterRefreshTimer.current !== null) {
         window.clearTimeout(encounterRefreshTimer.current);
         encounterRefreshTimer.current = null;
@@ -232,6 +247,8 @@ export function HospitalApp() {
     }
 
     if (encounterOwnerUserId.current !== user.userId) {
+      disconnectSocket();
+      setRealtimeConnected(false);
       encounterOwnerUserId.current = user.userId;
       encounterFetchInFlight.current = null;
       lastEncounterFetch.current = null;
@@ -245,6 +262,7 @@ export function HospitalApp() {
       messageRetryAt.current.clear();
       encounterIdsRef.current = [];
       realtimeSubscriptionKey.current = '';
+      seenRealtimeEventIds.current.clear();
     }
   }, [user]);
 
@@ -271,7 +289,7 @@ export function HospitalApp() {
           setLoadingEncounters(true);
         }
         const visibleRes = visibleEncounterStatuses.length > 0
-          ? await listEncounters({ status: visibleEncounterStatuses })
+          ? await listEncounters({ status: visibleEncounterStatuses, limit: 100 })
           : { data: [], total: 0 };
         if (isMounted.current) {
           const nextSignature = buildEncounterSignature(visibleRes.data);
@@ -366,13 +384,11 @@ export function HospitalApp() {
           nextMessage.encounterId,
           getLastChatMessageId(existing),
         );
-        loadedMessageEncounters.current.add(nextMessage.encounterId);
         return prev;
       }
 
       const merged = appendUniqueChatMessages(existing, [nextMessage]);
       messageCursorByEncounter.current.set(nextMessage.encounterId, getLastChatMessageId(merged));
-      loadedMessageEncounters.current.add(nextMessage.encounterId);
       return {
         ...prev,
         [nextMessage.encounterId]: merged,
@@ -387,17 +403,17 @@ export function HospitalApp() {
       .sort((left, right) => left - right);
     encounterIdsRef.current = encounterIds;
     const nextKey = encounterIds.join(',');
-    if (!user || !waitingRoomRealtimeEnabled || nextKey === realtimeSubscriptionKey.current) {
+    if (!user || nextKey === realtimeSubscriptionKey.current) {
       return;
     }
     realtimeSubscriptionKey.current = nextKey;
     void subscribeToEncounterRealtime(encounterIds).catch(() => {
       realtimeSubscriptionKey.current = '';
     });
-  }, [encounters, user, waitingRoomRealtimeEnabled]);
+  }, [encounters, user]);
 
   const loadMessagesForEncounter = useCallback(async (encounterId: number, mode: 'replace' | 'append' = 'replace') => {
-    const encounter = encounters.find((item) => item.id === encounterId);
+    const encounter = encountersRef.current.find((item) => item.id === encounterId);
     if (!clinicalMessagingEnabled || encounter?.clinicalFieldsRedacted) {
       return;
     }
@@ -411,16 +427,17 @@ export function HospitalApp() {
     loadingMessageEncounters.current.add(encounterId);
     try {
       const currentCursor = messageCursorByEncounter.current.get(encounterId) ?? null;
-      if (mode === 'append' && currentCursor == null) {
+      const historyLoaded = loadedMessageEncounters.current.has(encounterId);
+      if (mode === 'append' && currentCursor == null && !historyLoaded) {
         return;
       }
 
       const shouldAppend = mode === 'append';
       const res = await listMessages(encounterId, {
         limit: 100,
-        ...(shouldAppend && currentCursor != null ? { afterMessageId: currentCursor } : {}),
+        ...(shouldAppend ? { afterMessageId: currentCursor ?? 0 } : {}),
       });
-      const nextMessages = res.data.map(messageToChatMessage);
+      const nextMessages = res.data.map((message) => messageToChatMessage({ ...message, encounterId }));
       loadedMessageEncounters.current.add(encounterId);
       messageRetryAt.current.delete(encounterId);
       setChatMessages((prev) => {
@@ -441,10 +458,12 @@ export function HospitalApp() {
           };
         }
 
-        messageCursorByEncounter.current.set(encounterId, getLastChatMessageId(nextMessages));
+        const existing = prev[encounterId] || [];
+        const merged = appendUniqueChatMessages(nextMessages, existing);
+        messageCursorByEncounter.current.set(encounterId, getLastChatMessageId(merged));
         return {
           ...prev,
-          [encounterId]: nextMessages,
+          [encounterId]: merged,
         };
       });
     } catch (err) {
@@ -459,47 +478,63 @@ export function HospitalApp() {
     } finally {
       loadingMessageEncounters.current.delete(encounterId);
     }
-  }, [clinicalMessagingEnabled, encounters, showToast]);
+  }, [clinicalMessagingEnabled, showToast]);
 
-  // Fetch on login and only subscribe to staff-wide waiting-room realtime
-  // after the user explicitly joins that workspace.
+  // Fetch once for hydration, then keep every authorized hospital workspace
+  // synchronized for the full authenticated session.
   useEffect(() => {
-    if (!user || loadingConfig) return;
+    if (!user || hospitalConfig === null || loadingConfig) return;
     isMounted.current = true;
 
-    fetchEncounters();
-
-    if (!waitingRoomRealtimeEnabled) {
-      disconnectSocket();
-      return () => {
-        isMounted.current = false;
-      };
-    }
+    void fetchEncounters();
 
     const socket = getSocket();
     const handleConnect = () => {
+      setRealtimeConnected(true);
       scheduleFetchEncounters(0);
-      realtimeSubscriptionKey.current = '';
-      void subscribeToEncounterRealtime(encounterIdsRef.current).catch(() => undefined);
+      const encounterIds = encounterIdsRef.current;
+      if (encounterIds.length > 0) {
+        realtimeSubscriptionKey.current = encounterIds.join(',');
+        void subscribeToEncounterRealtime(encounterIds).catch(() => {
+          realtimeSubscriptionKey.current = '';
+        });
+      }
       for (const encounterId of loadedMessageEncounters.current) {
         void loadMessagesForEncounter(encounterId, 'append');
       }
     };
-    const handleEncounterUpdate = (payload: { encounterId: number }) => {
+    const handleDisconnect = () => {
+      setRealtimeConnected(false);
+    };
+    const handleEncounterUpdate = (payload: { eventId?: number; encounterId: number }) => {
+      if (!rememberRealtimeEvent(seenRealtimeEventIds.current, payload.eventId)) return;
       void applyEncounterDelta(payload.encounterId);
     };
-    const handleMessageCreated = (payload: { encounterId: number }) => {
+    const handleMessageCreated = (payload: { eventId?: number; encounterId: number; message?: Message }) => {
+      if (!rememberRealtimeEvent(seenRealtimeEventIds.current, payload.eventId)) return;
+      if (payload.message) {
+        upsertChatMessage({ ...payload.message, encounterId: payload.encounterId });
+        return;
+      }
+
+      // Backward-compatible fallback for servers that emit only a message id.
       void loadMessagesForEncounter(payload.encounterId, 'append');
     };
 
     socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
     socket.on(RealtimeEvents.EncounterUpdated, handleEncounterUpdate);
     socket.on(RealtimeEvents.MessageCreated, handleMessageCreated);
-    connectSocket();
+    if (socket.connected) {
+      handleConnect();
+    } else {
+      connectSocket();
+    }
 
     return () => {
       isMounted.current = false;
       socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
       socket.off(RealtimeEvents.EncounterUpdated, handleEncounterUpdate);
       socket.off(RealtimeEvents.MessageCreated, handleMessageCreated);
       if (encounterRefreshTimer.current !== null) {
@@ -507,7 +542,43 @@ export function HospitalApp() {
         encounterRefreshTimer.current = null;
       }
     };
-  }, [user, loadingConfig, fetchEncounters, loadMessagesForEncounter, applyEncounterDelta, scheduleFetchEncounters, waitingRoomRealtimeEnabled]);
+  }, [
+    user,
+    hospitalConfig,
+    loadingConfig,
+    fetchEncounters,
+    loadMessagesForEncounter,
+    applyEncounterDelta,
+    scheduleFetchEncounters,
+    upsertChatMessage,
+  ]);
+
+  // If a proxy or network blocks WebSockets, reconcile over REST until Socket.IO
+  // reconnects. Focus also triggers an immediate catch-up after a sleeping tab.
+  useEffect(() => {
+    if (!user || hospitalConfig === null || realtimeConnected) return;
+
+    let messageOffset = 0;
+    const reconcile = () => {
+      void fetchEncounters({ force: true });
+      const encounterIds = [...loadedMessageEncounters.current];
+      const batchSize = Math.min(MESSAGE_FALLBACK_BATCH_SIZE, encounterIds.length);
+      for (let index = 0; index < batchSize; index += 1) {
+        const encounterId = encounterIds[(messageOffset + index) % encounterIds.length];
+        void loadMessagesForEncounter(encounterId, 'append');
+      }
+      if (encounterIds.length > 0) {
+        messageOffset = (messageOffset + batchSize) % encounterIds.length;
+      }
+    };
+    const timer = window.setInterval(reconcile, REALTIME_FALLBACK_REFRESH_MS);
+    window.addEventListener('focus', reconcile);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', reconcile);
+    };
+  }, [fetchEncounters, hospitalConfig, loadMessagesForEncounter, realtimeConnected, user]);
 
   const handleSendMessage = useCallback(async (encounterId: number, text: string) => {
     if (!clinicalMessagingEnabled) {
@@ -515,20 +586,15 @@ export function HospitalApp() {
       throw new Error('Clinical messaging is not available for this role');
     }
 
-    if (!waitingRoomRealtimeEnabled) {
-      showToast('Enter the Waiting Room to start live messaging.', 'info');
-      throw new Error('Waiting room realtime is not active');
-    }
-
     try {
       const created = await sendMessageViaSocket(encounterId, text);
-      upsertChatMessage(created);
+      upsertChatMessage({ ...created, encounterId });
     } catch (err) {
       console.error('[HospitalApp] Failed to send message:', err);
       showToast('Failed to send message. Please try again.', 'error');
       throw err;
     }
-  }, [clinicalMessagingEnabled, showToast, upsertChatMessage, waitingRoomRealtimeEnabled]);
+  }, [clinicalMessagingEnabled, showToast, upsertChatMessage]);
 
   // Admittance shows EXPECTED and ADMITTED patients
   const admitEncounters = useMemo(
@@ -551,13 +617,13 @@ export function HospitalApp() {
   );
 
   useEffect(() => {
-    if (!clinicalMessagingEnabled || !waitingRoomRealtimeEnabled || currentView !== 'waiting' || !availableViews.includes('waiting')) return;
+    if (!clinicalMessagingEnabled || currentView !== 'waiting' || !availableViews.includes('waiting')) return;
     for (const encounter of waitingEncounters) {
       if (!loadedMessageEncounters.current.has(encounter.id)) {
         void loadMessagesForEncounter(encounter.id, 'replace');
       }
     }
-  }, [availableViews, clinicalMessagingEnabled, currentView, loadMessagesForEncounter, waitingEncounters, waitingRoomRealtimeEnabled]);
+  }, [availableViews, clinicalMessagingEnabled, currentView, loadMessagesForEncounter, waitingEncounters]);
 
   // ─── Show loading spinner while checking stored token ───────────────────
 
@@ -669,8 +735,7 @@ export function HospitalApp() {
           onRefresh={refreshEncounters}
           user={userInfo}
           availableViews={availableViews}
-          realtimeActive={waitingRoomRealtimeEnabled}
-          onEnterWaitingRoom={() => setWaitingRoomRealtimeEnabled(true)}
+          realtimeActive={realtimeConnected}
         />
       )}
       {currentView === 'analytics' && (

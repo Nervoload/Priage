@@ -39,9 +39,12 @@ import { PriageModule } from './modules/priage/priage.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { TriageModule } from './modules/triage/triage.module';
 import { UsersModule } from './modules/users/users.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { SafetyMetricsModule } from './common/metrics/safety-metrics.module';
 
 @Module({
   imports: [
+    SafetyMetricsModule,
     ThrottlerModule.forRoot({
       skipIf: shouldSkipThrottleForLoopback,
       throttlers: [
@@ -71,6 +74,7 @@ import { UsersModule } from './modules/users/users.module';
     IntakeModule,
     PatientAuthModule,
     PriageModule,
+    WebhooksModule,
     // Keep the partner API isolated at the module boundary.
     PlatformModule,
     JobsModule,

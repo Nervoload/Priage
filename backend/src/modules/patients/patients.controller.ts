@@ -22,7 +22,7 @@ export class PatientsController {
   ) {}
 
   @Get()
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async findAll(
     @Req() req: Request,
     @Query() query: ListPatientsQueryDto,
@@ -39,7 +39,7 @@ export class PatientsController {
   }
 
   @Get(':id')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async getPatient(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,

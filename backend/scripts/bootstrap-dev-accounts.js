@@ -38,7 +38,7 @@ const DEFAULT_HOSPITAL_CONFIG = {
   },
 };
 
-const ROLE_OPTIONS = [Role.ADMIN, Role.NURSE, Role.DOCTOR, Role.STAFF];
+const ROLE_OPTIONS = [Role.CLINICAL_ADMIN, Role.IT_ADMIN, Role.NURSE, Role.DOCTOR, Role.STAFF];
 const isInteractive = Boolean(input.isTTY && output.isTTY);
 
 main()
@@ -270,7 +270,7 @@ async function createAdminFlow(prompt) {
   const user = await createUser({
     email,
     password,
-    role: Role.ADMIN,
+    role: Role.CLINICAL_ADMIN,
     hospitalId: hospital.id,
   });
 
@@ -387,6 +387,7 @@ async function createUser({ email, password, role, hospitalId }) {
         password: await bcrypt.hash(password, 10),
         role,
         hospitalId,
+        hospitalMemberships: { create: { hospitalId, role } },
       },
     });
   } catch (error) {
@@ -396,7 +397,7 @@ async function createUser({ email, password, role, hospitalId }) {
 
 async function listAdmins() {
   return prisma.user.findMany({
-    where: { role: Role.ADMIN },
+    where: { role: { in: [Role.ADMIN, Role.CLINICAL_ADMIN] } },
     include: {
       hospital: {
         select: {
@@ -442,7 +443,7 @@ async function resolveManifestAdmin(manifest) {
     },
   });
 
-  if (!user || user.role !== Role.ADMIN) {
+  if (!user || ![Role.ADMIN, Role.CLINICAL_ADMIN].includes(user.role)) {
     return null;
   }
 

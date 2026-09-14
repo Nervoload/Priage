@@ -15,7 +15,7 @@ export class ClinicalAccessController {
   constructor(private readonly clinicalAccess: ClinicalAccessService) {}
 
   @Post(':encounterId/assign')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN)
   grant(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Body() dto: GrantEncounterAccessDto,
@@ -25,7 +25,7 @@ export class ClinicalAccessController {
   }
 
   @Delete(':encounterId/assign/:userId')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.CLINICAL_ADMIN)
   revoke(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Param('userId', ParseIntPipe) userId: number,
@@ -35,7 +35,7 @@ export class ClinicalAccessController {
   }
 
   @Post(':encounterId/break-glass')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   createBreakGlass(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Body() dto: BreakGlassDto,

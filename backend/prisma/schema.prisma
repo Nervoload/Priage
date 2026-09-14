@@ -28,6 +28,8 @@ enum EncounterStatus {
 
 enum Role { 
   ADMIN
+  IT_ADMIN
+  CLINICAL_ADMIN
   NURSE
   STAFF
   DOCTOR
@@ -45,6 +47,16 @@ enum AlertSeverity {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+enum AlertSource {
+  MANUAL
+  RULE_ENGINE
+}
+
+enum AlertResolutionReason {
+  MANUAL
+  RULE_CLEARED
 }
 
 enum AssetKind {
@@ -111,6 +123,7 @@ enum EventType {
 
   // Outbound patient events
   ALERT_CREATED
+  ALERT_ESCALATED
   ALERT_ACKNOWLEDGED
   ALERT_RESOLVED
 }
@@ -256,6 +269,7 @@ model EncounterEvent {
   encounterId Int
   hospitalId  Int
   encounter   Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  webhookDeliveries WebhookDelivery[]
 
   @@index([encounterId, createdAt])
   @@index([hospitalId, createdAt])
@@ -288,13 +302,33 @@ model User {
   readCursors        EncounterReadCursor[]
   assets             Asset[]
   staffSessions      StaffSession[]
+  hospitalMemberships HospitalMembership[]
   encounterAccess    StaffEncounterAccess[] @relation("care_team_user")
   grantedEncounterAccess StaffEncounterAccess[] @relation("care_team_granted_by")
   breakGlassAccess   BreakGlassAccess[]
+  alertEscalationExceptions AlertEscalationException[]
 
-  @@unique([hospitalId, email])
   @@unique([ssoIssuer, ssoSubject])
   @@index([hospitalId, role])
+}
+
+model HospitalMembership {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  isActive  Boolean  @default(true)
+  disabledAt DateTime?
+  role      Role
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hospitalId Int
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  staffSessions StaffSession[]
+
+  @@unique([userId, hospitalId])
+  @@index([hospitalId, role, isActive])
+  @@index([userId, isActive])
 }
 
 model StaffSession {
@@ -316,8 +350,11 @@ model StaffSession {
 
   userId Int
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membershipId Int?
+  membership HospitalMembership? @relation(fields: [membershipId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([membershipId, createdAt])
   @@index([expiresAt])
   @@index([revokedAt])
   @@index([deviceIdHash])
@@ -367,14 +404,31 @@ model Hospital {
   slug String @unique
 
   users      User[]
+  memberships HospitalMembership[]
   encounters Encounter[]
   intakeSessions IntakeSession[]
   contextItems ContextItem[]
   partnerCredentials PartnerCredential[]
   webhookSubscriptions WebhookSubscription[]
+  alertEscalationException AlertEscalationException?
   config     HospitalConfig?
 
   @@index([slug])
+}
+
+model AlertEscalationException {
+  id Int @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  reason String
+  expiresAt DateTime
+  createdByUserId Int
+  createdByUser User @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  hospitalId Int @unique
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
 }
 
 model HospitalConfig {
@@ -420,6 +474,12 @@ model Alert {
 
   type     String
   severity AlertSeverity @default(MEDIUM)
+  source   AlertSource @default(MANUAL)
+  ruleKey String?
+  ruleVersion String?
+  activeRuleDedupeKey String? @unique
+  lastEvaluatedAt DateTime?
+  conditionClearedAt DateTime?
 
   acknowledgedAt DateTime?
   acknowledgedByUserId Int?
@@ -428,6 +488,7 @@ model Alert {
   resolvedAt DateTime?
   resolvedByUserId Int?
   resolvedByUser   User? @relation("alert_resolve_by", fields: [resolvedByUserId], references: [id], onDelete: Restrict)
+  resolutionReason AlertResolutionReason?
 
   metadata Json?
 
@@ -440,6 +501,8 @@ model Alert {
   @@index([encounterId, createdAt])
   @@index([hospitalId, acknowledgedAt])
   @@index([hospitalId, resolvedAt])
+  @@index([hospitalId, source, conditionClearedAt])
+  @@index([encounterId, ruleKey, createdAt])
 }
 
 //---------------------------------------------------------------------//
@@ -870,9 +933,15 @@ model WebhookSubscription {
   createdAt DateTime                  @default(now())
   updatedAt DateTime                  @updatedAt
   targetUrl String
+  name String @default("Alert escalation")
   status    WebhookSubscriptionStatus @default(ACTIVE)
   eventTypes String[]
   secretHash String
+  secretEncrypted String?
+  secretKeyVersion Int @default(1)
+  minimumSeverity AlertSeverity @default(HIGH)
+  lastTestedAt DateTime?
+  lastSuccessfulDeliveryAt DateTime?
 
   hospitalId Int
   hospital   Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
@@ -891,9 +960,14 @@ model WebhookDelivery {
   createdAt DateTime              @default(now())
   updatedAt DateTime              @updatedAt
   status    WebhookDeliveryStatus @default(PENDING)
+  eventId String @unique @default(uuid())
   eventType String
   payload   Json
   attempts  Int                   @default(0)
+  nextAttemptAt DateTime @default(now())
+  claimedAt DateTime?
+  claimToken String?
+  responseStatus Int?
   deliveredAt DateTime?
   lastAttemptAt DateTime?
   lastError String?
@@ -901,8 +975,14 @@ model WebhookDelivery {
   webhookSubscriptionId Int
   webhookSubscription   WebhookSubscription @relation(fields: [webhookSubscriptionId], references: [id], onDelete: Cascade)
 
+  sourceEventId Int?
+  sourceEvent EncounterEvent? @relation(fields: [sourceEventId], references: [id], onDelete: Cascade)
+
   @@index([webhookSubscriptionId, createdAt])
   @@index([status, createdAt])
+  @@index([status, nextAttemptAt])
+  @@index([claimToken])
+  @@unique([webhookSubscriptionId, sourceEventId])
 }
 
 model LogRecord {

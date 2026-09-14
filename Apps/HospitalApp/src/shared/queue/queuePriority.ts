@@ -64,8 +64,7 @@ export interface QueueEntry {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function minutesSince(isoDate: string | null | undefined): number {
-    if (!isoDate) return 0;
+function minutesSince(isoDate: string): number {
     return Math.max(0, (Date.now() - new Date(isoDate).getTime()) / 60_000);
 }
 
@@ -118,7 +117,8 @@ export function computePriorityScore(encounter: Encounter): {
     }
 
     // For CTAS 2-5 and unassigned:
-    const waitRatio = targetMinutes > 0 ? waitMinutes / targetMinutes : 0;
+    // Every non-CTAS-1 configuration has a positive target.
+    const waitRatio = waitMinutes / targetMinutes;
 
     // Escalation: only kicks in after exceeding target time
     const escalation = Math.max(0, waitRatio - 1.0) * ESCALATION_RATE;
@@ -162,6 +162,12 @@ export function sortByQueuePriority(encounters: Encounter[]): QueueEntry[] {
 
     // Sort: highest score first, then earliest arrival (FIFO tiebreaker)
     entries.sort((a, b) => {
+        // CTAS-1 is a hard ordering invariant, not merely a score boost. A
+        // lower-acuity patient's wait escalation must never overtake it.
+        const aCritical = a.encounter.currentCtasLevel === 1;
+        const bCritical = b.encounter.currentCtasLevel === 1;
+        if (aCritical !== bCritical) return aCritical ? -1 : 1;
+
         // Score comparison (higher = more urgent = comes first)
         const scoreDiff = b.priorityScore - a.priorityScore;
         if (Math.abs(scoreDiff) > 0.5) return scoreDiff;

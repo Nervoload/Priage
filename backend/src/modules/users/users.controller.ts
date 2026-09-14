@@ -1,7 +1,7 @@
 // backend/src/modules/users/users.controller.ts
 // Hospital staff endpoints
 
-import { Body, Controller, Get, Patch, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Query, Req, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Request } from 'express';
 
@@ -10,6 +10,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
+import { UpdateMembershipDto } from './dto/update-membership.dto';
 import { UsersService } from './users.service';
 
 @Controller('users')
@@ -20,7 +21,7 @@ export class UsersController {
   // GET /users/me - Get current user (all authenticated users)
   @Get('me')
   async getMe(@Req() req: Request, @CurrentUser() user: any) {
-    return this.usersService.getUser(user.userId, req.correlationId);
+    return this.usersService.getUser(user.userId, user.hospitalId, req.correlationId);
   }
 
   // PATCH /users/me - Update current staff account
@@ -30,18 +31,42 @@ export class UsersController {
     @Req() req: Request,
     @CurrentUser() user: any,
   ) {
-    return this.usersService.updateProfile(user.userId, dto, req.correlationId, user.sessionId);
+    return this.usersService.updateProfile(
+      user.userId,
+      dto,
+      user.hospitalId,
+      user.membershipId,
+      req.correlationId,
+      user.sessionId,
+    );
   }
 
   // GET /users - List hospital staff (ADMIN, NURSE, DOCTOR only)
   @Get()
-  @Roles(Role.ADMIN, Role.NURSE, Role.DOCTOR)
+  @Roles(Role.ADMIN, Role.IT_ADMIN, Role.CLINICAL_ADMIN, Role.NURSE, Role.DOCTOR)
   async listUsers(
     @Req() req: Request,
     @CurrentUser() user: any,
     @Query('role') role?: Role,
   ) {
     return this.usersService.getUsers(user.hospitalId, role, req.correlationId);
+  }
+
+  @Patch('memberships/:membershipId')
+  @Roles(Role.ADMIN, Role.IT_ADMIN, Role.CLINICAL_ADMIN)
+  updateMembership(
+    @Param('membershipId', ParseIntPipe) membershipId: number,
+    @Body() dto: UpdateMembershipDto,
+    @Req() req: Request,
+    @CurrentUser() user: { userId: number; hospitalId: number },
+  ) {
+    return this.usersService.updateMembership(
+      user.hospitalId,
+      membershipId,
+      dto,
+      user.userId,
+      req.correlationId,
+    );
   }
 
   // Phase 6.4: Add profile endpoints here:

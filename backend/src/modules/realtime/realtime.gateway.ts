@@ -38,6 +38,7 @@ import { RealtimeRedisAdapterService } from './realtime-redis-adapter.service';
 import {
   AlertAcknowledgedPayload,
   AlertCreatedPayload,
+  AlertEscalatedPayload,
   AlertResolvedPayload,
   EncounterUpdatedPayload,
   MessageCreatedPayload,
@@ -71,6 +72,7 @@ return 1
 
 @WebSocketGateway({
   cors: { origin: getAllowedCorsOrigins(), credentials: true },
+  transports: ['websocket'],
 })
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
   private readonly logger = new Logger(RealtimeGateway.name);
@@ -78,11 +80,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     Role.NURSE,
     Role.DOCTOR,
     Role.ADMIN,
+    Role.CLINICAL_ADMIN,
   ]);
   private static readonly CLINICAL_EVENT_ROLES = new Set<Role>([
     Role.NURSE,
     Role.DOCTOR,
     Role.ADMIN,
+    Role.CLINICAL_ADMIN,
   ]);
 
   @WebSocketServer()
@@ -203,6 +207,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       }
 
       const trustedUser = await this.realtimeAuthService.validateStaffToken(token, client.handshake.headers?.cookie);
+      if (trustedUser.role === Role.IT_ADMIN) {
+        client.disconnect();
+        return;
+      }
       const connectionKey = `socket:user:${trustedUser.userId}:connections`;
       if (!await this.reserveSocketConnection(connectionKey, clientId)) {
         client.disconnect();
@@ -547,13 +555,12 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   ): Promise<void> {
     try {
       const hospitalRoom = hospitalRoomKey(hospitalId);
-      const encounterRoom = encounterRoomKey(encounterId);
-      const clinicalHospitalRoom = clinicalHospitalRoomKey(hospitalId);
-      const clinicalEncounterRoom = clinicalEncounterRoomKey(encounterId);
       const operationalPayload = this.toOperationalEncounterUpdatePayload(payload);
 
-      this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.EncounterUpdated, operationalPayload);
-      this.server.to(clinicalHospitalRoom).to(clinicalEncounterRoom).emit(RealtimeEvents.EncounterUpdated, operationalPayload);
+      // Every authenticated staff socket already belongs to its hospital room.
+      // A second clinical-room broadcast delivered the same event twice to
+      // nurses/doctors/admins and caused duplicate encounter reconciliation.
+      this.server.to(hospitalRoom).emit(RealtimeEvents.EncounterUpdated, operationalPayload);
 
       this.loggingService.debug('Encounter update emitted', {
         service: 'RealtimeGateway',
@@ -585,6 +592,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.MessageCreated, {
         ...payload,
         metadata: { messageId: payload.metadata.messageId },
+        message: payload.message,
       });
 
       this.loggingService.debug('Message created event emitted', {
@@ -630,6 +638,16 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         error instanceof Error ? error : new Error(String(error)),
       );
     }
+  }
+
+  async emitAlertEscalated(
+    hospitalId: number,
+    encounterId: number,
+    payload: AlertEscalatedPayload,
+  ): Promise<void> {
+    const hospitalRoom = clinicalHospitalRoomKey(hospitalId);
+    const encounterRoom = clinicalEncounterRoomKey(encounterId);
+    this.server.to(hospitalRoom).to(encounterRoom).emit(RealtimeEvents.AlertEscalated, payload);
   }
 
   async emitMessageRead(
@@ -768,6 +786,14 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   private toOperationalEncounterUpdatePayload(payload: EncounterUpdatedPayload): EncounterUpdatedPayload {
     const metadata = payload.metadata ?? {};
+    const rawMetadata = metadata as Record<string, unknown>;
+    const intake = typeof metadata.intake === 'string'
+      ? metadata.intake
+      : typeof rawMetadata.source === 'string'
+        ? rawMetadata.source
+        : typeof rawMetadata.createdFrom === 'string'
+          ? rawMetadata.createdFrom
+          : undefined;
     return {
       ...payload,
       metadata: {
@@ -775,7 +801,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         fromStatus: metadata.fromStatus,
         toStatus: metadata.toStatus,
         transition: metadata.transition,
-        intake: metadata.intake,
+        intake,
         timestamps: metadata.timestamps,
       },
     };

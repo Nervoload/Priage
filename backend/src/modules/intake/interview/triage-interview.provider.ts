@@ -39,6 +39,7 @@ type ReasoningEffort = 'low' | 'medium' | 'high';
 
 @Injectable()
 export class OpenAiCompatibleTriageInterviewProvider {
+  private readonly mode = (process.env.TRIAGE_INTERVIEW_MODE?.trim().toLowerCase() || 'deterministic');
   private readonly apiKey = process.env.TRIAGE_AI_API_KEY?.trim() ?? '';
   private readonly model = process.env.TRIAGE_AI_MODEL?.trim() || 'gpt-5-mini';
   private readonly baseUrl = process.env.TRIAGE_AI_BASE_URL?.trim() || 'https://api.openai.com/v1';
@@ -48,7 +49,7 @@ export class OpenAiCompatibleTriageInterviewProvider {
   private readonly maxOutputTokens = Number(process.env.TRIAGE_AI_MAX_OUTPUT_TOKENS ?? '1400');
 
   isConfigured(): boolean {
-    return this.apiKey.length > 0;
+    return this.mode === 'external' && this.apiKey.length > 0;
   }
 
   async generate(input: ProviderGenerationInput): Promise<ProviderGenerationResult | null> {
@@ -127,7 +128,14 @@ export class OpenAiCompatibleTriageInterviewProvider {
           emergencyAcknowledged: input.emergencyAcknowledged,
           priorSessionGoal: input.sessionGoal,
           priorTargetQuestionCount: input.targetQuestionCount,
-          patient: input.patient,
+          patient: {
+            age: input.patient.age ?? null,
+            gender: input.patient.gender ?? null,
+            chiefComplaint: input.patient.chiefComplaint ?? null,
+            details: input.patient.details ?? null,
+            allergies: input.patient.allergies ?? null,
+            conditions: input.patient.conditions ?? null,
+          },
           answeredQuestions: input.answers.map((answer) => ({
             phase: answer.phase,
             prompt: answer.prompt,
@@ -160,6 +168,7 @@ export class OpenAiCompatibleTriageInterviewProvider {
         model: this.model,
         instructions: 'You are a structured emergency intake planning engine.',
         input: prompt,
+        store: false,
         max_output_tokens: this.maxOutputTokens,
         text: {
           format: {

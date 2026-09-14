@@ -22,7 +22,7 @@ export class TriageController {
   ) {}
 
   @Post('assessments')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async createAssessment(
     @Body() dto: CreateTriageAssessmentDto,
     @Req() req: Request,
@@ -33,7 +33,7 @@ export class TriageController {
   }
 
   @Get('assessments/:id')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async getAssessment(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: Request,
@@ -44,7 +44,7 @@ export class TriageController {
   }
 
   @Get('encounters/:encounterId/assessments')
-  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN)
+  @Roles(Role.NURSE, Role.DOCTOR, Role.ADMIN, Role.CLINICAL_ADMIN)
   async listAssessments(
     @Param('encounterId', ParseIntPipe) encounterId: number,
     @Req() req: Request,

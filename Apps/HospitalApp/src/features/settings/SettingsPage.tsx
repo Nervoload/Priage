@@ -35,6 +35,7 @@ import { NavBar, type View } from '../../shared/ui/NavBar';
 import { DASHBOARD_PAGE_CLASS } from '../../shared/ui/dashboardTheme';
 import { Modal } from '../../shared/ui/Modal';
 import { useToast } from '../../shared/ui/ToastContext';
+import { AlertEscalationSettings } from './AlertEscalationSettings';
 
 interface SettingsPageProps {
   onNavigate: (view: View) => void;
@@ -45,7 +46,7 @@ interface SettingsPageProps {
   onConfigUpdated: (response: HospitalConfigEnvelope) => void;
 }
 
-type DashboardSection = 'general' | 'staff' | 'patients' | 'feedback';
+type DashboardSection = 'general' | 'staff' | 'patients' | 'integrations' | 'feedback';
 
 const PAGE_LABELS: Record<HospitalPageKey, string> = {
   admit: 'Admittance',
@@ -57,12 +58,14 @@ const PAGE_LABELS: Record<HospitalPageKey, string> = {
 
 const ROLE_LABELS: Record<Role, string> = {
   ADMIN: 'Administrator',
+  IT_ADMIN: 'IT Administrator',
+  CLINICAL_ADMIN: 'Clinical Administrator',
   NURSE: 'Nurse',
   STAFF: 'Admittance / Staff',
   DOCTOR: 'Doctor',
 };
 
-const ROLE_ORDER: Role[] = ['ADMIN', 'DOCTOR', 'NURSE', 'STAFF'];
+const ROLE_ORDER: Role[] = ['IT_ADMIN', 'CLINICAL_ADMIN', 'DOCTOR', 'NURSE', 'STAFF'];
 
 const INTAKE_RESPONSE_TYPES: Array<HospitalCustomIntakeQuestion['responseType']> = [
   'text',
@@ -155,6 +158,13 @@ function getSectionMeta(
         description: 'Collect operational survey feedback from the admittance team and capture workflow bugs in the same place.',
         saveLabel: 'Save Feedback Settings',
       };
+    case 'integrations':
+      return {
+        eyebrow: 'Escalation',
+        title: 'Alert Integrations',
+        description: 'Configure durable, signed webhook delivery for high-priority waiting-room alerts.',
+        saveLabel: null,
+      };
   }
 }
 
@@ -192,8 +202,8 @@ export function SettingsPage({
   const [hospitalConfirmPassword, setHospitalConfirmPassword] = useState('');
   const [showHospitalConfirmModal, setShowHospitalConfirmModal] = useState(false);
 
-  const isAdmin = user?.role === 'ADMIN';
-  const canViewFeedbackHistory = user?.role === 'ADMIN' || user?.role === 'NURSE' || user?.role === 'DOCTOR';
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'IT_ADMIN' || user?.role === 'CLINICAL_ADMIN';
+  const canViewFeedbackHistory = user?.role === 'ADMIN' || user?.role === 'CLINICAL_ADMIN' || user?.role === 'NURSE' || user?.role === 'DOCTOR';
   const canViewRoleDirectory = isAdmin;
   const liveSurveyQuestions = configEnvelope.config.admittanceFeedbackSurvey;
   const liveVisiblePages = availableViews;
@@ -204,6 +214,7 @@ export function SettingsPage({
         { id: 'general', label: 'General', description: 'Account and hospital information' },
         { id: 'staff', label: 'Staff', description: 'Roles and workspace access' },
         { id: 'patients', label: 'Patients', description: 'Intake form configuration' },
+        { id: 'integrations', label: 'Integrations', description: 'Alert escalation webhooks' },
         { id: 'feedback', label: 'Feedback', description: 'Survey and bug reporting' },
       ];
     }
@@ -302,6 +313,8 @@ export function SettingsPage({
   const roleCounts = useMemo<Record<Role, number>>(() => {
     const counts: Record<Role, number> = {
       ADMIN: 0,
+      IT_ADMIN: 0,
+      CLINICAL_ADMIN: 0,
       DOCTOR: 0,
       NURSE: 0,
       STAFF: 0,
@@ -720,6 +733,10 @@ export function SettingsPage({
             />
           )}
 
+          {activeSection === 'integrations' && isAdmin && user && (
+            <AlertEscalationSettings hospitalId={user.hospitalId} />
+          )}
+
           {activeSection === 'feedback' && (
             <FeedbackSection
               isAdmin={isAdmin}
@@ -846,7 +863,7 @@ function GeneralSection({
   return (
     <div className="grid gap-5 xl:grid-cols-[1.02fr,0.98fr]">
       <Panel
-        title={user?.role === 'ADMIN' ? 'Admin Account Details' : 'Account Details'}
+        title={user && ['ADMIN', 'IT_ADMIN', 'CLINICAL_ADMIN'].includes(user.role) ? 'Admin Account Details' : 'Account Details'}
         subtitle="Manage the email and password used to access the hospital dashboard."
       >
         <div className="grid gap-4 md:grid-cols-2">

@@ -20,24 +20,46 @@ jobs:
             Apps/PatientApp/package-lock.json
       - run: npm ci
         working-directory: backend
+      - run: npm ci
+        working-directory: Apps/HospitalApp
+      - run: npm ci
+        working-directory: Apps/PatientApp
       - run: npm run prisma:generate
         working-directory: backend
       - run: npx prisma validate
         working-directory: backend
-      - run: npm run build
+      - run: npm run lint
+        working-directory: backend
+      - run: npm run test
         working-directory: backend
       - run: npm run test:unit
         working-directory: backend
+      - run: npm run test:coverage
+        working-directory: backend
+      - run: npm run check
+        working-directory: backend
+      - run: npm run lint
+        working-directory: Apps/HospitalApp
+      - run: npm run test
+        working-directory: Apps/HospitalApp
+      - run: npm run test:coverage
+        working-directory: Apps/HospitalApp
+      - run: npm run check
+        working-directory: Apps/HospitalApp
+      - run: npm run lint
+        working-directory: Apps/PatientApp
+      - run: npm run test
+        working-directory: Apps/PatientApp
+      - run: npm run test:coverage
+        working-directory: Apps/PatientApp
+      - run: npm run check
+        working-directory: Apps/PatientApp
       - run: npm run test:security
         working-directory: backend
       - run: npm run test:load
         working-directory: backend
       - run: npm run test:assurance
         working-directory: backend
-      - run: npm ci && npm run build
-        working-directory: Apps/HospitalApp
-      - run: npm ci && npm run build
-        working-directory: Apps/PatientApp
 
   cloud-integration-idor-role-concurrency-chaos-restore:
     runs-on: ubuntu-latest
@@ -48,6 +70,8 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
+        working-directory: backend
+      - run: npm run prisma:generate
         working-directory: backend
       - run: node scripts/cloud-stack.mjs up
       - run: npm run test:deployed-security

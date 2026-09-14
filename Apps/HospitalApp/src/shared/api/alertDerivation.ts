@@ -1,10 +1,9 @@
 // HospitalApp/src/shared/api/alertDerivation.ts
 // Client-side alert derivation — generates local alerts by analyzing encounter data.
 //
-// These alerts are derived on the frontend from encounter state (status, wait time,
-// triage level, timestamps). They complement the server-side alerts stored in the
-// backend Alert table by giving staff instant visual feedback without requiring
-// a round-trip.
+// These alerts are derived on the frontend from encounter state using the
+// authenticated server rule manifest. They are optimistic render-only; the
+// server owns persistence and lifecycle decisions.
 //
 // Each derived alert carries a deterministic `id` so React can key them stably.
 
@@ -17,6 +16,7 @@ export interface DerivedAlert {
   id: string;
   encounterId: number;
   type: string;
+  ruleKey: string;
   severity: AlertSeverity;
   message: string;
   patientName: string;
@@ -26,21 +26,48 @@ export interface DerivedAlert {
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-/** Alert thresholds (minutes) — tweak as needed */
-const THRESHOLDS = {
-  /** ADMITTED patients waiting longer than this → warning */
-  admittedWaitWarning: 30,
-  /** ADMITTED patients waiting longer than this → critical */
-  admittedWaitCritical: 60,
-  /** TRIAGE patients with no assessment after this → warning */
-  triageStaleWarning: 20,
-  /** WAITING patients waiting longer than this → warning */
-  waitingLongWarning: 8 * 60,
-  /** WAITING patients waiting longer than this → critical */
-  waitingLongCritical: 10 * 60,
-  /** New profiles not yet reviewed after this → warning */
-  profileUnseenWarning: 45,
+type AlertThresholds = {
+  admittedWaitWarning: number;
+  admittedWaitCritical: number;
+  admittedLongWarning: number;
+  triageStaleWarning: number;
+  waitingLongWarning: number;
+  waitingLongCritical: number;
+  reassessmentWarning: number;
 };
+
+export interface AlertRuleManifest {
+  version: string;
+  rules: Array<{ ruleKey: string; thresholds: Record<string, number> }>;
+}
+
+function thresholdsFromManifest(manifest?: AlertRuleManifest | null): AlertThresholds | null {
+  if (!manifest) return null;
+  const byKey = new Map(manifest.rules.map((rule) => [rule.ruleKey, rule.thresholds]));
+  const ctas2 = byKey.get('CTAS2_LONG_WAIT');
+  const admitted = byKey.get('ADMITTED_LONG_WAIT');
+  const triage = byKey.get('TRIAGE_STALE');
+  const waiting = byKey.get('WAITING_LONG');
+  const reassessment = byKey.get('TRIAGE_REASSESSMENT_OVERDUE');
+  if (
+    ctas2?.highMinutes === undefined
+    || ctas2.criticalMinutes === undefined
+    || admitted?.mediumMinutes === undefined
+    || triage?.mediumMinutes === undefined
+    || waiting?.highMinutes === undefined
+    || waiting.criticalMinutes === undefined
+    || reassessment?.mediumMinutes === undefined
+  ) return null;
+  return {
+    admittedWaitWarning: ctas2.highMinutes,
+    admittedWaitCritical: ctas2.criticalMinutes,
+    admittedLongWarning: admitted.mediumMinutes,
+    triageStaleWarning: triage.mediumMinutes,
+    waitingLongWarning: waiting.highMinutes,
+    waitingLongCritical: waiting.criticalMinutes,
+    reassessmentWarning: reassessment.mediumMinutes,
+  };
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -59,7 +86,7 @@ function patientDisplayName(enc: Encounter): string {
 
 // ─── Derivation rules ──────────────────────────────────────────────────────
 
-type DerivationRule = (enc: Encounter) => DerivedAlert | null;
+type DerivationRule = (enc: Encounter, thresholds: AlertThresholds) => DerivedAlert | null;
 
 /**
  * CRITICAL-priority patients (CTAS 1) that are still in ADMITTED or WAITING —
@@ -72,6 +99,7 @@ const criticalTriagePending: DerivationRule = (enc) => {
     id: `derived-${enc.id}-ctas1-waiting`,
     encounterId: enc.id,
     type: 'CTAS1_NOT_IN_TRIAGE',
+    ruleKey: 'CTAS1_NOT_IN_TRIAGE',
     severity: 'CRITICAL',
     message: `${patientDisplayName(enc)} is CTAS-1 but still ${enc.status.toLowerCase()}`,
     patientName: patientDisplayName(enc),
@@ -83,16 +111,17 @@ const criticalTriagePending: DerivationRule = (enc) => {
 /**
  * High-acuity patients (CTAS 2) waiting too long in ADMITTED.
  */
-const highAcuityWaiting: DerivationRule = (enc) => {
+const highAcuityWaiting: DerivationRule = (enc, thresholds) => {
   if (enc.currentCtasLevel !== 2) return null;
   if (enc.status !== 'ADMITTED') return null;
   const mins = minutesSince(enc.arrivedAt);
-  if (mins < THRESHOLDS.admittedWaitWarning) return null;
+  if (mins < thresholds.admittedWaitWarning) return null;
   return {
     id: `derived-${enc.id}-ctas2-admitted-long`,
     encounterId: enc.id,
     type: 'CTAS2_LONG_WAIT',
-    severity: mins >= THRESHOLDS.admittedWaitCritical ? 'CRITICAL' : 'HIGH',
+    ruleKey: 'CTAS2_LONG_WAIT',
+    severity: mins >= thresholds.admittedWaitCritical ? 'CRITICAL' : 'HIGH',
     message: `${patientDisplayName(enc)} (CTAS-2) admitted ${Math.round(mins)} min ago — not yet triaged`,
     patientName: patientDisplayName(enc),
     timestamp: enc.updatedAt,
@@ -103,16 +132,17 @@ const highAcuityWaiting: DerivationRule = (enc) => {
 /**
  * Any patient in ADMITTED status for too long without being moved forward.
  */
-const admittedTooLong: DerivationRule = (enc) => {
+const admittedTooLong: DerivationRule = (enc, thresholds) => {
   if (enc.status !== 'ADMITTED') return null;
   // Skip if a more specific acuity rule already fired
   if (enc.currentCtasLevel === 1 || enc.currentCtasLevel === 2) return null;
   const mins = minutesSince(enc.arrivedAt);
-  if (mins < THRESHOLDS.admittedWaitCritical) return null;
+  if (mins < thresholds.admittedLongWarning) return null;
   return {
     id: `derived-${enc.id}-admitted-long`,
     encounterId: enc.id,
     type: 'ADMITTED_LONG_WAIT',
+    ruleKey: 'ADMITTED_LONG_WAIT',
     severity: 'MEDIUM',
     message: `${patientDisplayName(enc)} has been admitted for ${Math.round(mins)} min without triage`,
     patientName: patientDisplayName(enc),
@@ -124,14 +154,16 @@ const admittedTooLong: DerivationRule = (enc) => {
 /**
  * Patient in TRIAGE status for a long time without a completed assessment.
  */
-const triageStale: DerivationRule = (enc) => {
+const triageStale: DerivationRule = (enc, thresholds) => {
   if (enc.status !== 'TRIAGE') return null;
-  const mins = minutesSince(enc.triagedAt ?? enc.updatedAt);
-  if (mins < THRESHOLDS.triageStaleWarning) return null;
+  if (!enc.triagedAt) return null;
+  const mins = minutesSince(enc.triagedAt);
+  if (mins < thresholds.triageStaleWarning) return null;
   return {
     id: `derived-${enc.id}-triage-stale`,
     encounterId: enc.id,
     type: 'TRIAGE_STALE',
+    ruleKey: 'TRIAGE_STALE',
     severity: 'MEDIUM',
     message: `${patientDisplayName(enc)} has been in triage for ${Math.round(mins)} min`,
     patientName: patientDisplayName(enc),
@@ -143,16 +175,18 @@ const triageStale: DerivationRule = (enc) => {
 /**
  * Patient in WAITING status for an extended period.
  */
-const waitingTooLong: DerivationRule = (enc) => {
+const waitingTooLong: DerivationRule = (enc, thresholds) => {
   if (enc.status !== 'WAITING') return null;
-  const mins = minutesSince(enc.waitingAt ?? enc.updatedAt);
-  if (mins < THRESHOLDS.waitingLongWarning) return null;
+  if (!enc.waitingAt) return null;
+  const mins = minutesSince(enc.waitingAt);
+  if (mins < thresholds.waitingLongWarning) return null;
   const severity: AlertSeverity =
-    mins >= THRESHOLDS.waitingLongCritical ? 'CRITICAL' : 'HIGH';
+    mins >= thresholds.waitingLongCritical ? 'CRITICAL' : 'HIGH';
   return {
     id: `derived-${enc.id}-waiting-long`,
     encounterId: enc.id,
     type: 'WAITING_LONG',
+    ruleKey: 'WAITING_LONG',
     severity,
     message: `${patientDisplayName(enc)} has been waiting for ${Math.round(mins)} min`,
     patientName: patientDisplayName(enc),
@@ -161,58 +195,19 @@ const waitingTooLong: DerivationRule = (enc) => {
   };
 };
 
-/**
- * Keyword-based alert for critical chief complaints.
- * Fires when a patient has a worrying chief complaint and hasn't been triaged yet.
- */
-const criticalComplaint: DerivationRule = (enc) => {
-  if (enc.status !== 'EXPECTED' && enc.status !== 'ADMITTED') return null;
-  if (!enc.chiefComplaint) return null;
-  const lc = enc.chiefComplaint.toLowerCase();
-  const criticalKeywords = [
-    'chest pain',
-    'difficulty breathing',
-    'shortness of breath',
-    'unconscious',
-    'unresponsive',
-    'cardiac arrest',
-    'stroke',
-    'seizure',
-    'severe bleeding',
-    'anaphylaxis',
-  ];
-  const match = criticalKeywords.find(kw => lc.includes(kw));
-  if (!match) return null;
+const triageReassessment: DerivationRule = (enc, thresholds) => {
+  if (enc.status !== 'WAITING' || !enc.triagedAt) return null;
+  const mins = minutesSince(enc.triagedAt);
+  if (mins < thresholds.reassessmentWarning) return null;
   return {
-    id: `derived-${enc.id}-critical-complaint`,
+    id: `derived-${enc.id}-triage-reassessment-overdue`,
     encounterId: enc.id,
-    type: 'CRITICAL_COMPLAINT',
-    severity: 'HIGH',
-    message: `${patientDisplayName(enc)} — "${enc.chiefComplaint}" (not yet triaged)`,
+    type: 'TRIAGE_REASSESSMENT_OVERDUE',
+    ruleKey: 'TRIAGE_REASSESSMENT_OVERDUE',
+    severity: 'MEDIUM',
+    message: `${patientDisplayName(enc)} is due for triage reassessment`,
     patientName: patientDisplayName(enc),
-    timestamp: enc.createdAt,
-    acknowledged: false,
-  };
-};
-
-/**
- * New patient profile not yet reviewed by staff after 45+ minutes.
- * Uses createdAt as the baseline since we can't access localStorage from
- * the derivation layer — the alert fires for ALL old EXPECTED patients,
- * which is correct because the AlertsBanner is a global notification.
- */
-const profileUnseen: DerivationRule = (enc) => {
-  if (enc.status !== 'EXPECTED') return null;
-  const mins = minutesSince(enc.createdAt);
-  if (mins < THRESHOLDS.profileUnseenWarning) return null;
-  return {
-    id: `derived-${enc.id}-profile-unseen`,
-    encounterId: enc.id,
-    type: 'PROFILE_UNSEEN',
-    severity: mins >= 90 ? 'HIGH' : 'MEDIUM',
-    message: `${patientDisplayName(enc)} has been waiting ${Math.round(mins)} min — profile not yet reviewed`,
-    patientName: patientDisplayName(enc),
-    timestamp: enc.createdAt,
+    timestamp: enc.triagedAt,
     acknowledged: false,
   };
 };
@@ -221,10 +216,9 @@ const profileUnseen: DerivationRule = (enc) => {
 const RULES: DerivationRule[] = [
   criticalTriagePending,
   highAcuityWaiting,
-  criticalComplaint,
-  profileUnseen,
   admittedTooLong,
   triageStale,
+  triageReassessment,
   waitingTooLong,
 ];
 
@@ -234,12 +228,17 @@ const RULES: DerivationRule[] = [
  * Derive alerts from a list of encounters.
  * Returns alerts sorted by severity (CRITICAL first).
  */
-export function deriveAlertsFromEncounters(encounters: Encounter[]): DerivedAlert[] {
+export function deriveAlertsFromEncounters(
+  encounters: Encounter[],
+  manifest?: AlertRuleManifest | null,
+): DerivedAlert[] {
   const alerts: DerivedAlert[] = [];
+  const thresholds = thresholdsFromManifest(manifest);
+  if (!thresholds) return alerts;
 
   for (const enc of encounters) {
     for (const rule of RULES) {
-      const alert = rule(enc);
+      const alert = rule(enc, thresholds);
       if (alert) {
         alerts.push(alert);
       }

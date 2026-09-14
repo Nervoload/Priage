@@ -11,7 +11,7 @@ RUN npm run prisma:generate && npm run build
 
 FROM node:20-alpine AS runtime
 WORKDIR /app
-ENV NODE_ENV=development
+ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma

@@ -9,6 +9,7 @@ export type ClinicalReadCapability =
   | 'hospital.queue.clinical';
 
 const ROLE_CAPABILITIES: Readonly<Record<Role, ReadonlySet<ClinicalReadCapability>>> = {
+  [Role.IT_ADMIN]: new Set(),
   [Role.STAFF]: new Set([
     'encounter.list.operational',
     'encounter.detail.operational',
@@ -31,6 +32,14 @@ const ROLE_CAPABILITIES: Readonly<Record<Role, ReadonlySet<ClinicalReadCapabilit
     'hospital.queue.clinical',
   ]),
   [Role.ADMIN]: new Set([
+    'encounter.list.operational',
+    'encounter.list.clinical',
+    'encounter.detail.operational',
+    'encounter.detail.clinical',
+    'hospital.queue.operational',
+    'hospital.queue.clinical',
+  ]),
+  [Role.CLINICAL_ADMIN]: new Set([
     'encounter.list.operational',
     'encounter.list.clinical',
     'encounter.detail.operational',
@@ -87,6 +96,10 @@ export const CLINICAL_ENCOUNTER_FIELDS = Object.freeze([
 ] as const);
 
 export const ROLE_FIELD_AUTHORIZATION = Object.freeze({
+  [Role.IT_ADMIN]: {
+    operational: Object.freeze([]),
+    clinical: Object.freeze([]),
+  },
   [Role.STAFF]: {
     operational: STAFF_OPERATIONAL_ENCOUNTER_FIELDS,
     clinical: Object.freeze([]),
@@ -100,6 +113,10 @@ export const ROLE_FIELD_AUTHORIZATION = Object.freeze({
     clinical: CLINICAL_ENCOUNTER_FIELDS,
   },
   [Role.ADMIN]: {
+    operational: STAFF_OPERATIONAL_ENCOUNTER_FIELDS,
+    clinical: CLINICAL_ENCOUNTER_FIELDS,
+  },
+  [Role.CLINICAL_ADMIN]: {
     operational: STAFF_OPERATIONAL_ENCOUNTER_FIELDS,
     clinical: CLINICAL_ENCOUNTER_FIELDS,
   },

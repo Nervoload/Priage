@@ -12,6 +12,7 @@ import type {
   InterviewClientState,
   InterviewEmergencyAlert,
   InterviewGenerationMode,
+  InterviewGovernance,
   InterviewInputType,
   InterviewPatientContext,
   InterviewPhase,
@@ -256,6 +257,7 @@ export class TriageInterviewService {
       summaryRecord,
       providerState: generation.providerState ?? state.providerState,
       generationMode,
+      governance: this.buildGovernance(generationMode, generation.providerState ?? state.providerState),
     };
 
     const generatedQuestions = this.materializeQuestions(generation.result.questions, state.answers).slice(0, batchSize);
@@ -316,8 +318,9 @@ export class TriageInterviewService {
               completionReason: fallback.result.completionReason.trim(),
               summaryPreview: fallbackSummary.summaryPreview,
               summaryRecord: fallbackSummary,
-              providerState: state.providerState,
+              providerState: fallback.providerState,
               generationMode: 'fallback',
+              governance: this.buildGovernance('fallback', fallback.providerState),
               pendingCandidates: [],
             },
             patient,
@@ -339,8 +342,9 @@ export class TriageInterviewService {
           sessionGoal: fallback.result.sessionGoal.trim() || state.sessionGoal,
           targetQuestionCount: fallbackTarget,
           completionReason: fallback.result.completionReason.trim(),
-          providerState: state.providerState,
+          providerState: fallback.providerState,
           generationMode: 'fallback',
+          governance: this.buildGovernance('fallback', fallback.providerState),
         };
       }
 
@@ -421,7 +425,8 @@ export class TriageInterviewService {
       targetQuestionCount: null,
       completionReason: '',
       providerState: null,
-      generationMode: 'ai',
+      generationMode: 'fallback',
+      governance: this.buildGovernance('fallback', null),
     };
   }
 
@@ -601,9 +606,9 @@ export class TriageInterviewService {
         },
         questions,
       },
-      providerState: input.providerState ?? {
-        providerName: 'openai',
-        model: 'fallback',
+      providerState: {
+        providerName: 'deterministic',
+        model: 'rescue-v1',
         responseId: '',
         promptVersion: 'fallback-v1',
       },
@@ -1079,6 +1084,27 @@ export class TriageInterviewService {
       cachedQuestions: snapshot.cachedQuestions,
       emergencyAlert: snapshot.emergencyAlert,
       summaryPreview: snapshot.summaryPreview,
+      generationMode: snapshot.generationMode,
+      governance: snapshot.governance,
+    };
+  }
+
+  private buildGovernance(
+    generationMode: InterviewGenerationMode,
+    providerState: InterviewProviderState | null,
+  ): InterviewGovernance {
+    return {
+      version: process.env.PRIAGE_CLINICAL_GOVERNANCE_VERSION?.trim() || '2026-06-13',
+      generationMode,
+      decisionSupportOnly: true,
+      humanReviewRequired: true,
+      emergencyInstructions: 'Call 911 or go to the nearest emergency department for immediate or life-threatening danger.',
+      provider: {
+        name: providerState?.providerName ?? 'none',
+        model: providerState?.model ?? null,
+        promptVersion: providerState?.promptVersion ?? null,
+      },
+      reviewState: 'UNREVIEWED',
     };
   }
 
@@ -1196,6 +1222,11 @@ export class TriageInterviewService {
       completionReason: typeof value.completionReason === 'string' ? value.completionReason : '',
       providerState: this.parseProviderState(value.providerState),
       generationMode: value.generationMode === 'fallback' || value.fallbackUsed === true ? 'fallback' : 'ai',
+      governance: this.parseGovernance(value.governance)
+        ?? this.buildGovernance(
+          value.generationMode === 'fallback' || value.fallbackUsed === true ? 'fallback' : 'ai',
+          this.parseProviderState(value.providerState),
+        ),
     };
   }
 
@@ -1340,7 +1371,7 @@ export class TriageInterviewService {
 
     const providerState = value as Record<string, unknown>;
     if (
-      providerState.providerName !== 'openai'
+      (providerState.providerName !== 'openai' && providerState.providerName !== 'deterministic')
       || typeof providerState.model !== 'string'
       || typeof providerState.responseId !== 'string'
       || typeof providerState.promptVersion !== 'string'
@@ -1349,10 +1380,39 @@ export class TriageInterviewService {
     }
 
     return {
-      providerName: 'openai',
+      providerName: providerState.providerName,
       model: providerState.model,
       responseId: providerState.responseId,
       promptVersion: providerState.promptVersion,
+    };
+  }
+
+  private parseGovernance(value: unknown): InterviewGovernance | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const governance = value as Record<string, unknown>;
+    const provider = governance.provider;
+    if (!provider || typeof provider !== 'object' || Array.isArray(provider)) return null;
+    const providerRecord = provider as Record<string, unknown>;
+    const generationMode = governance.generationMode;
+    const providerName = providerRecord.name;
+    if (
+      (generationMode !== 'ai' && generationMode !== 'fallback')
+      || (providerName !== 'openai' && providerName !== 'deterministic' && providerName !== 'none')
+    ) return null;
+    return {
+      version: typeof governance.version === 'string' ? governance.version : '2026-06-13',
+      generationMode,
+      decisionSupportOnly: true,
+      humanReviewRequired: true,
+      emergencyInstructions: typeof governance.emergencyInstructions === 'string'
+        ? governance.emergencyInstructions
+        : 'Call 911 for immediate or life-threatening danger.',
+      provider: {
+        name: providerName,
+        model: typeof providerRecord.model === 'string' ? providerRecord.model : null,
+        promptVersion: typeof providerRecord.promptVersion === 'string' ? providerRecord.promptVersion : null,
+      },
+      reviewState: 'UNREVIEWED',
     };
   }
 
@@ -1444,6 +1504,7 @@ export class TriageInterviewService {
             sessionGoal: state.sessionGoal,
             completionReason: state.completionReason,
             generationMode: state.generationMode,
+            governance: state.governance,
             generatedAt,
           }),
           sourceType: ContextSourceType.AI,
@@ -1520,6 +1581,7 @@ export class TriageInterviewService {
           summaryPreview: summary.summaryPreview,
           urgency: summary.urgency,
           generationMode: state.generationMode,
+          governance: state.governance,
           generatedAt,
         }),
       },

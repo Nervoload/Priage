@@ -9,6 +9,9 @@ const REQUIRED_PRODUCTION_VALUES = [
   'ASSET_S3_KMS_KEY_ID',
   'ASSET_SCANNER_URL',
   'AUDIT_ARCHIVE_BUCKET',
+  'WEBHOOK_SECRET_ENCRYPTION_KEY',
+  'WEBHOOK_ALLOWED_HOSTS',
+  'HOSPITAL_DASHBOARD_URL',
 ] as const;
 
 export function assertProductionConfiguration(): void {
@@ -50,6 +53,22 @@ export function assertProductionConfiguration(): void {
   }
   if (isTrue(process.env.ALLOW_LEGACY_RAW_PATIENT_TOKENS)) {
     throw new Error('ALLOW_LEGACY_RAW_PATIENT_TOKENS cannot be enabled in production');
+  }
+  const interviewMode = (process.env.TRIAGE_INTERVIEW_MODE || '').trim().toLowerCase();
+  if (interviewMode !== 'deterministic') {
+    throw new Error('TRIAGE_INTERVIEW_MODE must be deterministic in production until an approved regional provider is configured');
+  }
+  if (process.env.TRIAGE_AI_API_KEY?.trim() || process.env.TRIAGE_AI_BASE_URL?.trim()) {
+    throw new Error('External triage AI configuration is not permitted in production');
+  }
+  let dashboardUrl: URL;
+  try {
+    dashboardUrl = new URL(process.env.HOSPITAL_DASHBOARD_URL || '');
+  } catch {
+    throw new Error('HOSPITAL_DASHBOARD_URL must be a valid HTTPS URL in production');
+  }
+  if (dashboardUrl.protocol !== 'https:' || dashboardUrl.username || dashboardUrl.password) {
+    throw new Error('HOSPITAL_DASHBOARD_URL must be a credential-free HTTPS URL in production');
   }
 }
 

@@ -31,6 +31,8 @@ const messageWithAssetsSelect = {
   isInternal: true,
   createdByUserId: true,
   createdByPatientId: true,
+  encounterId: true,
+  hospitalId: true,
   assets: {
     where: {
       status: AssetStatus.READY,
@@ -101,7 +103,9 @@ export class MessagingService {
       const [messages, total] = await Promise.all([
         this.prisma.message.findMany({
           where,
-          orderBy: { createdAt: 'asc' },
+          // Initial hydration returns the newest page, while cursor reads move
+          // forward from the last message already held by the client.
+          orderBy: { id: afterMessageId != null ? 'asc' : 'desc' },
           ...(skip != null ? { skip } : {}),
           take: limit,
           select: messageWithAssetsSelect,
@@ -128,7 +132,8 @@ export class MessagingService {
       }
 
       return {
-        data: messages.map((message) => this.serializeMessage(message, 'staff')),
+        data: (afterMessageId == null ? messages.reverse() : messages)
+          .map((message) => this.serializeMessage(message, 'staff')),
         meta: {
           page,
           limit,
@@ -668,6 +673,8 @@ export class MessagingService {
       isInternal: message.isInternal,
       createdByUserId: message.createdByUserId,
       createdByPatientId: message.createdByPatientId,
+      encounterId: message.encounterId,
+      hospitalId: message.hospitalId,
       attachments: message.assets.map((asset) => mapAssetSummary(asset, audience)),
     };
   }

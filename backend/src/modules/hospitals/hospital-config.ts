@@ -59,6 +59,8 @@ const PAGE_ORDER = new Map<HospitalPageKey, number>(
 
 const DEFAULT_PAGE_ACCESS: Record<Role, HospitalPageKey[]> = {
   [Role.ADMIN]: [...HOSPITAL_PAGE_KEYS],
+  [Role.IT_ADMIN]: ['settings'],
+  [Role.CLINICAL_ADMIN]: [...HOSPITAL_PAGE_KEYS],
   [Role.NURSE]: ['triage', 'waiting', 'analytics', 'settings'],
   [Role.STAFF]: ['admit', 'settings'],
   [Role.DOCTOR]: ['triage', 'waiting', 'analytics', 'settings'],
@@ -214,6 +216,8 @@ export function getDefaultHospitalConfig(): HospitalOperationalConfig {
     version: 1,
     pageAccess: {
       [Role.ADMIN]: [...DEFAULT_PAGE_ACCESS[Role.ADMIN]],
+      [Role.IT_ADMIN]: [...DEFAULT_PAGE_ACCESS[Role.IT_ADMIN]],
+      [Role.CLINICAL_ADMIN]: [...DEFAULT_PAGE_ACCESS[Role.CLINICAL_ADMIN]],
       [Role.NURSE]: [...DEFAULT_PAGE_ACCESS[Role.NURSE]],
       [Role.STAFF]: [...DEFAULT_PAGE_ACCESS[Role.STAFF]],
       [Role.DOCTOR]: [...DEFAULT_PAGE_ACCESS[Role.DOCTOR]],
@@ -234,6 +238,8 @@ export function normalizeHospitalConfig(value: unknown): HospitalOperationalConf
     version: 1,
     pageAccess: {
       [Role.ADMIN]: normalizePageAccessList(pageAccess.ADMIN, Role.ADMIN),
+      [Role.IT_ADMIN]: normalizePageAccessList(pageAccess.IT_ADMIN, Role.IT_ADMIN),
+      [Role.CLINICAL_ADMIN]: normalizePageAccessList(pageAccess.CLINICAL_ADMIN, Role.CLINICAL_ADMIN),
       [Role.NURSE]: normalizePageAccessList(pageAccess.NURSE, Role.NURSE),
       [Role.STAFF]: normalizePageAccessList(pageAccess.STAFF, Role.STAFF),
       [Role.DOCTOR]: normalizePageAccessList(pageAccess.DOCTOR, Role.DOCTOR),

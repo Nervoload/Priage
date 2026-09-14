@@ -28,7 +28,7 @@ main().catch((error) => {
 async function main() {
   const hospitalA = await fixtures.createHospital({ namePrefix: 'Security A', slugPrefix: 'security-a' });
   const hospitalB = await fixtures.createHospital({ namePrefix: 'Security B', slugPrefix: 'security-b' });
-  const adminA = await fixtures.createUser({ hospitalId: hospitalA.id, password, role: 'ADMIN', emailPrefix: 'admin-a' });
+  const adminA = await fixtures.createUser({ hospitalId: hospitalA.id, password, role: 'CLINICAL_ADMIN', emailPrefix: 'admin-a' });
   const staffA = await fixtures.createUser({ hospitalId: hospitalA.id, password, role: 'STAFF', emailPrefix: 'staff-a' });
   const nurseA = await fixtures.createUser({ hospitalId: hospitalA.id, password, role: 'NURSE', emailPrefix: 'nurse-a' });
   const nurseB = await fixtures.createUser({ hospitalId: hospitalB.id, password, role: 'NURSE', emailPrefix: 'nurse-b' });
