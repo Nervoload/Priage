@@ -1,8 +1,10 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 import { panelBorder, patientTheme } from '../../shared/ui/theme';
 
 interface QuestionPageProps {
+  disabled?: boolean;
+  autoFocus?: boolean;
   step: number;
   totalSteps: number;
   progressLabel?: string;
@@ -24,6 +26,8 @@ interface QuestionPageProps {
 }
 
 export function QuestionPage({
+  disabled = false,
+  autoFocus = true,
   step,
   totalSteps,
   progressLabel,
@@ -43,7 +47,9 @@ export function QuestionPage({
   summary,
   onClear,
 }: QuestionPageProps) {
-  const canAdvance = !required || value.trim().length > 0;
+  const canAdvance = !disabled && (!required || value.trim().length > 0);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { heading.current?.focus({ preventScroll: true }); }, [question]);
 
   function handleKeyDown(event: React.KeyboardEvent) {
     if (event.key === 'Enter' && !multiline && canAdvance) {
@@ -53,14 +59,14 @@ export function QuestionPage({
   }
 
   return (
-    <main data-showcase="patient.intake.interview" style={styles.page}>
-      <section style={styles.card}>
+    <main className="patient-intake question-page" data-showcase="patient.intake.interview" style={styles.page}>
+      <section className="patient-intake-card question-card" style={styles.card}>
         <header style={styles.header}>
           <p style={styles.stepLabel}>{progressLabel ?? `Step ${step} of ${totalSteps}`}</p>
-          <div style={styles.progressTrack}>
+          <div role="progressbar" aria-label="Intake progress" aria-valuenow={step} aria-valuemin={0} aria-valuemax={totalSteps} style={styles.progressTrack}>
             <div style={{ ...styles.progressFill, width: `${(step / totalSteps) * 100}%` }} />
           </div>
-          <h1 style={styles.question}>{question}</h1>
+          <h1 id="intake-question" ref={heading} tabIndex={-1} style={styles.question}>{question}</h1>
           {description && <p style={styles.description}>{description}</p>}
           {onClear && (
             <div style={styles.presetRow}>
@@ -78,7 +84,8 @@ export function QuestionPage({
               value={value}
               onChange={(event) => onChange(event.target.value)}
               placeholder={placeholder}
-              autoFocus
+              aria-labelledby="intake-question"
+              autoFocus={autoFocus}
             />
           ) : (
             <input
@@ -87,7 +94,8 @@ export function QuestionPage({
               onChange={(event) => onChange(event.target.value)}
               placeholder={placeholder}
               onKeyDown={handleKeyDown}
-              autoFocus
+              aria-labelledby="intake-question"
+              autoFocus={autoFocus}
             />
           )
         )}
@@ -165,11 +173,11 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: patientTheme.shadows.panel,
     padding: '1rem',
     display: 'grid',
-    gap: '0.75rem',
+    gap: '1.4rem',
   },
   header: {
     display: 'grid',
-    gap: '0.36rem',
+    gap: '0.8rem',
   },
   stepLabel: {
     margin: 0,
@@ -192,7 +200,7 @@ const styles: Record<string, React.CSSProperties> = {
   question: {
     margin: '0.1rem 0 0',
     fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.3rem',
+    fontSize: 'clamp(1.45rem, 4vw, 1.8rem)',
     lineHeight: 1.22,
   },
   description: {

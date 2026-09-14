@@ -1,3 +1,5 @@
+import { PATIENT_SCENARIO } from '../../../../DemoShared/src/patientScenario';
+import { useScenarioAutofill } from '../../shared/hooks/useScenarioAutofill';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 
@@ -119,7 +121,9 @@ export function EncounterWorkspace() {
   const [arrivalSubmitting, setArrivalSubmitting] = useState(false);
   const [savingGuestInfo, setSavingGuestInfo] = useState(false);
   const [guestInfoError, setGuestInfoError] = useState<string | null>(null);
-  const [transportNote, setTransportNote] = useState('');
+  const [transportNote, setTransportNote, transportFilling] = useScenarioAutofill(PATIENT_SCENARIO.arrivalNote);
+  const [messageDraft, setMessageDraft, messageFilling] = useScenarioAutofill('My headache is still there, and I feel a little dizzy. My friend is with me.');
+  const [sendingMessage, setSendingMessage] = useState(false);
   const [guestProfile, setGuestProfile] = useState({
     firstName: '',
     lastName: '',
@@ -259,6 +263,7 @@ export function EncounterWorkspace() {
         setGuestProfile((current) => ({
           ...current,
           ...toGuestProfileState(profile),
+          details: current.details,
         }));
         setGuestInfoError(null);
       } catch {
@@ -458,6 +463,22 @@ export function EncounterWorkspace() {
     }
   }
 
+  async function handleSendMessage() {
+    if (!encounter || sendingMessage || messageFilling || !messageDraft.trim()) return;
+    setSendingMessage(true);
+    try {
+      const message = await sendPatientMessageReliable(encounter.id, messageDraft.trim(), false);
+      setMessages((previous) => appendUniqueMessages(previous, [message]));
+      messageCursorRef.current = message.id;
+      setMessageDraft('');
+      showToast('Message sent to your care team.', 'success');
+    } catch (error) {
+      showToast(isOutboxQueuedError(error) ? 'Message saved. We’ll send it when you’re connected.' : 'Could not send your message.');
+    } finally {
+      setSendingMessage(false);
+    }
+  }
+
   async function handleSendArrivalNote() {
     if (!encounter || arrivalSubmitting || isTerminal) {
       return;
@@ -551,10 +572,10 @@ export function EncounterWorkspace() {
   }
 
   return (
-    <main style={styles.page}>
+    <main className="patient-encounter" style={styles.page}>
       <section style={styles.heroCard}>
         <div style={styles.heroTop}>
-          <span style={styles.badge}>Current Encounter</span>
+          <span style={styles.badge}>Your visit</span>
           {!isTerminal ? (
             <button type="button" style={styles.secondaryButton} onClick={() => void handleCancelVisit()}>
               Cancel visit
@@ -564,8 +585,8 @@ export function EncounterWorkspace() {
         <h1 style={styles.title}>{hospitalName}</h1>
         <p style={styles.subtitle}>
           {encounter.status === 'EXPECTED'
-            ? 'This is the shared visit dashboard for both guests and account holders while the clinic prepares for your arrival.'
-            : 'This encounter dashboard stays aligned for guests and signed-in patients, with only account-specific actions changing.'}
+            ? 'Your intake has been shared. Check in at reception when you arrive.'
+            : 'Follow your visit and keep in touch with your care team here.'}
         </p>
         {refreshError ? <p style={styles.errorText}>{refreshError}</p> : null}
 
@@ -575,27 +596,40 @@ export function EncounterWorkspace() {
           </span>
           <span style={styles.timestamp}>Opened {formatDateTime(encounter.createdAt)}</span>
         </div>
+        {!isTerminal && (
+          <ol className="visit-progress" aria-label="Visit progress">
+            <li data-reached="true"><strong>1. Intake sent</strong>Details shared</li>
+            <li data-reached={encounter.status !== 'EXPECTED'} aria-current={encounter.status === 'EXPECTED' ? 'step' : undefined}><strong>2. Check in</strong>At reception</li>
+            <li data-reached={['TRIAGE', 'WAITING'].includes(encounter.status)} aria-current={encounter.status !== 'EXPECTED' ? 'step' : undefined}><strong>3. Assessment</strong>With your care team</li>
+          </ol>
+        )}
       </section>
 
-      <section style={styles.grid}>
-        <SupportCard hospital={selectedHospital} fallbackHospitalName={hospitalName} patientLocation={currentLocation} />
-
+      <section className="visit-grid" style={styles.grid}>
         <article data-showcase="patient.encounter.summary" style={styles.card}>
-          <h2 style={styles.cardTitle}>Encounter Summary</h2>
+          <h2 style={styles.cardTitle}>Your intake summary</h2>
           <div style={styles.summaryGrid}>
             <SummaryItem label="Chief complaint" value={encounter.chiefComplaint || 'Not captured'} />
             <SummaryItem label="Expected arrival" value={formatDateTime(encounter.expectedAt)} />
             <SummaryItem label="Arrived" value={formatDateTime(encounter.arrivedAt)} />
             <SummaryItem
               label="Queue estimate"
-              value={queueInfo ? `${queueInfo.estimatedMinutes} min (${queueInfo.position} ahead)` : 'Will appear when the clinic queues this encounter'}
+              value={queueInfo ? `${queueInfo.estimatedMinutes} min (${queueInfo.position} ahead)` : 'Available after check-in'}
             />
           </div>
 
           {encounter.priageSummary ? (
             <div style={styles.summaryBlock}>
-              <div style={styles.blockEyebrow}>AI briefing</div>
-              <p style={styles.bodyText}>{encounter.priageSummary.briefing}</p>
+              <div style={styles.blockEyebrow}>Visit details</div>
+              <p style={styles.bodyText}>{encounter.details || encounter.chiefComplaint}</p>
+              <details className="visit-details">
+                <summary>View your answers</summary>
+                <div className="visit-details-content">
+                  {encounter.priageSummary.questionAnswers.map((answer, index) => (
+                    <div key={index}><strong style={styles.mutedText}>{answer.question}</strong><p style={styles.bodyText}>{answer.answer || 'Not provided'}</p></div>
+                  ))}
+                </div>
+              </details>
               {encounter.priageSummary.recommendedAction ? (
                 <p style={styles.mutedText}>
                   <strong>Recommended next step:</strong> {encounter.priageSummary.recommendedAction}
@@ -612,11 +646,78 @@ export function EncounterWorkspace() {
           </div>
         </article>
 
-        {isGuest ? (
+
+        <article data-showcase="patient.encounter.messages" style={styles.card}>
+          <h2 style={styles.cardTitle}>Messages</h2>
+          {recentStaffMessages.length === 0 ? (
+            <p style={styles.mutedText}>No staff messages yet. Updates will appear here as the encounter progresses.</p>
+          ) : (
+            <div style={styles.messageStack}>
+              {recentStaffMessages.map((message) => (
+                <div key={message.id} style={styles.messageRow}>
+                  <div style={styles.messageMeta}>
+                    <strong>Care team</strong>
+                    <span>{formatShortTime(message.createdAt)}</span>
+                  </div>
+                  <p style={styles.messageBody}>{message.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          {isGuest ? (
+            <>
+              {messages.filter((message) => message.senderType === 'PATIENT').slice(-2).map((message) => (
+                <div key={message.id} style={styles.messageRow}><strong style={styles.mutedText}>You · {formatShortTime(message.createdAt)}</strong><p style={styles.messageBody}>{message.content}</p></div>
+              ))}
+              {!isTerminal && <>
+                <Field label="Message your care team" value={messageDraft} onChange={setMessageDraft} multiline rows={3} />
+                <button type="button" style={styles.primaryButton} onClick={() => void handleSendMessage()} disabled={sendingMessage || messageFilling || !messageDraft.trim()}>
+                  {sendingMessage ? 'Sending…' : 'Send message'}
+                </button>
+              </>}
+            </>
+          ) : (
+            <button type="button" style={styles.primaryButton} onClick={() => navigate(`/messages?encounter=${encounter.id}`)}>Open messages</button>
+          )}
+        </article>
+
+        {!isTerminal ? (
           <article style={styles.card}>
-            <h2 style={styles.cardTitle}>Guest Visit Details</h2>
+            <h2 style={styles.cardTitle}>Location and Arrival</h2>
             <p style={styles.mutedText}>
-              This is the same encounter page account holders see, but guests can still complete or correct the details captured during intake.
+              Share your ETA with the hospital, or send a quick note when you arrive.
+            </p>
+            <div style={styles.buttonStack}>
+              <button
+                type="button"
+                style={{ ...styles.primaryButton, background: locationSharing ? '#9f1239' : patientTheme.colors.accent }}
+                onClick={handleToggleLocationSharing}
+              >
+                {locationSharing ? 'Stop sharing location' : 'Share live location'}
+              </button>
+              <button type="button" style={styles.secondaryButton} onClick={() => void handleSendArrivalNote()} disabled={arrivalSubmitting || transportFilling}>
+                {arrivalSubmitting ? 'Sending...' : "I'm here now"}
+              </button>
+            </div>
+
+            <Field
+              label="Transport or arrival note"
+              value={transportNote}
+              onChange={setTransportNote}
+              multiline
+              rows={3}
+            />
+          </article>
+        ) : null}
+
+        <SupportCard hospital={selectedHospital} fallbackHospitalName={hospitalName} patientLocation={currentLocation} />
+
+        {isGuest ? (
+          <details className="visit-details" style={styles.card}>
+            <summary>Your personal details</summary>
+            <div className="visit-details-content">
+            <p style={styles.mutedText}>
+              Review or update the information shared with your care team.
             </p>
             <div style={styles.formGrid}>
               <Field label="First name *" value={guestProfile.firstName} onChange={(value) => setGuestProfile((current) => ({ ...current, firstName: value }))} />
@@ -637,14 +738,15 @@ export function EncounterWorkspace() {
             />
             {guestInfoError ? <p style={styles.errorText}>{guestInfoError}</p> : null}
             <button type="button" style={styles.primaryButton} onClick={() => void handleSaveGuestInfo()} disabled={savingGuestInfo}>
-              {savingGuestInfo ? 'Saving...' : 'Save guest details'}
+              {savingGuestInfo ? 'Saving...' : 'Save details'}
             </button>
-          </article>
+            </div>
+          </details>
         ) : (
           <article style={styles.card}>
             <h2 style={styles.cardTitle}>Account Details on File</h2>
             <p style={styles.mutedText}>
-              Signed-in patients see the same encounter dashboard, with account editing kept in the dedicated settings page.
+              Your saved contact and health information.
             </p>
             <div style={styles.detailStack}>
               {accountSummary.map((item) => (
@@ -660,58 +762,7 @@ export function EncounterWorkspace() {
           </article>
         )}
 
-        <article data-showcase="patient.encounter.messages" style={styles.card}>
-          <h2 style={styles.cardTitle}>Messages</h2>
-          {recentStaffMessages.length === 0 ? (
-            <p style={styles.mutedText}>No staff messages yet. Updates will appear here as the encounter progresses.</p>
-          ) : (
-            <div style={styles.messageStack}>
-              {recentStaffMessages.map((message) => (
-                <div key={message.id} style={styles.messageRow}>
-                  <div style={styles.messageMeta}>
-                    <strong>Care team</strong>
-                    <span>{formatShortTime(message.createdAt)}</span>
-                  </div>
-                  <p style={styles.messageBody}>{message.content}</p>
-                </div>
-              ))}
-            </div>
-          )}
-          <button type="button" style={styles.primaryButton} onClick={() => navigate(`/messages?encounter=${encounter.id}`)}>
-            Open full message thread
-          </button>
-        </article>
-
-        {!isTerminal ? (
-          <article style={styles.card}>
-            <h2 style={styles.cardTitle}>Location and Arrival</h2>
-            <p style={styles.mutedText}>
-              Share your ETA with the hospital, or send a quick note when you arrive.
-            </p>
-            <div style={styles.buttonStack}>
-              <button
-                type="button"
-                style={{ ...styles.primaryButton, background: locationSharing ? '#9f1239' : patientTheme.colors.accent }}
-                onClick={handleToggleLocationSharing}
-              >
-                {locationSharing ? 'Stop sharing location' : 'Share live location'}
-              </button>
-              <button type="button" style={styles.secondaryButton} onClick={() => void handleSendArrivalNote()} disabled={arrivalSubmitting}>
-                {arrivalSubmitting ? 'Sending...' : "I'm here now"}
-              </button>
-            </div>
-
-            <Field
-              label="Transport or arrival note"
-              value={transportNote}
-              onChange={setTransportNote}
-              multiline
-              rows={3}
-            />
-          </article>
-        ) : null}
-
-        {isGuest ? <UpgradeAccountCard returnTo={`/encounters/${encounter.id}/current`} /> : null}
+        {isGuest && !isStaticDemoMode() ? <UpgradeAccountCard returnTo={`/encounters/${encounter.id}/current`} /> : null}
       </section>
 
       <section style={styles.timelineCard}>
@@ -719,7 +770,7 @@ export function EncounterWorkspace() {
         <ol style={styles.timelineList}>
           <li>Arrival confirmation and registration review.</li>
           <li>Triage or nurse assessment when the team is ready.</li>
-          <li>Updates continue here and in the main Messages page for this encounter.</li>
+          <li>Care-team updates and messages stay with your visit.</li>
         </ol>
       </section>
     </main>
@@ -915,7 +966,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: '1100px',
     margin: '0 auto',
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
     gap: '1rem',
     alignItems: 'start',
   },

@@ -1,3 +1,6 @@
+import { isStaticDemoMode } from '../../../DemoShared/src/staticDemo';
+import { PATIENT_SCENARIO } from '../../../DemoShared/src/patientScenario';
+import { useScenarioAutofill } from '../shared/hooks/useScenarioAutofill';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -16,8 +19,8 @@ export function PriagePage() {
   const { showToast } = useToast();
 
   const [step, setStep] = useState<IntakeStep>('capture');
-  const [chiefComplaint, setChiefComplaint] = useState('');
-  const [details, setDetails] = useState('');
+  const [chiefComplaint, setChiefComplaint, chiefComplaintFilling] = useScenarioAutofill(PATIENT_SCENARIO.chiefComplaint);
+  const [details, setDetails, detailsFilling] = useScenarioAutofill(PATIENT_SCENARIO.details);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleStartInterview(event: React.FormEvent) {
@@ -75,13 +78,13 @@ export function PriagePage() {
     || 'your account';
 
   return (
-    <main style={styles.page}>
-      <section style={styles.card}>
+    <main className="patient-intake" style={styles.page}>
+      <section className="patient-intake-card" style={styles.card}>
         <header style={styles.header}>
           <span style={styles.badge}>New Visit</span>
-          <h1 style={styles.title}>Start check-in from your patient account</h1>
+          <h1 style={styles.title}>Let’s start your visit</h1>
           <p style={styles.subtitle}>
-            This uses the same guided intake flow as guest check-in, but keeps the visit attached to {displayName}.
+            Tell us what happened. We’ll help you prepare the details for your care team.
           </p>
         </header>
 
@@ -109,7 +112,7 @@ export function PriagePage() {
               style={styles.input}
               placeholder="e.g. Chest pain, ankle injury, shortness of breath"
               maxLength={240}
-              autoFocus
+              autoFocus={!isStaticDemoMode()}
             />
           </label>
 
@@ -124,7 +127,7 @@ export function PriagePage() {
             />
           </label>
 
-          <button style={styles.primaryButton} type="submit" disabled={submitting}>
+          <button style={styles.primaryButton} type="submit" disabled={submitting || chiefComplaintFilling || detailsFilling}>
             {submitting ? 'Preparing intake…' : 'Continue to guided intake'}
           </button>
         </form>

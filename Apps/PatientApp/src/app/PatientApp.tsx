@@ -1,3 +1,4 @@
+import { PatientShowcase } from '../shared/showcase/PatientShowcase';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../shared/hooks/useAuth';
@@ -20,9 +21,9 @@ import { GuestChatbotPage } from '../features/pre-triage/GuestChatbotPage';
 import { flushPatientMessageOutbox } from '../shared/patientOutbox';
 import { flushPatientCommandOutbox } from '../shared/patientCommandOutbox';
 import { isStaticDemoMode } from '../../../DemoShared/src/staticDemo';
-import { PatientShowcase } from '../shared/showcase/PatientShowcase';
 
 export function PatientApp() {
+  const location = useLocation();
   const { session, loading } = useAuth();
   const { session: guestSession } = useGuestSession();
 
@@ -61,6 +62,11 @@ export function PatientApp() {
         <p style={styles.loadingText}>Loading…</p>
       </div>
     );
+  }
+
+  const launchParams = new URLSearchParams(location.search);
+  if (isStaticDemoMode() && (launchParams.get('showcase') === 'patient' || launchParams.get('tour') === '1')) {
+    return <PatientShowcase />;
   }
 
   return (
@@ -138,7 +144,6 @@ export function PatientApp() {
       />
       <Route path="*" element={<Navigate to={session ? '/' : '/welcome'} replace />} />
     </Routes>
-    <PatientShowcase />
     </>
   );
 }

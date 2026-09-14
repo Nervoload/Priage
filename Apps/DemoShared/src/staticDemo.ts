@@ -1,3 +1,5 @@
+import { PATIENT_QUESTIONS as DEMO_INTERVIEW_QUESTIONS, PATIENT_SCENARIO } from './patientScenario';
+
 type DemoRole = 'ADMIN' | 'NURSE' | 'STAFF' | 'DOCTOR';
 type DemoEncounterStatus = 'EXPECTED' | 'ADMITTED' | 'TRIAGE' | 'WAITING' | 'COMPLETE' | 'UNRESOLVED' | 'CANCELLED';
 type DemoSenderType = 'PATIENT' | 'USER' | 'SYSTEM';
@@ -238,6 +240,11 @@ export function loadDemoState(): DemoState {
   try {
     const parsed = JSON.parse(raw) as DemoState;
     if (parsed.version === 1 && parsed.hospital?.slug === 'demo-hospital') {
+      if (parsed.hospital.name === 'Priage Demo Hospital') parsed.hospital.name = 'Priage General Hospital';
+      if (parsed.hospital.address === '100 Demo Health Way, Toronto, ON') parsed.hospital.address = '100 Health Way, Toronto, ON';
+      if (parsed.interview.interviewPublicId !== 'static-head-injury-v2') {
+        parsed.interview = createInterviewState(0);
+      }
       return parsed;
     }
   } catch {
@@ -709,8 +716,10 @@ export function createDemoIntent(payload: {
       gender: payload.gender || null,
       chiefComplaint: payload.chiefComplaint,
       details: payload.details,
-      preferredLanguage: payload.preferredLanguage,
+      preferredLanguage: payload.preferredLanguage || PATIENT_SCENARIO.preferredLanguage,
     });
+    patient.allergies = PATIENT_SCENARIO.allergies;
+    patient.conditions = PATIENT_SCENARIO.conditions;
     state.draftPatientId = patient.id;
     state.activePatientId = patient.id;
     state.interview = createInterviewState(0);
@@ -733,6 +742,10 @@ export function updateDemoIntakeDetails(payload: {
 }) {
   return mutateDemoState((state) => {
     const patient = findPatient(state, state.draftPatientId ?? state.activePatientId);
+    if (payload.chiefComplaint !== undefined) {
+      patient.optionalHealthInfo = { ...(patient.optionalHealthInfo || {}), chiefComplaint: payload.chiefComplaint, details: payload.details || '' };
+      state.interview = createInterviewState(0);
+    }
     patient.firstName = payload.firstName ?? patient.firstName;
     patient.lastName = payload.lastName ?? patient.lastName;
     patient.age = payload.age ?? patient.age;
@@ -762,6 +775,7 @@ export function confirmDemoIntent(payload: { hospitalId?: number; hospitalSlug?:
     const patient = findPatient(state, state.draftPatientId ?? state.activePatientId);
     const existing = state.encounters.find((encounter) => encounter.patientId === patient.id && encounter.status !== 'CANCELLED');
     if (existing) {
+      attachPatientInterview(state, existing, patient);
       state.activeEncounterId = existing.id;
       state.draftPatientId = null;
       return;
@@ -769,6 +783,7 @@ export function confirmDemoIntent(payload: { hospitalId?: number; hospitalSlug?:
     const complaint = String(patient.optionalHealthInfo?.chiefComplaint || 'Abdominal pain and nausea');
     const details = String(patient.optionalHealthInfo?.details || 'Symptoms began earlier today and have not improved.');
     const encounter = createEncounterForPatient(state, patient, complaint, details, 'EXPECTED');
+    attachPatientInterview(state, encounter, patient);
     state.activeEncounterId = encounter.id;
     state.draftPatientId = null;
     trackDemoEventInState(state, 'patient_hospital_confirmed', {
@@ -820,14 +835,29 @@ export function advanceDemoInterview(payload: {
   action?: 'acknowledge_emergency';
 }) {
   return mutateDemoState((state) => {
+    if (state.interview.status === 'complete') return;
+    if (state.interview.status === 'emergency_ack_required') {
+      if (payload.action !== 'acknowledge_emergency') throw new Error('Please acknowledge the emergency warning to continue.');
+      state.interview = createInterviewState(1);
+      return;
+    }
+    const question = DEMO_INTERVIEW_QUESTIONS[state.interview.currentIndex];
+    if (payload.questionPublicId !== question.publicId) throw new Error('This question has already changed. Please try again.');
+    const answer = question.inputType === 'boolean' ? payload.valueBoolean
+      : question.inputType === 'number' ? payload.valueNumber
+      : question.inputType === 'single_select' ? payload.valueChoice : payload.valueText?.trim();
+    if (question.required && (answer === undefined || answer === '')) throw new Error('Please answer this question to continue.');
+    if (question.inputType === 'single_select' && !question.choices.includes(String(answer))) throw new Error('Please choose one of the options.');
+    if (question.inputType === 'number' && (!Number.isInteger(answer) || Number(answer) < 0 || Number(answer) > 10)) throw new Error('Please choose a number from 0 to 10.');
+    const patient = findPatient(state, state.activePatientId);
+    patient.optionalHealthInfo = { ...(patient.optionalHealthInfo || {}), [question.publicId]: answer ?? '' };
+    if (question.publicId === 'safety_immediate_danger' && answer === true) {
+      state.interview.status = 'emergency_ack_required';
+      return;
+    }
     const nextIndex = Math.min(state.interview.currentIndex + 1, DEMO_INTERVIEW_QUESTIONS.length);
     state.interview = createInterviewState(nextIndex);
-    const patient = findPatient(state, state.activePatientId);
-    patient.optionalHealthInfo = {
-      ...(patient.optionalHealthInfo || {}),
-      [payload.questionPublicId || `demo-question-${nextIndex}`]:
-        payload.valueText ?? payload.valueNumber ?? payload.valueBoolean ?? payload.valueChoice ?? payload.action ?? 'acknowledged',
-    };
+    state.interview.summaryPreview = buildPatientInterviewSummary(patient);
     trackDemoEventInState(state, 'patient_interview_step_answered', { nextIndex });
   }).then((state) => toInterviewResponse(state.interview));
 }
@@ -988,9 +1018,9 @@ function createSeedState(): DemoState {
     updatedAt: offsetIso(0),
     hospital: {
       id: 1,
-      name: 'Priage Demo Hospital',
+      name: 'Priage General Hospital',
       slug: 'demo-hospital',
-      address: '100 Demo Health Way, Toronto, ON',
+      address: '100 Health Way, Toronto, ON',
       phone: '555-0100',
       checkInInstructions: 'Use the emergency entrance and show your Priage check-in at the desk.',
       parkingNotes: 'Short-term parking is available beside the emergency department.',
@@ -1390,58 +1420,47 @@ function buildDemoPriageSummary(chiefComplaint: string, details: string, ctasLev
   };
 }
 
+function buildPatientInterviewSummary(patient: DemoPatient): string {
+  const answers = patient.optionalHealthInfo || {};
+  return [
+    String(answers.chiefComplaint || PATIENT_SCENARIO.chiefComplaint),
+    ...DEMO_INTERVIEW_QUESTIONS.filter((question) => question.publicId !== 'safety_immediate_danger' && answers[question.publicId] !== undefined)
+      .map((question) => {
+        const answer = answers[question.publicId];
+        return `${question.prompt} ${typeof answer === 'boolean' ? (answer ? 'Yes' : 'No') : answer}`;
+      }),
+  ].join('\n\n');
+}
+
+function attachPatientInterview(state: DemoState, encounter: DemoEncounter, patient: DemoPatient) {
+  if (state.interview.status !== 'complete') return;
+  const answers = patient.optionalHealthInfo || {};
+  encounter.priageSummary = {
+    ...buildDemoPriageSummary(encounter.chiefComplaint || '', encounter.details || '', null),
+    briefing: buildPatientInterviewSummary(patient),
+    caseSummary: buildPatientInterviewSummary(patient),
+    questionAnswers: DEMO_INTERVIEW_QUESTIONS.map((question) => ({
+      question: question.prompt,
+      answer: typeof answers[question.publicId] === 'boolean' ? (answers[question.publicId] ? 'Yes' : 'No') : String(answers[question.publicId] ?? ''),
+      phase: question.phase,
+      answeredAt: nowIso(),
+    })),
+    recommendedAction: 'Check in at the emergency department reception when you arrive.',
+  };
+}
+
 function createInterviewState(currentIndex: number): DemoInterviewState {
   return {
-    interviewPublicId: 'static-demo-interview',
+    interviewPublicId: 'static-head-injury-v2',
     status: currentIndex >= DEMO_INTERVIEW_QUESTIONS.length ? 'complete' : 'in_progress',
     phase: DEMO_INTERVIEW_QUESTIONS[currentIndex]?.phase || 'history',
     askedCount: Math.min(currentIndex, DEMO_INTERVIEW_QUESTIONS.length),
     maxQuestions: DEMO_INTERVIEW_QUESTIONS.length,
     currentIndex,
-    summaryPreview: currentIndex === 0
-      ? 'The demo interview will collect a few focused answers for the hospital handoff.'
-      : 'Demo answers are being added to the patient handoff summary.',
+    summaryPreview: '',
   };
 }
 
-const DEMO_INTERVIEW_QUESTIONS = [
-  {
-    publicId: 'demo-onset',
-    phase: 'urgent' as DemoInterviewPhase,
-    inputType: 'single_select',
-    prompt: 'When did this start?',
-    helpText: 'Timing helps the care team understand progression.',
-    placeholder: '',
-    required: true,
-    choices: ['Less than 1 hour ago', 'Today', 'Several days ago'],
-    clinicalReason: 'Establishes acuity timing.',
-    askIfAmbiguous: false,
-  },
-  {
-    publicId: 'demo-worse',
-    phase: 'emergent' as DemoInterviewPhase,
-    inputType: 'boolean',
-    prompt: 'Are symptoms getting worse?',
-    helpText: 'Worsening symptoms can affect queue monitoring.',
-    placeholder: '',
-    required: true,
-    choices: [],
-    clinicalReason: 'Detects progression risk.',
-    askIfAmbiguous: false,
-  },
-  {
-    publicId: 'demo-context',
-    phase: 'history' as DemoInterviewPhase,
-    inputType: 'textarea',
-    prompt: 'Anything else the care team should know?',
-    helpText: 'This appears in the demo handoff summary.',
-    placeholder: 'Add allergies, medications, or recent changes',
-    required: false,
-    choices: [],
-    clinicalReason: 'Collects useful handoff context.',
-    askIfAmbiguous: true,
-  },
-];
 
 function toInterviewResponse(interview: DemoInterviewState) {
   return {
@@ -1452,7 +1471,11 @@ function toInterviewResponse(interview: DemoInterviewState) {
     maxQuestions: interview.maxQuestions,
     currentQuestion: interview.status === 'complete' ? null : DEMO_INTERVIEW_QUESTIONS[interview.currentIndex],
     cachedQuestions: DEMO_INTERVIEW_QUESTIONS,
-    emergencyAlert: null,
+    emergencyAlert: interview.status === 'emergency_ack_required' ? {
+      title: 'Get emergency help now',
+      body: 'Your answer suggests this may be a life-threatening emergency. Call 911 or go to the nearest emergency department immediately if you cannot get there safely on your own.',
+      recommendation: 'Acknowledge this warning if you still want to continue the intake flow.',
+    } : null,
     summaryPreview: interview.summaryPreview,
   };
 }

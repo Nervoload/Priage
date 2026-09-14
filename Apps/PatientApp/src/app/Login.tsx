@@ -1,3 +1,6 @@
+import { isStaticDemoMode } from '../../../DemoShared/src/staticDemo';
+import { PATIENT_SCENARIO } from '../../../DemoShared/src/patientScenario';
+import { useScenarioAutofill } from '../shared/hooks/useScenarioAutofill';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -11,13 +14,13 @@ export function Login() {
   const { showToast } = useToast();
   const { setSession } = useGuestSession();
 
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [age, setAge] = useState('');
-  const [gender, setGender] = useState('');
-  const [chiefComplaint, setChiefComplaint] = useState('');
-  const [details, setDetails] = useState('');
+  const [firstName, setFirstName] = useState(isStaticDemoMode() ? String(PATIENT_SCENARIO.firstName) : '');
+  const [lastName, setLastName] = useState(isStaticDemoMode() ? String(PATIENT_SCENARIO.lastName) : '');
+  const [phone, setPhone] = useState(isStaticDemoMode() ? String(PATIENT_SCENARIO.phone) : '');
+  const [age, setAge] = useState(isStaticDemoMode() ? String(PATIENT_SCENARIO.age) : '');
+  const [gender, setGender] = useState(isStaticDemoMode() ? String(PATIENT_SCENARIO.gender) : '');
+  const [chiefComplaint, setChiefComplaint, chiefComplaintFilling] = useScenarioAutofill(PATIENT_SCENARIO.chiefComplaint);
+  const [details, setDetails, detailsFilling] = useScenarioAutofill(PATIENT_SCENARIO.details);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent) {
@@ -75,14 +78,14 @@ export function Login() {
   }
 
   return (
-    <main style={styles.page}>
-      <section style={styles.card}>
+    <main className="patient-intake" style={styles.page}>
+      <section className="patient-intake-card" style={styles.card}>
         <button style={styles.backButton} onClick={() => navigate('/welcome')} type="button">
           ← Back
         </button>
         <header style={styles.header}>
           <span style={styles.badge}>Guest Check-In</span>
-          <h1 style={styles.title}>Fast emergency intake</h1>
+          <h1 style={styles.title}>Let’s start your visit</h1>
           <p style={styles.subtitle}>
             Tell us what brings you in. Your information will be shared with the hospital care team.
           </p>
@@ -166,20 +169,20 @@ export function Login() {
           <label style={styles.fieldLabel}>
             Briefly explain the situation
             <textarea
-              style={styles.textArea}
+              style={{ ...styles.textArea, minHeight: '160px' }}
               value={details}
               onChange={(event) => setDetails(event.target.value)}
               placeholder="Share timing, triggers, what changed, or anything else staff should know."
             />
           </label>
 
-          <button style={styles.primaryButton} type="submit" disabled={submitting}>
-            {submitting ? 'Starting check-in…' : 'Next'}
+          <button style={styles.primaryButton} type="submit" disabled={submitting || chiefComplaintFilling || detailsFilling}>
+            {submitting ? 'Starting check-in…' : 'Continue to questions'}
           </button>
         </form>
 
         <footer style={styles.footer}>
-          <strong>What happens next:</strong> complete a short safety check, answer a few dynamic intake questions, then choose your hospital and notify the care team.
+          <strong>What happens next:</strong> answer a few questions, choose your hospital, and follow your visit in one place.
         </footer>
       </section>
     </main>

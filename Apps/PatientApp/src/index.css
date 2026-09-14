@@ -17,3 +17,48 @@ body {
     transform: rotate(360deg);
   }
 }
+
+*, *::before, *::after { box-sizing: border-box; }
+button, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+button { touch-action: manipulation; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible {
+  outline: 3px solid #82aaf0;
+  outline-offset: 3px;
+}
+button:disabled { opacity: .5; cursor: not-allowed; }
+.patient-intake input, .patient-intake textarea, .patient-intake select,
+.patient-encounter input, .patient-encounter textarea { font-size: 16px !important; min-width: 0; }
+.patient-intake button, .patient-encounter button { min-height: 44px; }
+.patient-intake-card { padding: clamp(1.15rem, 4vw, 2rem) !important; }
+.patient-intake label { min-width: 0; }
+.patient-intake { min-height: 100svh !important; }
+.question-card { animation: question-enter 260ms ease-out both; }
+.question-card h1:focus { outline: none; }
+.answer-indicator {
+  display: grid; place-items: center; flex-shrink: 0;
+  width: 22px; height: 22px; border: 1px solid #cbd5e1; border-radius: 50%; font-size: 14px;
+}
+[aria-pressed="true"] .answer-indicator { color: white; background: #1949b8; border-color: #1949b8; }
+.pain-scale { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .45rem; }
+.pain-scale button { justify-content: center !important; padding: .75rem 0 !important; }
+.pain-labels { display: flex; justify-content: space-between; margin-top: .75rem; color: #4a5a77; font-size: .8rem; }
+.visit-progress { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin: .5rem 0 0; padding: 0; list-style: none; }
+.visit-progress li { border-top: 3px solid #dbe3ef; padding-top: .7rem; color: #4a5a77; font-size: .85rem; }
+.visit-progress li[data-reached="true"] { border-color: #1949b8; color: #102b7a; }
+.visit-progress strong { display: block; margin-bottom: .2rem; }
+.visit-details summary { cursor: pointer; font-weight: 700; padding: .2rem 0; }
+.visit-details[open] summary { margin-bottom: .75rem; }
+.visit-details-content { display: grid; gap: .75rem; }
+@keyframes question-enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 600px) {
+  .patient-intake { padding: .85rem .75rem max(1.25rem, env(safe-area-inset-bottom)) !important; }
+  .question-page { align-items: start !important; padding-top: max(1.5rem, env(safe-area-inset-top)) !important; }
+  .patient-encounter { padding: 1rem .75rem !important; }
+  .visit-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .visit-progress { gap: .45rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+@media (max-width: 360px) { .pain-scale { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
