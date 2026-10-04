@@ -20,6 +20,8 @@ export const DASHBOARD_CARD_GRID_CLASS =
   'grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-5';
 
 export const DASHBOARD_STATUS_THEME: Record<EncounterStatus, DashboardStatusTheme> = {
+  INTAKE: { summary: 'border-blue-600 bg-blue-600 text-white', filterActive: 'border-blue-600 bg-blue-600 text-white', filterIdle: 'border-blue-200 bg-white text-blue-900', cardPill: 'bg-blue-100 text-blue-800' },
+  REQUESTED: { summary: 'border-amber-600 bg-amber-600 text-white', filterActive: 'border-amber-600 bg-amber-600 text-white', filterIdle: 'border-amber-200 bg-white text-amber-900', cardPill: 'bg-amber-100 text-amber-800' },
   EXPECTED: {
     summary: 'border-sky-600 bg-sky-600 text-white shadow-[0_20px_45px_-28px_rgba(2,132,199,0.92)]',
     filterActive: 'border-sky-600 bg-sky-600 text-white shadow-[0_16px_36px_-26px_rgba(2,132,199,0.92)]',
@@ -32,6 +34,7 @@ export const DASHBOARD_STATUS_THEME: Record<EncounterStatus, DashboardStatusThem
     filterIdle: 'border-teal-200 bg-white text-teal-900 hover:border-teal-300 hover:bg-teal-50',
     cardPill: 'border-transparent bg-emerald-100 text-emerald-800 shadow-none',
   },
+  CARE: { summary: 'border-violet-600 bg-violet-600 text-white', filterActive: 'border-violet-600 bg-violet-600 text-white', filterIdle: 'border-violet-200 bg-white text-violet-900', cardPill: 'bg-violet-100 text-violet-800' },
   TRIAGE: {
     summary: 'border-amber-600 bg-amber-600 text-white shadow-[0_20px_45px_-28px_rgba(217,119,6,0.95)]',
     filterActive: 'border-amber-600 bg-amber-600 text-white shadow-[0_16px_36px_-26px_rgba(217,119,6,0.95)]',

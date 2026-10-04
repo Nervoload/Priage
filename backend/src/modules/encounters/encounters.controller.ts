@@ -139,12 +139,13 @@ export class EncountersController {
     @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
     await this.clinicalAccess.assertClinicalEncounterAccess(user, id);
-    return this.encountersService.createWaiting(
+    const encounter = await this.encountersService.createWaiting(
       user.hospitalId,
       id,
       { actorUserId: user.userId },
       req.correlationId,
     );
+    return this.redactStaffWriteResponse(encounter, user, req.correlationId);
   }
 
   @Post(':id/start-exam')
@@ -155,12 +156,13 @@ export class EncountersController {
     @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
     await this.clinicalAccess.assertClinicalEncounterAccess(user, id);
-    return this.encountersService.startExam(
+    const encounter = await this.encountersService.startExam(
       user.hospitalId,
       id,
       { actorUserId: user.userId },
       req.correlationId,
     );
+    return this.redactStaffWriteResponse(encounter, user, req.correlationId);
   }
 
   @Post(':id/discharge')
@@ -171,12 +173,13 @@ export class EncountersController {
     @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
     await this.clinicalAccess.assertClinicalEncounterAccess(user, id);
-    return this.encountersService.discharge(
+    const encounter = await this.encountersService.discharge(
       user.hospitalId,
       id,
       { actorUserId: user.userId },
       req.correlationId,
     );
+    return this.redactStaffWriteResponse(encounter, user, req.correlationId);
   }
 
   @Post(':id/cancel')
@@ -187,12 +190,13 @@ export class EncountersController {
     @CurrentUser() user: { userId: number; hospitalId: number; role: Role },
   ) {
     await this.clinicalAccess.assertClinicalEncounterAccess(user, id);
-    return this.encountersService.cancel(
+    const encounter = await this.encountersService.cancel(
       user.hospitalId,
       id,
       { actorUserId: user.userId },
       req.correlationId,
     );
+    return this.redactStaffWriteResponse(encounter, user, req.correlationId);
   }
 
   private redactStaffWriteResponse<T extends { id: number }>(
@@ -200,10 +204,8 @@ export class EncountersController {
     user: { userId: number; hospitalId: number; role: Role },
     correlationId?: string,
   ) {
-    if (user.role !== Role.STAFF) {
-      return encounter;
-    }
-    return this.encountersService.getEncounter(user.hospitalId, encounter.id, correlationId, {
+    // Every staff write is read back like a GET: care-team check, field shaping and audit.
+    return this.encountersService.readBackStaffWrite(user.hospitalId, encounter, correlationId, {
       actorUserId: user.userId,
       role: user.role,
     });

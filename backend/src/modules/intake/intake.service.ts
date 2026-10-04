@@ -26,14 +26,10 @@ import { AdvanceInterviewDto } from './dto/interview.dto';
 import { TriageInterviewService } from './interview/triage-interview.service';
 import { LocationPingDto } from './dto/location-ping.dto';
 import { UpdateIntakeDetailsDto } from './dto/update-intake-details.dto';
+import { ClinicEntryService } from '../clinic/clinic-entry.service';
+import { isTerminalEncounterStatus } from '../../shared/types/encounter-status';
 
 const LOCATION_TTL_SECONDS = 600; // 10 minutes
-const TERMINAL_SESSION_ENCOUNTER_STATUSES = new Set<EncounterStatus>([
-  EncounterStatus.COMPLETE,
-  EncounterStatus.CANCELLED,
-  EncounterStatus.UNRESOLVED,
-]);
-
 export type LocationEntry = {
   latitude: number;
   longitude: number;
@@ -58,6 +54,7 @@ export class IntakeService {
     private readonly intakeSessions: IntakeSessionsService,
     private readonly loggingService: LoggingService,
     private readonly triageInterview: TriageInterviewService,
+    private readonly clinicEntry: ClinicEntryService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -83,6 +80,7 @@ export class IntakeService {
       data: {
         email: `${randomUUID()}@intake.local`,
         password: placeholderPasswordHash,
+        accountEnabled: false,
         firstName: dto.firstName,
         lastName: dto.lastName,
         phone: dto.phone,
@@ -104,6 +102,7 @@ export class IntakeService {
       {
         patientId: patient.id,
         authSessionId: authSession.id,
+        contactEmail: dto.contactEmail.trim().toLowerCase(),
       },
       correlationId,
     );
@@ -163,6 +162,16 @@ export class IntakeService {
   async confirmIntentBySession(sessionId: number, dto: ConfirmIntentDto, correlationId?: string) {
     const session = await this.getSessionById(sessionId, correlationId);
     return this.confirmWithSession(session, dto, correlationId);
+  }
+
+  async attachClinicBySession(sessionId: number, alias: string, correlationId?: string) {
+    const session = await this.getSessionById(sessionId, correlationId);
+    await this.triageInterview.ensureInterviewCompleteBySession(session.id, session.patientId, correlationId);
+    const entry = await this.clinicEntry.resolve(alias);
+    if (!entry.directoryListed || !entry.appointmentBookingAvailable) throw new NotFoundException('Clinic is not available for general intake');
+    return this.intakeSessions.confirmByAuthSession(session.id, session.patientId, {
+      hospitalId: entry.id, workflow: 'CLINIC_APPOINTMENT', sourceLabel: 'general_clinic_intake',
+    }, correlationId);
   }
 
   async startInterviewBySession(sessionId: number, patientId: number, correlationId?: string) {
@@ -228,6 +237,15 @@ export class IntakeService {
     dto: UpdateIntakeDetailsDto,
     correlationId?: string,
   ) {
+    if (dto.contactEmail) {
+      if (session.encounterId) {
+        await this.prisma.encounterContact.updateMany({ where: { encounterId: session.encounterId },
+          data: { email: dto.contactEmail.trim().toLowerCase(), verifiedAt: null } });
+      } else {
+        const draft = await this.intakeSessions.getOrCreateDraftForAuthSession(session.id, session.patientId, correlationId);
+        await this.prisma.intakeSession.update({ where: { id: draft.id }, data: { contactEmail: dto.contactEmail.trim().toLowerCase() } });
+      }
+    }
     this.loggingService.info('Updating patient intake details', {
       service: 'IntakeService',
       operation: 'updateDetails',
@@ -454,7 +472,7 @@ export class IntakeService {
     encounterId: number | null;
     encounter: { hospitalId: number; status: EncounterStatus } | null;
   }>(session: T): T {
-    if (!session.encounter || !TERMINAL_SESSION_ENCOUNTER_STATUSES.has(session.encounter.status)) {
+    if (!session.encounter || !isTerminalEncounterStatus(session.encounter.status)) {
       return session;
     }
 
@@ -480,20 +498,13 @@ export class IntakeService {
   }
 
   private async resolveHospitalId(dto: ConfirmIntentDto) {
-    if (dto.hospitalId) {
-      return dto.hospitalId;
-    }
-
-    if (dto.hospitalSlug) {
-      const hospital = await this.prisma.hospital.findUnique({
-        where: { slug: dto.hospitalSlug },
-        select: { id: true },
-      });
-      if (!hospital) throw new NotFoundException('Hospital not found');
-      return hospital.id;
-    }
-
-    throw new BadRequestException('hospitalId or hospitalSlug is required');
+    if (!dto.hospitalId && !dto.hospitalSlug) throw new BadRequestException('hospitalId or hospitalSlug is required');
+    const hospital = await this.prisma.hospital.findFirst({
+      where: dto.hospitalId ? { id: dto.hospitalId } : { slug: dto.hospitalSlug },
+      select: { id: true, config: { select: { config: true } } },
+    });
+    if (!hospital || normalizeHospitalConfig(hospital.config?.config).workflowProfile !== 'ED') throw new NotFoundException('Hospital not found');
+    return hospital.id;
   }
 
   private async buildOptionalHealthInfoUpdate(

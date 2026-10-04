@@ -6,6 +6,7 @@ export function resolveGuestPath(session: GuestIntakeSession | null): string {
   }
 
   if (session.hospitalSlug && session.encounterId) {
+    if (session.clinicAlias) return `/clinic/${session.clinicAlias}/visits/${session.encounterId}`;
     return `/guest/enroute/${session.encounterId}`;
   }
 

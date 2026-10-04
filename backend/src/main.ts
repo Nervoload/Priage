@@ -40,7 +40,9 @@ async function bootstrap(): Promise<void> {
   // Register process signal handlers so Nest runs lifecycle hooks for Prisma,
   // Redis, Socket.IO, and BullMQ during deploys and replica scale-in.
   app.enableShutdownHooks();
-  app.use(json({ limit: process.env.REQUEST_JSON_LIMIT || '1mb' }));
+  app.use(json({ limit: process.env.REQUEST_JSON_LIMIT || '1mb', verify: (req, _res, buffer) => {
+    if (req.url?.split('?')[0] === '/notifications/resend/webhook') (req as typeof req & { rawBody: Buffer }).rawBody = Buffer.from(buffer);
+  } }));
   app.use(urlencoded({ limit: process.env.REQUEST_FORM_LIMIT || '256kb', extended: true }));
 
   // Trust the first proxy (e.g. Railway, Render, or nginx) so Express

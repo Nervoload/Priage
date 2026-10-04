@@ -13,9 +13,12 @@ datasource db {
 
 
 enum EncounterStatus {
+  INTAKE // Clinic assessment underway; no appointment requested
+  REQUESTED // Clinic appointment requested; not yet confirmed
   // Patient-facing
   EXPECTED                 // Patient registered but not yet arrived
   ADMITTED                 // Patient has arrived and is admitted
+  CARE // Clinic physician is caring for the patient
   // In Hospital
   TRIAGE                   // Patient is in triage process  
   WAITING                  // Patient is waiting to be examined by medical staff
@@ -35,6 +38,26 @@ enum Role {
   DOCTOR
 }
 
+enum InterviewAnswerEntryMode {
+  PATIENT_SELF
+  WALKIN_SELF
+  STAFF_ASSISTED
+}
+
+enum LegalDocumentKind {
+  TERMS
+  PRIVACY
+}
+
+enum ClinicAppointmentStatus {
+  REQUESTED
+  CONFIRMED
+  DECLINED
+  CANCELLED
+  EXPIRED
+  NO_SHOW
+  COMPLETED
+}
 
 enum SenderType { # Needs more work...
   PATIENT
@@ -120,6 +143,7 @@ enum EventType {
   TRIAGE_NOTE_ADDED
   TRIAGE_NOTE_UPDATED
   TRIAGE_COMPLETED
+  CARE_UPDATED
 
   // Outbound patient events
   ALERT_CREATED
@@ -193,6 +217,8 @@ enum WebhookDeliveryStatus {
 model Encounter {
   id        Int      @id @default(autoincrement())
   publicId  String   @unique
+  clinicStartKey String? @unique
+  clinicStartFingerprint String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   status    EncounterStatus @default(EXPECTED)
@@ -236,6 +262,18 @@ model Encounter {
   staffAccess       StaffEncounterAccess[]
   breakGlassAccess  BreakGlassAccess[]
 
+  contact EncounterContact?
+  visitAcceptance VisitAcceptance?
+  clinicAssessmentGrants ClinicAssessmentGrant[]
+  clinicAssessmentSessions ClinicAssessmentSession[]
+  clinicAppointment ClinicAppointment?
+  careSnapshots CareAssessmentSnapshot[]
+  careNote CareNote?
+  careComments CareAssessmentComment[]
+  careOpenQuestions CareOpenQuestion[]
+  careHandoffOverride CareHandoffOverride?
+  careAiFeedback CareAiFeedback[]
+  notifications NotificationOutbox[]
 
   // Tenant-hardening: enables compound FKs from child tables
   @@unique([id, hospitalId])
@@ -245,7 +283,431 @@ model Encounter {
   @@index([hospitalId, updatedAt])
   @@index([hospitalId, currentPriorityScore, updatedAt])
   @@index([patientId, createdAt])
+}
 
+model EncounterContact {
+  id Int @id @default(autoincrement())
+  encounterId Int @unique
+  hospitalId Int
+  email String?
+  phone String?
+  source String
+  verifiedAt DateTime?
+  version Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  @@unique([encounterId, hospitalId])
+  @@index([hospitalId, createdAt])
+}
+
+model CareAssessmentSnapshot {
+  id Int @id @default(autoincrement())
+  encounterId Int
+  hospitalId Int
+  version Int
+  partial Boolean @default(false)
+  content Json
+  createdAt DateTime @default(now())
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  comments CareAssessmentComment[]
+  feedback CareAiFeedback[]
+
+  @@unique([encounterId, version])
+  @@unique([id, encounterId, hospitalId])
+  @@index([hospitalId, createdAt])
+}
+
+model CareNote {
+  id Int @id @default(autoincrement())
+  encounterId Int @unique
+  hospitalId Int
+  text String @default("") @db.Text
+  version Int @default(0)
+  updatedByUserId Int?
+  updatedAt DateTime @updatedAt
+  finalizedAt DateTime?
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  revisions CareNoteRevision[]
+
+  @@unique([encounterId, hospitalId])
+  @@index([hospitalId, updatedAt])
+}
+
+model CareNoteRevision {
+  id Int @id @default(autoincrement())
+  careNoteId Int
+  version Int
+  text String @db.Text
+  kind String
+  reason String? @db.Text
+  actorUserId Int
+  createdAt DateTime @default(now())
+  careNote CareNote @relation(fields: [careNoteId], references: [id], onDelete: Cascade)
+
+  @@unique([careNoteId, version])
+}
+
+model CareAssessmentComment {
+  id Int @id @default(autoincrement())
+  commandKey String? @unique
+  encounterId Int
+  hospitalId Int
+  snapshotId Int
+  segmentId String
+  startOffset Int
+  endOffset Int
+  quote String @db.Text
+  text String @db.Text
+  version Int @default(1)
+  resolvedAt DateTime?
+  actorUserId Int
+  updatedByUserId Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  snapshot CareAssessmentSnapshot @relation(fields: [snapshotId, encounterId, hospitalId], references: [id, encounterId, hospitalId], onDelete: Cascade)
+  revisions CareCommentRevision[]
+
+  @@index([encounterId, snapshotId, segmentId])
+}
+
+model CareCommentRevision {
+  id Int @id @default(autoincrement())
+  commentId Int
+  version Int
+  text String @db.Text
+  resolvedAt DateTime?
+  actorUserId Int
+  createdAt DateTime @default(now())
+  comment CareAssessmentComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, version])
+}
+
+model CareOpenQuestion {
+  id Int @id @default(autoincrement())
+  commandKey String? @unique
+  encounterId Int
+  hospitalId Int
+  text String @db.Text
+  addressedAt DateTime?
+  /// Set when the question came from the snapshot's "Ask in the room" list.
+  snapshotId Int?
+  sourceSegmentId String?
+  /// What the patient said when asked in the room, in the clinician's words.
+  answerText String? @db.Text
+  version Int @default(1)
+  actorUserId Int
+  updatedByUserId Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  @@unique([encounterId, snapshotId, sourceSegmentId])
+  @@index([encounterId, createdAt])
+}
+
+enum CareAiFeedbackKind {
+  USEFUL
+  NOT_RIGHT
+  MISSING
+}
+
+/// A clinician's verdict on one generated Care item, or a note that a section
+/// missed something. Used to evaluate the handoff rules and, later, the model.
+model CareAiFeedback {
+  id Int @id @default(autoincrement())
+  encounterId Int
+  hospitalId Int
+  snapshotId Int
+  /// The segment id, or "missing:<section>" for a Something missing note.
+  targetKey String
+  segmentId String?
+  sectionKey String
+  ruleId String?
+  generatorKind String
+  generatorVersion String?
+  kind CareAiFeedbackKind
+  note String? @db.Text
+  actorUserId Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  snapshot CareAssessmentSnapshot @relation(fields: [snapshotId, encounterId, hospitalId], references: [id, encounterId, hospitalId], onDelete: Cascade)
+
+  @@unique([snapshotId, actorUserId, targetKey])
+  @@index([hospitalId, createdAt])
+}
+
+model CareHandoffOverride {
+  id Int @id @default(autoincrement())
+  encounterId Int @unique
+  hospitalId Int
+  reason String @db.Text
+  actorUserId Int
+  createdAt DateTime @default(now())
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  @@unique([encounterId, hospitalId])
+  @@index([hospitalId, createdAt])
+}
+
+model ClinicAssessmentGrant {
+  id Int @id @default(autoincrement())
+  tokenHash String @unique
+  encounterId Int
+  hospitalId Int
+  issuedByUserId Int
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  usedAt DateTime?
+  revokedAt DateTime?
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  issuedByUser User @relation(fields: [issuedByUserId], references: [id], onDelete: Restrict)
+  session ClinicAssessmentSession?
+
+  @@index([encounterId, expiresAt])
+  @@index([hospitalId, createdAt])
+}
+
+model ClinicAssessmentSession {
+  id Int @id @default(autoincrement())
+  tokenHash String @unique
+  grantId Int @unique
+  encounterId Int
+  hospitalId Int
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  grant ClinicAssessmentGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+
+  @@index([encounterId, expiresAt])
+}
+
+model ClinicSchedule {
+  hospitalId Int @id
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  timezone String
+  slotMinutes Int
+  capacity Int
+  holdMinutes Int
+  weeklyWindows Json
+  updatedAt DateTime @updatedAt
+}
+
+model ClinicScheduleOverride {
+  id Int @id @default(autoincrement())
+  hospitalId Int
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  localDate String
+  windows Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([hospitalId, localDate])
+}
+
+model ClinicScheduleBlock {
+  id Int @id @default(autoincrement())
+  hospitalId Int
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  startAt DateTime
+  endAt DateTime
+  reason String
+  createdByUserId Int
+  createdByUser User @relation("ClinicScheduleBlockCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+
+  @@index([hospitalId, startAt, endAt])
+}
+
+model ClinicAppointment {
+  id Int @id @default(autoincrement())
+  publicId String @unique
+  hospitalId Int
+  encounterId Int @unique
+  encounter Encounter @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  status ClinicAppointmentStatus @default(REQUESTED)
+  requestedStartAt DateTime
+  confirmedStartAt DateTime?
+  endAt DateTime
+  timezone String
+  slotMinutes Int
+  expiresAt DateTime?
+  revision Int @default(1)
+  requestKey String @unique
+  requestedAt DateTime @default(now())
+  confirmedAt DateTime?
+  confirmedByUserId Int?
+  confirmedByUser User? @relation("ClinicAppointmentConfirmer", fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+  resolvedAt DateTime?
+  resolvedByUserId Int?
+  resolvedByUser User? @relation("ClinicAppointmentResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  actions ClinicAppointmentAction[]
+  notifications NotificationOutbox[]
+  recoveryChallenges AppointmentRecoveryChallenge[]
+  recoverySessions AppointmentRecoverySession[]
+
+  @@unique([encounterId, hospitalId])
+  @@unique([id, hospitalId])
+  @@index([hospitalId, status, requestedStartAt])
+  @@index([hospitalId, expiresAt])
+}
+
+enum NotificationStatus {
+  QUEUED
+  PROCESSING
+  ACCEPTED
+  DELIVERED
+  FAILED
+  CANCELLED
+  NEEDS_REVIEW
+}
+
+model ClinicNotificationSettings {
+  hospitalId Int @id
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  enabled Boolean @default(false)
+  replyTo String?
+  contactPhone String?
+  reminderMinutes Json @default("[1440,120]")
+  version Int @default(1)
+  updatedByUserId Int?
+  updatedAt DateTime @updatedAt
+}
+
+model NotificationOutbox {
+  id String @id @default(uuid())
+  hospitalId Int
+  encounterId Int?
+  encounter Encounter? @relation(fields: [encounterId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  appointmentId Int?
+  appointment ClinicAppointment? @relation(fields: [appointmentId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  challengeId String? @unique
+  challenge AppointmentRecoveryChallenge? @relation(fields: [challengeId], references: [id], onDelete: SetNull)
+  appointmentRevision Int?
+  contactVersion Int?
+  purpose String
+  dedupeKey String @unique
+  recipientEmail String
+  dueAt DateTime
+  expiresAt DateTime?
+  templateVersion String @default("clinic-email-v1")
+  status NotificationStatus @default(QUEUED)
+  payload Json?
+  secretEncrypted String?
+  payloadEncrypted String?
+  firstAttemptAt DateTime?
+  attemptCount Int @default(0)
+  claimToken String?
+  claimedAt DateTime?
+  provider String?
+  providerEmailId String? @unique
+  acceptedAt DateTime?
+  deliveredAt DateTime?
+  lastEventAt DateTime?
+  lastError String?
+  cancelledReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  attempts NotificationAttempt[]
+
+  @@unique([id, hospitalId])
+  @@index([status, dueAt])
+  @@index([hospitalId, appointmentId, createdAt])
+}
+
+model NotificationAttempt {
+  id Int @id @default(autoincrement())
+  notificationId String
+  hospitalId Int
+  notification NotificationOutbox @relation(fields: [notificationId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  outcome String
+  errorCode String?
+  createdAt DateTime @default(now())
+
+  @@index([notificationId, createdAt])
+}
+
+model NotificationWebhookReceipt {
+  id String @id
+  providerEmailId String
+  eventType String
+  eventAt DateTime
+  receivedAt DateTime @default(now())
+}
+
+model NotificationSuppression {
+  id Int @id @default(autoincrement())
+  hospitalId Int
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  email String
+  reason String
+  createdAt DateTime @default(now())
+
+  @@unique([hospitalId, email])
+}
+
+model AppointmentRecoveryChallenge {
+  id String @id @default(uuid())
+  hospitalId Int
+  appointmentId Int
+  appointment ClinicAppointment @relation(fields: [appointmentId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  contactVersion Int
+  codeHash String
+  attempts Int @default(0)
+  expiresAt DateTime
+  usedAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  notification NotificationOutbox?
+
+  @@index([hospitalId, appointmentId])
+  @@index([expiresAt])
+}
+
+model AppointmentRecoverySession {
+  id String @id @default(uuid())
+  tokenHash String @unique
+  hospitalId Int
+  appointmentId Int
+  appointment ClinicAppointment @relation(fields: [appointmentId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  contactVersion Int
+  verifiedAt DateTime
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([hospitalId, appointmentId])
+  @@index([expiresAt])
+}
+
+model RecoveryRateLimit {
+  key String @id
+  windowStartAt DateTime
+  count Int
+  lastRequestAt DateTime
+}
+
+model ClinicAppointmentAction {
+  id Int @id @default(autoincrement())
+  appointmentId Int
+  hospitalId Int
+  appointment ClinicAppointment @relation(fields: [appointmentId, hospitalId], references: [id, hospitalId], onDelete: Cascade)
+  commandKey String @unique
+  kind String
+  requestedStartAt DateTime?
+  actorPatientId Int?
+  actorUserId Int?
+  revision Int
+  createdAt DateTime @default(now())
+
+  @@index([hospitalId, appointmentId, createdAt])
 }
 
 model EncounterEvent {
@@ -307,6 +769,11 @@ model User {
   grantedEncounterAccess StaffEncounterAccess[] @relation("care_team_granted_by")
   breakGlassAccess   BreakGlassAccess[]
   alertEscalationExceptions AlertEscalationException[]
+  issuedClinicAssessmentGrants ClinicAssessmentGrant[]
+  assistedContextItems ContextItem[] @relation("AssistedContextItems")
+  clinicScheduleBlocks ClinicScheduleBlock[] @relation("ClinicScheduleBlockCreator")
+  confirmedClinicAppointments ClinicAppointment[] @relation("ClinicAppointmentConfirmer")
+  resolvedClinicAppointments ClinicAppointment[] @relation("ClinicAppointmentResolver")
 
   @@unique([ssoIssuer, ssoSubject])
   @@index([hospitalId, role])
@@ -412,8 +879,50 @@ model Hospital {
   webhookSubscriptions WebhookSubscription[]
   alertEscalationException AlertEscalationException?
   config     HospitalConfig?
+  clinicSchedule ClinicSchedule?
+  clinicScheduleOverrides ClinicScheduleOverride[]
+  clinicScheduleBlocks ClinicScheduleBlock[]
+  clinicEntrySettings ClinicEntrySettings?
+  clinicEntryAliases ClinicEntryAlias[]
+  notificationSettings ClinicNotificationSettings?
+  clinicQuestionnaireVersions ClinicQuestionnaireVersion[]
+  notificationSuppressions NotificationSuppression[]
 
   @@index([slug])
+}
+
+model ClinicEntrySettings {
+  hospitalId Int @id
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  canonicalAlias String @unique
+  directoryListed Boolean @default(false)
+  acceptsWalkIns Boolean @default(false)
+  updatedAt DateTime @updatedAt
+}
+
+/// A published version of a clinic's own questions, asked right after the
+/// safety question in every assessment. Versions are never edited: publishing
+/// adds the next one, and an assessment keeps the version it started with.
+model ClinicQuestionnaireVersion {
+  id Int @id @default(autoincrement())
+  hospitalId Int
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  version Int
+  /// ClinicQuestion[] (see clinic-questionnaire.ts). An empty list turns the questions off.
+  questions Json
+  publishedByUserId Int
+  createdAt DateTime @default(now())
+
+  @@unique([hospitalId, version])
+}
+
+model ClinicEntryAlias {
+  alias String @id
+  hospitalId Int
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([hospitalId])
 }
 
 model AlertEscalationException {
@@ -512,6 +1021,7 @@ model PatientProfile {
   id        Int      @id @default(autoincrement())
   email     String   @unique
   password  String
+  accountEnabled Boolean @default(true)
   createdAt DateTime @default(now())
 
   // Profile details
@@ -538,6 +1048,7 @@ model PatientProfile {
   assets      Asset[]
   idempotencyRecords PatientIdempotencyRecord[]
 
+  visitAcceptances VisitAcceptance[]
 }
 
 model PatientSession {
@@ -614,6 +1125,7 @@ model IntakeSession {
   expiresAt DateTime?
   confirmedAt DateTime?
   cancelledAt DateTime?
+  contactEmail String?
 
   patientId Int?
   patient   PatientProfile? @relation(fields: [patientId], references: [id], onDelete: SetNull)
@@ -632,12 +1144,44 @@ model IntakeSession {
   summaries    SummaryProjection[]
   partnerReferences PartnerReference[]
   commandResults CommandResult[]
+  visitAcceptance VisitAcceptance?
 
   @@index([patientId, createdAt])
   @@index([hospitalId, createdAt])
   @@index([encounterId, createdAt])
   @@index([status, createdAt])
   @@index([authSessionId, status, createdAt])
+}
+
+model LegalDocumentVersion {
+  id Int @id @default(autoincrement())
+  kind LegalDocumentKind
+  version String
+  bodyMarkdown String @db.Text
+  createdAt DateTime @default(now())
+  publishedAt DateTime?
+  termsAcceptances VisitAcceptance[] @relation("AcceptedTerms")
+  privacyAcceptances VisitAcceptance[] @relation("AcceptedPrivacy")
+
+  @@unique([kind, version])
+  @@index([kind, publishedAt])
+}
+
+model VisitAcceptance {
+  id Int @id @default(autoincrement())
+  intakeSessionId Int @unique
+  intakeSession IntakeSession @relation(fields: [intakeSessionId], references: [id], onDelete: Restrict)
+  patientId Int
+  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  encounterId Int? @unique
+  encounter Encounter? @relation(fields: [encounterId], references: [id], onDelete: Restrict)
+  termsDocumentId Int
+  termsDocument LegalDocumentVersion @relation("AcceptedTerms", fields: [termsDocumentId], references: [id], onDelete: Restrict)
+  privacyDocumentId Int
+  privacyDocument LegalDocumentVersion @relation("AcceptedPrivacy", fields: [privacyDocumentId], references: [id], onDelete: Restrict)
+  acceptedAt DateTime @default(now())
+
+  @@index([patientId, acceptedAt])
 }
 
 model EncounterReadCursor {
@@ -755,6 +1299,9 @@ model ContextItem {
   itemType  String
   schemaVersion String       @default("v1")
   payload   Json
+  answerEntryMode InterviewAnswerEntryMode?
+  enteredByUserId Int?
+  enteredByUser User? @relation("AssistedContextItems", fields: [enteredByUserId], references: [id], onDelete: SetNull)
 
   sourceType      ContextSourceType
   trustTier       TrustTier
@@ -785,6 +1332,7 @@ model ContextItem {
   @@index([hospitalId, createdAt])
   @@index([patientId, createdAt])
   @@index([partnerId, createdAt])
+  @@index([enteredByUserId, createdAt])
 }
 
 model SummaryProjection {

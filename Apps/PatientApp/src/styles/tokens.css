@@ -1,0 +1,75 @@
+/* Priage design tokens — v2 "Quiet precision", refined.
+   A white ground with a faint cast of the brand blue, one brand blue (the logo's #2986FF), and colour reserved for meaning.
+   Two families only: a serif for the question being asked, a sans for everything else. */
+
+:root {
+  /* Type */
+  --font-sans: 'Instrument Sans Variable', 'Instrument Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+
+  /* Ground and ink */
+  --paper: #F5F9FF;
+  --surface: #FFFFFF;
+  --surface-muted: #F9FBFF;
+  --sunken: #EDF2FA;
+  --line: rgba(14, 22, 48, 0.09);
+  --line-strong: rgba(14, 22, 48, 0.15);
+  --ink: #0E1630;
+  --ink-2: #4A5167;
+  --ink-3: #6B7183;
+  --ink-4: #A3A8B6;
+  --navy: #0B1430;
+  --on-navy: #F4F3EF;
+  --on-navy-2: #B4BDD8;
+  --on-navy-3: #95A1C4;
+
+  /* Brand */
+  --blue: #2986FF;
+  --blue-hover: #1F7EF6;
+  --blue-700: #0067DE;
+  --blue-tint: #E7EFFB;
+  --blue-select: #F1F6FD;
+  --blue-ring: rgba(41, 134, 255, 0.15);
+  --periwinkle: #85B7FE;
+  --disabled: #C9CEDB;
+
+  /* Meaning */
+  --green: #146C43;
+  --green-bg: #E5F4EA;
+  --green-dot: #1F9D5C;
+  --amber: #8A5300;
+  --amber-bg: #FDF1D8;
+  --amber-dot: #D98A00;
+  --red: #B42318;
+  --red-bg: #FCE9E7;
+  --red-ink: #7A1A12;
+  --teal: #0B6B72;
+  --teal-bg: #E0F3F3;
+
+  /* Shape */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-input: 16px;
+  --r-lg: 20px;
+  --r-xl: 24px;
+  --r-2xl: 28px;
+  --r-pill: 999px;
+
+  /* Depth */
+  --shadow-hairline: 0 1px 2px rgba(14, 22, 48, 0.04);
+  --shadow-lift: 0 1px 2px rgba(14, 22, 48, 0.04), 0 14px 30px -22px rgba(14, 22, 48, 0.22);
+  --shadow-float: 0 1px 0 rgba(14, 22, 48, 0.03), 0 24px 44px -18px rgba(14, 22, 48, 0.32);
+  --shadow-cta: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 12px 24px -12px rgba(41, 134, 255, 0.6);
+
+  /* Motion: arrive, settle, get out of the way. */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 160ms;
+  --t-base: 240ms;
+  --t-reveal: 520ms;
+  --t-progress: 800ms;
+
+  /* Layout */
+  --sidebar-w: 248px;
+  --flow-w: 560px;
+  --page-w: 780px;
+}

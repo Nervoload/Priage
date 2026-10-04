@@ -1,34 +1,41 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { listMyEncounters, listMyMessages } from '../shared/api/encounters';
-import { ENCOUNTER_STATUS_META, isActiveEncounter } from '../shared/encounters';
-import { appendUniqueMessages, getLastMessageId } from '../shared/messages';
+import { encounterStatusMeta, isActiveEncounter } from '../shared/encounters';
+import { useAuth } from '../shared/hooks/useAuth';
+import { useGuestSession } from '../shared/hooks/useGuestSession';
+import { appendUniqueMessages, chooseMessageEncounter, getLastMessageId } from '../shared/messages';
 import {
   flushPatientMessageOutbox,
   isOutboxQueuedError,
   sendPatientMessageReliable,
 } from '../shared/patientOutbox';
 import type { EncounterSummary, Message } from '../shared/types/domain';
-import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
+import { CtaLink, LoadingScreen, Spinner, StatusPill } from '../shared/ui/Controls';
+import { cx } from '../shared/ui/cx';
+import { Icon } from '../shared/ui/Icon';
 import { useToast } from '../shared/ui/ToastContext';
 
 const ACTIVE_THREAD_POLL_MS = 30_000;
 
 export function MessagesPage() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { session: authSession } = useAuth();
+  const { session: guestSession } = useGuestSession();
   const { showToast } = useToast();
   const [encounters, setEncounters] = useState<EncounterSummary[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingEncounters, setLoadingEncounters] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [selectedEncounterId, setSelectedEncounterId] = useState<number | null>(null);
   const [draftMessage, setDraftMessage] = useState('');
   const [markWorsening, setMarkWorsening] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const messageCursorRef = useRef<number | null>(null);
+  const currentThreadIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,11 +44,11 @@ export function MessagesPage() {
       try {
         const data = await listMyEncounters();
         if (!cancelled) {
-          setEncounters(data);
+          setEncounters(authSession ? data : data.filter((encounter) => encounter.id === guestSession?.encounterId));
         }
       } catch {
         if (!cancelled) {
-          showToast('Failed to load conversations.');
+          showToast('We couldn’t load your conversations. Please try again shortly.');
         }
       } finally {
         if (!cancelled) {
@@ -54,47 +61,22 @@ export function MessagesPage() {
     return () => {
       cancelled = true;
     };
-  }, [showToast]);
+  }, [authSession, guestSession?.encounterId, showToast]);
 
-  const activeEncounter = useMemo(
-    () => encounters.find((encounter) => isActiveEncounter(encounter.status)) ?? null,
-    [encounters],
+  const requestedId = Number(searchParams.get('encounter'));
+  const threadEncounter = useMemo(
+    () => chooseMessageEncounter(encounters, Number.isInteger(requestedId) && requestedId > 0 ? requestedId : null),
+    [encounters, requestedId],
   );
-
-  const pastEncounters = useMemo(
-    () => encounters.filter((encounter) => !isActiveEncounter(encounter.status)),
-    [encounters],
-  );
-
-  useEffect(() => {
-    if (activeEncounter) {
-      setSelectedEncounterId(activeEncounter.id);
-      if (searchParams.get('encounter')) {
-        setSearchParams({}, { replace: true });
-      }
-      return;
-    }
-
-    const requestedId = Number(searchParams.get('encounter'));
-    const requestedEncounter = pastEncounters.find((encounter) => encounter.id === requestedId);
-
-    setSelectedEncounterId((current) => {
-      if (current && pastEncounters.some((encounter) => encounter.id === current)) {
-        return current;
-      }
-      return requestedEncounter?.id ?? pastEncounters[0]?.id ?? null;
-    });
-  }, [activeEncounter, pastEncounters, searchParams, setSearchParams]);
-
-  const threadEncounter = activeEncounter
-    ?? pastEncounters.find((encounter) => encounter.id === selectedEncounterId)
-    ?? null;
   const threadEncounterId = threadEncounter?.id ?? null;
+  const canReply = !!threadEncounter && isActiveEncounter(threadEncounter.status);
+  currentThreadIdRef.current = threadEncounterId;
 
   useEffect(() => {
     messageCursorRef.current = null;
     setMessages([]);
     setLoadingMessages(false);
+    setSendError(null);
   }, [threadEncounterId]);
 
   const loadThreadMessages = useCallback(async (
@@ -111,9 +93,14 @@ export function MessagesPage() {
         mode === 'append' ? { afterMessageId: messageCursorRef.current ?? 0 } : {},
       );
 
+      if (currentThreadIdRef.current !== encounterId) return;
+
       if (mode === 'replace') {
-        setMessages(next);
-        messageCursorRef.current = getLastMessageId(next);
+        setMessages((prev) => {
+          const merged = appendUniqueMessages(next, prev);
+          messageCursorRef.current = getLastMessageId(merged);
+          return merged;
+        });
         return;
       }
 
@@ -128,10 +115,10 @@ export function MessagesPage() {
       });
     } catch {
       if (mode === 'replace') {
-        showToast('Failed to load this message history.');
+        showToast('We couldn’t load these messages. Please try again shortly.');
       }
     } finally {
-      if (mode === 'replace') {
+      if (mode === 'replace' && currentThreadIdRef.current === encounterId) {
         setLoadingMessages(false);
       }
     }
@@ -145,7 +132,7 @@ export function MessagesPage() {
     const encounterId = threadEncounterId;
 
     void loadThreadMessages(encounterId, 'replace');
-    const interval = activeEncounter?.id === encounterId
+    const interval = canReply
       ? window.setInterval(() => void loadThreadMessages(encounterId, 'append'), ACTIVE_THREAD_POLL_MS)
       : null;
 
@@ -154,14 +141,14 @@ export function MessagesPage() {
         window.clearInterval(interval);
       }
     };
-  }, [activeEncounter?.id, loadThreadMessages, threadEncounterId]);
+  }, [canReply, loadThreadMessages, threadEncounterId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   async function handleSendMessage() {
-    if (!activeEncounter) {
+    if (!threadEncounter || !canReply) {
       return;
     }
 
@@ -171,27 +158,51 @@ export function MessagesPage() {
     }
 
     setSending(true);
+    setSendError(null);
     try {
-      const sentMessage = await sendPatientMessageReliable(activeEncounter.id, trimmed, markWorsening);
-      setDraftMessage('');
-      setMarkWorsening(false);
-      setMessages((prev) => {
-        const merged = appendUniqueMessages(prev, [sentMessage]);
-        messageCursorRef.current = getLastMessageId(merged);
-        return merged;
-      });
-      showToast(markWorsening ? 'Worsening update sent to your care team.' : 'Message sent.', 'success');
-    } catch (error) {
-      if (isOutboxQueuedError(error)) {
+      const sentMessage = await sendPatientMessageReliable(threadEncounter.id, trimmed, markWorsening);
+      if (currentThreadIdRef.current === threadEncounter.id) {
         setDraftMessage('');
         setMarkWorsening(false);
-        showToast('Message saved. We will retry when the connection recovers.', 'info');
+        resetComposerHeight();
+        setMessages((prev) => {
+          const merged = appendUniqueMessages(prev, [sentMessage]);
+          messageCursorRef.current = getLastMessageId(merged);
+          return merged;
+        });
+      }
+      if (markWorsening) {
+        showToast('We’ve flagged this update for your care team.', 'success');
+      }
+    } catch (error) {
+      if (isOutboxQueuedError(error)) {
+        if (currentThreadIdRef.current === threadEncounter.id) {
+          setDraftMessage('');
+          setMarkWorsening(false);
+        }
+        showToast('You’re offline. We’ll send your message when you reconnect.', 'info');
       } else {
-        showToast('Could not send your message.');
+        if (currentThreadIdRef.current === threadEncounter.id) {
+          setSendError('Your message didn’t send. Your draft is still here — please try again.');
+        }
       }
     } finally {
       setSending(false);
     }
+  }
+
+  function resetComposerHeight() {
+    if (composerRef.current) {
+      composerRef.current.style.height = '';
+    }
+  }
+
+  function handleDraftChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
+    setDraftMessage(event.target.value);
+    setSendError(null);
+    const element = event.target;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -202,7 +213,6 @@ export function MessagesPage() {
   }
 
   function handleSelectHistory(encounterId: number) {
-    setSelectedEncounterId(encounterId);
     setSearchParams({ encounter: String(encounterId) }, { replace: true });
   }
 
@@ -225,158 +235,134 @@ export function MessagesPage() {
   }, [threadEncounterId]);
 
   if (loadingEncounters) {
-    return (
-      <div style={styles.center}>
-        <div style={styles.spinner} />
-        <p style={styles.loadingText}>Loading conversations…</p>
-      </div>
-    );
+    return <LoadingScreen label="Loading conversations…" />;
   }
 
+  const hasMany = encounters.length > 1;
+
   return (
-    <main style={styles.page}>
-      <section style={styles.hero}>
-        <span style={styles.badge}>Messages</span>
-        <h1 style={styles.title}>Care-team conversations</h1>
-        <p style={styles.subtitle}>
-          {activeEncounter
-            ? 'Your active encounter message thread stays live here, with updates from staff and a direct reply box.'
-            : 'When there is no active encounter, you can review the message history from previous visits.'}
+    <main id="main" className="page" style={{ maxWidth: hasMany ? 1040 : undefined }}>
+      <header className="page__header">
+        <h1 className="display">Messages</h1>
+        <p className="lede">
+          {canReply ? 'Talk with your care team about this visit. They reply during their working hours.' : 'Your conversations with care teams.'}
         </p>
-      </section>
+      </header>
 
       {encounters.length === 0 ? (
-        <section style={styles.emptyCard}>
-          <h2 style={styles.emptyTitle}>No conversations yet</h2>
-          <p style={styles.emptyBody}>
-            Start a visit when you need care, and your messages with the clinic team will appear here.
-          </p>
-          <button style={styles.primaryButton} onClick={() => navigate('/priage')}>
-            Start New Visit
-          </button>
+        <section className="card empty">
+          <span className="tile__icon"><Icon name="message" /></span>
+          <div className="stack stack--xs">
+            <h2 className="title">No conversations yet</h2>
+            <p className="body">When you start a visit, you can message the care team here.</p>
+          </div>
+          {authSession && <div style={{ width: '100%', maxWidth: 360 }}><CtaLink to="/priage">Start a visit</CtaLink></div>}
         </section>
-      ) : activeEncounter ? (
-        <>
-          <ThreadHeaderCard encounter={activeEncounter} onOpenVisit={() => navigate(`/encounters/${activeEncounter.id}/current`)} />
-          <section style={styles.threadCard}>
-            <div style={styles.threadMetaBar}>
-              <div>
-                <p style={styles.threadLabel}>Active Encounter</p>
-                <h2 style={styles.threadTitle}>{activeEncounter.chiefComplaint || 'Visit in progress'}</h2>
-              </div>
-              <span style={{ ...styles.statusPill, color: ENCOUNTER_STATUS_META[activeEncounter.status].color, background: ENCOUNTER_STATUS_META[activeEncounter.status].bg, borderColor: ENCOUNTER_STATUS_META[activeEncounter.status].border }}>
-                {ENCOUNTER_STATUS_META[activeEncounter.status].shortLabel}
+      ) : threadEncounter ? (
+        <div className={cx(hasMany && 'split')}>
+          {hasMany && <ConversationList encounters={encounters} selectedId={threadEncounter.id} onSelect={handleSelectHistory} />}
+
+          <section className="card thread-card" aria-label="Conversation">
+            <div className="card__head">
+              <span className="row__main">
+                <span className="heading">{threadEncounter.chiefComplaint || 'Your visit'}</span>
+                <span className="small">Started {formatEncounterDate(threadEncounter.createdAt)}</span>
               </span>
+              <Link to={`/encounters/${threadEncounter.id}/current`} className="text-btn" style={{ minHeight: 0 }}>View visit</Link>
             </div>
 
-            <MessageList messages={messages} loading={loadingMessages} bottomRef={bottomRef} emptyLabel="No messages yet. Send a note to your care team below." />
+            <MessageList
+              messages={messages}
+              loading={loadingMessages}
+              bottomRef={bottomRef}
+              emptyLabel={canReply ? 'No messages yet. Write to your care team below.' : 'No messages were sent during this visit.'}
+            />
 
-            <div style={styles.composer}>
-              <textarea
-                value={draftMessage}
-                onChange={(event) => setDraftMessage(event.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Write a message to your care team..."
-                style={styles.textarea}
-                rows={4}
-                disabled={sending}
-              />
-              <label style={styles.checkboxRow}>
-                <input
-                  type="checkbox"
-                  checked={markWorsening}
-                  onChange={(event) => setMarkWorsening(event.target.checked)}
-                />
-                Flag this message as a worsening symptom update
-              </label>
-              <div style={styles.composerActions}>
-                <button style={styles.secondaryButton} onClick={() => navigate(`/encounters/${activeEncounter.id}/current`)}>
-                  Open Visit Details
-                </button>
-                <button style={styles.primaryButton} onClick={() => void handleSendMessage()} disabled={sending || !draftMessage.trim()}>
-                  {sending ? 'Sending…' : 'Send Message'}
-                </button>
-              </div>
-            </div>
-          </section>
-        </>
-      ) : pastEncounters.length > 0 ? (
-        <>
-          <section style={styles.section}>
-            <h2 style={styles.sectionTitle}>Previous Encounter Histories</h2>
-            <div style={styles.selectorStack}>
-              {pastEncounters.map((encounter) => {
-                const selected = encounter.id === threadEncounter?.id;
-                return (
-                  <button
-                    key={encounter.id}
-                    type="button"
-                    onClick={() => handleSelectHistory(encounter.id)}
-                    style={{
-                      ...styles.selectorCard,
-                      ...(selected ? styles.selectorCardActive : null),
-                    }}
-                  >
-                    <div style={styles.selectorTop}>
-                      <strong style={styles.selectorTitle}>{encounter.chiefComplaint || 'Visit record'}</strong>
-                      <span style={{ ...styles.statusPill, color: ENCOUNTER_STATUS_META[encounter.status].color, background: ENCOUNTER_STATUS_META[encounter.status].bg, borderColor: ENCOUNTER_STATUS_META[encounter.status].border }}>
-                        {ENCOUNTER_STATUS_META[encounter.status].shortLabel}
-                      </span>
-                    </div>
-                    <p style={styles.selectorMeta}>
-                      {formatEncounterDate(encounter.createdAt)}
-                    </p>
+            {canReply ? (
+              <div className="composer">
+                {sendError && (
+                  <p className="field__error" role="alert">
+                    <Icon name="alertCircle" size={16} />
+                    {sendError}
+                  </p>
+                )}
+                <div className="composer__row">
+                  <label htmlFor="message-composer" className="sr-only">Message your care team</label>
+                  <textarea
+                    id="message-composer"
+                    ref={composerRef}
+                    className="composer__input"
+                    value={draftMessage}
+                    onChange={handleDraftChange}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Write a message"
+                    rows={1}
+                    disabled={sending}
+                  />
+                  <button type="button" className="send-btn" aria-label="Send message" onClick={() => void handleSendMessage()} disabled={sending || !draftMessage.trim()}>
+                    {sending ? <Spinner small /> : <Icon name="arrowUp" />}
                   </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <section style={styles.threadCard}>
-            <div style={styles.threadMetaBar}>
-              <div>
-                <p style={styles.threadLabel}>Message History</p>
-                <h2 style={styles.threadTitle}>{threadEncounter?.chiefComplaint || 'Past encounter'}</h2>
+                </div>
+                <div className="cluster" style={{ justifyContent: 'space-between' }}>
+                  <label className="toggle-chip">
+                    <input type="checkbox" checked={markWorsening} onChange={(event) => setMarkWorsening(event.target.checked)} />
+                    <Icon name="flag" size={15} />
+                    My symptoms are getting worse
+                  </label>
+                  <span className="small">Not for emergencies — call 911.</span>
+                </div>
               </div>
-            </div>
-
-            <MessageList messages={messages} loading={loadingMessages} bottomRef={bottomRef} emptyLabel="No staff or patient messages were recorded for this encounter." />
+            ) : (
+              <p className="composer small" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Icon name="lock" size={16} />
+                This visit has ended, so replies are closed.
+              </p>
+            )}
           </section>
-        </>
+        </div>
       ) : (
-        <section style={styles.emptyCard}>
-          <h2 style={styles.emptyTitle}>No previous message history</h2>
-          <p style={styles.emptyBody}>
-            This account does not have any encounter message threads yet.
-          </p>
+        <section className="card empty">
+          <h2 className="title">No message history</h2>
+          <p className="body">Your account doesn’t have any conversations yet.</p>
         </section>
       )}
     </main>
   );
 }
 
-function ThreadHeaderCard({
-  encounter,
-  onOpenVisit,
+function ConversationList({
+  encounters,
+  selectedId,
+  onSelect,
 }: {
-  encounter: EncounterSummary;
-  onOpenVisit: () => void;
+  encounters: EncounterSummary[];
+  selectedId: number;
+  onSelect: (encounterId: number) => void;
 }) {
   return (
-    <section style={styles.section}>
-      <article style={styles.summaryCard}>
-        <div style={styles.summaryContent}>
-          <p style={styles.summaryEyebrow}>Current encounter</p>
-          <h2 style={styles.summaryTitle}>{encounter.chiefComplaint || 'Visit in progress'}</h2>
-          <p style={styles.summaryText}>
-            Opened {formatEncounterDate(encounter.createdAt)}. Messages and visit updates stay connected to this encounter while it is active.
-          </p>
-        </div>
-        <button type="button" style={styles.secondaryButton} onClick={onOpenVisit}>
-          View Visit
-        </button>
-      </article>
-    </section>
+    <nav className="card conversation-list" aria-label="Conversations">
+      <div className="rows">
+        {encounters.map((encounter) => {
+          const meta = encounterStatusMeta(encounter.status);
+          const active = isActiveEncounter(encounter.status);
+          return (
+            <button
+              key={encounter.id}
+              type="button"
+              className="row row--link"
+              aria-current={encounter.id === selectedId ? 'true' : undefined}
+              onClick={() => onSelect(encounter.id)}
+            >
+              <span className="row__main">
+                <span className="row__value" style={{ fontWeight: encounter.id === selectedId ? 600 : 400 }}>{encounter.chiefComplaint || 'Visit'}</span>
+                <span className="small">{formatEncounterDate(encounter.createdAt)}</span>
+              </span>
+              {active && <StatusPill tone={meta.tone} dot={meta.dot}>Active</StatusPill>}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 
@@ -393,37 +379,35 @@ function MessageList({
 }) {
   if (loading) {
     return (
-      <div style={styles.threadLoading}>
-        <div style={styles.spinner} />
-        <p style={styles.loadingText}>Loading messages…</p>
+      <div className="thread" style={{ alignItems: 'center', justifyContent: 'center' }} role="status">
+        <Spinner />
+        <span className="small">Loading messages…</span>
       </div>
     );
   }
 
   return (
-    <div style={styles.messageList}>
+    <div className="thread" aria-live="polite">
       {messages.length === 0 ? (
-        <div style={styles.threadEmpty}>{emptyLabel}</div>
+        <p className="event-chip">{emptyLabel}</p>
       ) : (
-        messages.map((message) => {
-          const sender = resolveSenderLabel(message.senderType);
-          const isPatient = message.senderType === 'PATIENT';
-          const isSystem = message.senderType === 'SYSTEM';
-
+        messages.map((message, index) => {
+          const previous = messages[index - 1];
+          const showDay = !previous || dayKey(previous.createdAt) !== dayKey(message.createdAt);
           return (
-            <article
-              key={message.id}
-              style={{
-                ...styles.messageBubble,
-                ...(isPatient ? styles.messageBubblePatient : isSystem ? styles.messageBubbleSystem : styles.messageBubbleStaff),
-              }}
-            >
-              <div style={styles.messageMeta}>
-                <span style={styles.messageSender}>{sender}</span>
-                <span style={styles.messageTimestamp}>{formatMessageTime(message.createdAt)}</span>
-              </div>
-              <p style={styles.messageBody}>{message.content}</p>
-            </article>
+            <Fragment key={message.id}>
+              {showDay && <span className="day-label">{formatDayLabel(message.createdAt)}</span>}
+              {message.senderType === 'SYSTEM' ? (
+                <p className="event-chip">{message.content}</p>
+              ) : (
+                <div className={cx('bubble-group', message.senderType === 'PATIENT' && 'bubble-group--me')}>
+                  <div className="bubble">{message.content}</div>
+                  <span className="bubble__meta">
+                    {message.senderType === 'PATIENT' ? formatMessageTime(message.createdAt) : `Care team, ${formatMessageTime(message.createdAt)}`}
+                  </span>
+                </div>
+              )}
+            </Fragment>
           );
         })
       )}
@@ -432,14 +416,18 @@ function MessageList({
   );
 }
 
-function resolveSenderLabel(senderType: Message['senderType']): string {
-  if (senderType === 'PATIENT') {
-    return 'You';
-  }
-  if (senderType === 'SYSTEM') {
-    return 'System';
-  }
-  return 'Care team';
+function dayKey(value: string): string {
+  return new Date(value).toDateString();
+}
+
+function formatDayLabel(value: string): string {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return 'Today';
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
 function formatEncounterDate(value: string): string {
@@ -447,331 +435,12 @@ function formatEncounterDate(value: string): string {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
   });
 }
 
 function formatMessageTime(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
+  return new Date(value).toLocaleTimeString(undefined, {
     hour: 'numeric',
     minute: '2-digit',
   });
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: 'calc(100vh - 64px)',
-    padding: '1rem 1rem 2rem',
-    background: heroBackdrop,
-    fontFamily: patientTheme.fonts.body,
-    color: patientTheme.colors.ink,
-  },
-  center: {
-    minHeight: 'calc(100vh - 64px)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.8rem',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: heroBackdrop,
-    fontFamily: patientTheme.fonts.body,
-  },
-  spinner: {
-    width: '36px',
-    height: '36px',
-    borderRadius: '50%',
-    border: '4px solid #dbe3f3',
-    borderTopColor: patientTheme.colors.accent,
-    animation: 'spin 0.9s linear infinite',
-  },
-  loadingText: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-  },
-  hero: {
-    maxWidth: '760px',
-    margin: '0 auto 0.95rem',
-  },
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '0.28rem 0.72rem',
-    borderRadius: '999px',
-    border: panelBorder,
-    background: '#e9f1ff',
-    color: patientTheme.colors.accentStrong,
-    fontSize: '0.75rem',
-    fontWeight: 700,
-  },
-  title: {
-    margin: '0.7rem 0 0',
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.45rem',
-  },
-  subtitle: {
-    margin: '0.3rem 0 0',
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.45,
-    fontSize: '0.93rem',
-  },
-  section: {
-    maxWidth: '760px',
-    margin: '0 auto 1rem',
-  },
-  sectionTitle: {
-    margin: '0 0 0.5rem',
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '0.96rem',
-    letterSpacing: '0.02em',
-    color: patientTheme.colors.inkMuted,
-    textTransform: 'uppercase',
-  },
-  summaryCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.lg,
-    background: '#fffdf8',
-    boxShadow: patientTheme.shadows.panel,
-    padding: '1rem',
-    display: 'grid',
-    gap: '0.8rem',
-  },
-  summaryContent: {
-    display: 'grid',
-    gap: '0.3rem',
-  },
-  summaryEyebrow: {
-    margin: 0,
-    fontSize: '0.76rem',
-    fontWeight: 700,
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
-    color: patientTheme.colors.accentStrong,
-  },
-  summaryTitle: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.08rem',
-  },
-  summaryText: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-  },
-  threadCard: {
-    maxWidth: '760px',
-    margin: '0 auto',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.lg,
-    background: '#fffdf8',
-    boxShadow: patientTheme.shadows.panel,
-    overflow: 'hidden',
-  },
-  threadMetaBar: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: '0.75rem',
-    padding: '1rem 1rem 0.8rem',
-    borderBottom: panelBorder,
-  },
-  threadLabel: {
-    margin: 0,
-    fontSize: '0.78rem',
-    fontWeight: 700,
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
-    color: patientTheme.colors.inkMuted,
-  },
-  threadTitle: {
-    margin: '0.25rem 0 0',
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.08rem',
-  },
-  statusPill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    border: '1px solid',
-    borderRadius: '999px',
-    padding: '0.22rem 0.58rem',
-    fontSize: '0.7rem',
-    fontWeight: 700,
-    whiteSpace: 'nowrap',
-  },
-  messageList: {
-    minHeight: '280px',
-    maxHeight: '56vh',
-    overflowY: 'auto',
-    display: 'grid',
-    gap: '0.75rem',
-    padding: '1rem',
-    background: 'linear-gradient(180deg, rgba(250, 251, 255, 0.92) 0%, rgba(255, 253, 248, 1) 100%)',
-  },
-  threadLoading: {
-    minHeight: '280px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '0.8rem',
-  },
-  threadEmpty: {
-    margin: 'auto',
-    maxWidth: '420px',
-    textAlign: 'center',
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-  },
-  messageBubble: {
-    maxWidth: '88%',
-    borderRadius: '18px',
-    padding: '0.8rem 0.9rem',
-    display: 'grid',
-    gap: '0.35rem',
-    boxShadow: '0 10px 20px rgba(15, 23, 42, 0.08)',
-  },
-  messageBubblePatient: {
-    justifySelf: 'end',
-    background: 'linear-gradient(135deg, #1949b8 0%, #3b82f6 100%)',
-    color: '#fff',
-  },
-  messageBubbleStaff: {
-    justifySelf: 'start',
-    background: '#ffffff',
-    color: patientTheme.colors.ink,
-    border: panelBorder,
-  },
-  messageBubbleSystem: {
-    justifySelf: 'center',
-    background: '#fff7e9',
-    color: '#8a4b07',
-    border: '1px solid #fed7aa',
-  },
-  messageMeta: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '0.75rem',
-    fontSize: '0.74rem',
-    opacity: 0.86,
-  },
-  messageSender: {
-    fontWeight: 700,
-  },
-  messageTimestamp: {
-    whiteSpace: 'nowrap',
-  },
-  messageBody: {
-    margin: 0,
-    lineHeight: 1.55,
-    whiteSpace: 'pre-wrap',
-  },
-  composer: {
-    display: 'grid',
-    gap: '0.75rem',
-    padding: '1rem',
-    borderTop: panelBorder,
-    background: '#fff',
-  },
-  textarea: {
-    width: '100%',
-    resize: 'vertical',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fffdf8',
-    padding: '0.85rem 0.9rem',
-    fontFamily: patientTheme.fonts.body,
-    fontSize: '0.95rem',
-    color: patientTheme.colors.ink,
-    boxSizing: 'border-box',
-  },
-  checkboxRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.55rem',
-    fontSize: '0.85rem',
-    color: patientTheme.colors.inkMuted,
-  },
-  composerActions: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: '0.65rem',
-  },
-  selectorStack: {
-    display: 'grid',
-    gap: '0.55rem',
-  },
-  selectorCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fffdf8',
-    boxShadow: patientTheme.shadows.card,
-    padding: '0.85rem 0.9rem',
-    display: 'grid',
-    gap: '0.4rem',
-    cursor: 'pointer',
-    textAlign: 'left',
-    fontFamily: patientTheme.fonts.body,
-  },
-  selectorCardActive: {
-    border: '1px solid rgba(59, 130, 246, 0.35)',
-    background: '#eef5ff',
-  },
-  selectorTop: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '0.65rem',
-  },
-  selectorTitle: {
-    fontSize: '0.93rem',
-  },
-  selectorMeta: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.82rem',
-  },
-  primaryButton: {
-    border: 'none',
-    borderRadius: patientTheme.radius.sm,
-    background: patientTheme.colors.accent,
-    color: '#fff',
-    padding: '0.78rem 1rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  secondaryButton: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.78rem 1rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  emptyCard: {
-    maxWidth: '640px',
-    margin: '0.4rem auto 0',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.lg,
-    background: '#fffdf8',
-    boxShadow: patientTheme.shadows.panel,
-    padding: '1.3rem',
-    textAlign: 'center',
-  },
-  emptyTitle: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.08rem',
-  },
-  emptyBody: {
-    margin: '0.45rem 0 0',
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-  },
-};

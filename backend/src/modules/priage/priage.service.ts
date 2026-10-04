@@ -4,6 +4,8 @@ import { Injectable } from '@nestjs/common';
 
 import { normalizeHospitalConfig, type HospitalCustomIntakeQuestion } from '../hospitals/hospital-config';
 import { PrismaService } from '../prisma/prisma.service';
+import { ClinicPilotService } from '../clinic/clinic-pilot.service';
+import { ClinicEntryService } from '../clinic/clinic-entry.service';
 
 type PatientFacingHospitalDirectory = {
   id: number;
@@ -18,17 +20,22 @@ type PatientFacingHospitalDirectory = {
     longitude: number;
   } | null;
   customIntakeQuestions: HospitalCustomIntakeQuestion[];
+  workflowProfile: 'ED' | 'CLINIC_APPOINTMENT';
+  entryPath: string | null;
+  appointmentBookingAvailable: boolean;
+  acceptsWalkIns: boolean;
 };
 
 @Injectable()
 export class PriageService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly pilot: ClinicPilotService, private readonly entry: ClinicEntryService) {}
 
   /**
    * List available hospitals for patient to choose.
    */
   async listHospitals() {
     const hospitals = await this.prisma.hospital.findMany({
+      where: this.pilot.hospitalId ? { id: this.pilot.hospitalId } : undefined,
       select: {
         id: true,
         name: true,
@@ -38,11 +45,25 @@ export class PriageService {
             config: true,
           },
         },
+        clinicEntrySettings: true,
       },
       orderBy: { name: 'asc' },
     });
 
-    return hospitals.map((hospital) => this.toPatientFacingHospital(hospital));
+    const visible = hospitals.filter((hospital) => {
+      if (this.pilot.hospitalId) return hospital.id === this.pilot.hospitalId;
+      if (normalizeHospitalConfig(hospital.config?.config).workflowProfile === 'ED') return true;
+      return this.pilot.previewEnabled && this.pilot.previewTenantIds.has(hospital.id) && !!hospital.clinicEntrySettings?.directoryListed;
+    });
+    return Promise.all(visible.map(async (hospital) => {
+      const profile = normalizeHospitalConfig(hospital.config?.config).workflowProfile;
+      const result = this.toPatientFacingHospital(hospital);
+      if (profile === 'ED') return result;
+      const settings = hospital.clinicEntrySettings ?? await this.entry.settings(hospital.id);
+      const metadata = this.pilot.previewEnabled ? await this.entry.resolve(settings.canonicalAlias) : null;
+      return { ...result, workflowProfile: profile, entryPath: `/${settings.canonicalAlias}/start`,
+        appointmentBookingAvailable: metadata?.appointmentBookingAvailable ?? false, acceptsWalkIns: settings.acceptsWalkIns };
+    }));
   }
 
   private toPatientFacingHospital(hospital: {
@@ -87,6 +108,10 @@ export class PriageService {
       customIntakeQuestions: normalizedConfig.customIntakeQuestions.filter(
         (question) => question.appliesTo !== 'triage',
       ),
+      workflowProfile: normalizedConfig.workflowProfile,
+      entryPath: null,
+      appointmentBookingAvailable: false,
+      acceptsWalkIns: false,
     };
   }
 

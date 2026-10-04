@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { ContextSourceType, Prisma, ReviewState, SummaryProjectionKind, TrustTier, VisibilityScope } from '@prisma/client';
+import { ContextSourceType, InterviewAnswerEntryMode, Prisma, ReviewState, SummaryProjectionKind, TrustTier, VisibilityScope } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { IntakeSessionsService } from '../../intake-sessions/intake-sessions.service';
@@ -15,6 +15,7 @@ import type {
   InterviewGovernance,
   InterviewInputType,
   InterviewPatientContext,
+  ClinicQuestionnairePin,
   InterviewPhase,
   InterviewProviderState,
   InterviewQuestionAnswerRecord,
@@ -29,6 +30,16 @@ import type {
   ProviderQuestionDraft,
 } from './triage-interview.types';
 import { SAFETY_GATE_PUBLIC_ID } from './triage-interview.types';
+
+/** Clinic questions use this id prefix (see clinic-questionnaire.ts). */
+const CLINIC_QUESTION_ID_PREFIX = 'clinic:';
+
+export interface InterviewStartOptions {
+  /** A clinic visit's own questions, asked after the safety question. */
+  clinicQuestionnaire?: ClinicQuestionnairePin | null;
+}
+import { persistAiSummaryTx } from './interview-summary.persistence';
+import { RESCUE_QUESTION_BANK } from './rescue-question-bank';
 
 const MAX_DYNAMIC_QUESTIONS = 12;
 const MIN_DYNAMIC_QUESTIONS = 3;
@@ -50,17 +61,26 @@ export class TriageInterviewService {
     correlationId?: string,
   ): Promise<InterviewClientState> {
     const draft = await this.intakeSessions.getOrCreateDraftForAuthSession(authSessionId, patientId, correlationId);
-    const latest = await this.loadLatestState(draft.id);
+    return this.startByIntakeSession(draft.id, patientId, correlationId);
+  }
+
+  /** `clinicQuestionnaire` is pinned only if this call creates the interview; a running interview keeps its version. */
+  async startByIntakeSession(intakeSessionId: number, patientId: number, correlationId?: string, options?: InterviewStartOptions): Promise<InterviewClientState> {
+    return this.withClinicInterviewLock(intakeSessionId, async () => this.startUnlocked(intakeSessionId, patientId, correlationId, options));
+  }
+
+  private async startUnlocked(intakeSessionId: number, patientId: number, correlationId?: string, options?: InterviewStartOptions): Promise<InterviewClientState> {
+    const latest = await this.loadLatestState(intakeSessionId);
 
     if (!latest) {
-      const initialState = this.buildInitialState();
-      const persisted = await this.persistState(draft.id, patientId, initialState, null, correlationId);
+      const initialState = this.buildInitialState(options?.clinicQuestionnaire ?? null);
+      const persisted = await this.persistState(intakeSessionId, patientId, initialState, null, correlationId);
       return this.toClientState(persisted);
     }
 
     if (latest.snapshot.status === 'in_progress' && !latest.snapshot.currentQuestion) {
-      const refreshed = await this.replenishOrComplete(draft.id, patientId, latest.snapshot, correlationId);
-      const persisted = await this.persistState(draft.id, patientId, refreshed, latest.publicId, correlationId);
+      const refreshed = await this.replenishOrComplete(intakeSessionId, patientId, latest.snapshot, correlationId);
+      const persisted = await this.persistState(intakeSessionId, patientId, refreshed, latest.publicId, correlationId);
       return this.toClientState(persisted);
     }
 
@@ -74,11 +94,36 @@ export class TriageInterviewService {
     correlationId?: string,
   ): Promise<InterviewClientState> {
     const draft = await this.intakeSessions.getOrCreateDraftForAuthSession(authSessionId, patientId, correlationId);
-    const latest = await this.loadLatestState(draft.id);
-    const currentState = latest?.snapshot ?? this.buildInitialState();
+    return this.advanceByIntakeSession(draft.id, patientId, dto, undefined, correlationId);
+  }
+
+  async advanceByIntakeSession(
+    intakeSessionId: number,
+    patientId: number,
+    dto: AdvanceInterviewDto,
+    attribution?: { mode: InterviewAnswerEntryMode; userId?: number },
+    correlationId?: string,
+    options?: InterviewStartOptions,
+  ): Promise<InterviewClientState> {
+    return this.withClinicInterviewLock(intakeSessionId, async () =>
+      this.advanceUnlocked(intakeSessionId, patientId, dto, attribution, correlationId, options),
+    );
+  }
+
+  private async advanceUnlocked(
+    intakeSessionId: number,
+    patientId: number,
+    dto: AdvanceInterviewDto,
+    attribution?: { mode: InterviewAnswerEntryMode; userId?: number },
+    correlationId?: string,
+    options?: InterviewStartOptions,
+  ): Promise<InterviewClientState> {
+    const latest = await this.loadLatestState(intakeSessionId);
+    const currentState = latest?.snapshot ?? this.buildInitialState(options?.clinicQuestionnaire ?? null);
     const previousPublicId = latest?.publicId ?? null;
 
     if (currentState.status === 'complete') {
+      if (dto.questionPublicId) throw new BadRequestException('Interview answer does not match the active question.');
       return this.toClientState(currentState);
     }
 
@@ -88,7 +133,7 @@ export class TriageInterviewService {
       }
 
       const nextState = await this.replenishOrComplete(
-        draft.id,
+        intakeSessionId,
         patientId,
         {
           ...currentState,
@@ -100,14 +145,15 @@ export class TriageInterviewService {
         correlationId,
       );
 
-      const persisted = await this.persistState(draft.id, patientId, nextState, previousPublicId, correlationId);
+      const persisted = await this.persistState(intakeSessionId, patientId, nextState, previousPublicId, correlationId);
       return this.toClientState(persisted);
     }
 
     const activeQuestion = currentState.currentQuestion;
     if (!activeQuestion) {
-      const nextState = await this.replenishOrComplete(draft.id, patientId, currentState, correlationId);
-      const persisted = await this.persistState(draft.id, patientId, nextState, previousPublicId, correlationId);
+      if (dto.questionPublicId) throw new BadRequestException('Interview answer does not match the active question.');
+      const nextState = await this.replenishOrComplete(intakeSessionId, patientId, currentState, correlationId);
+      const persisted = await this.persistState(intakeSessionId, patientId, nextState, previousPublicId, correlationId);
       return this.toClientState(persisted);
     }
 
@@ -116,7 +162,11 @@ export class TriageInterviewService {
     }
 
     const answer = this.buildAnswerRecord(activeQuestion, dto);
-    await this.persistAnswer(draft.id, patientId, answer, correlationId);
+    const recordedAnswer = { answer, attribution };
+    const isClinicQuestion = this.isClinicQuestion(currentState, activeQuestion.publicId);
+    if (isClinicQuestion && activeQuestion.inputType === 'single_select' && !activeQuestion.choices.includes(answer.answerText)) {
+      throw new BadRequestException('Choose one of the listed answers.');
+    }
 
     if (activeQuestion.publicId === SAFETY_GATE_PUBLIC_ID && answer.valueBoolean === true) {
       const emergencyState: InterviewStateSnapshot = {
@@ -129,11 +179,12 @@ export class TriageInterviewService {
         emergencyAlert: this.buildEmergencyAlert(),
         summaryPreview: 'Emergency warning shown. Awaiting patient acknowledgment before continuing.',
       };
-      const persisted = await this.persistState(draft.id, patientId, emergencyState, previousPublicId, correlationId);
+      const persisted = await this.persistState(intakeSessionId, patientId, emergencyState, previousPublicId, correlationId, recordedAnswer);
       return this.toClientState(persisted);
     }
 
-    const increment = activeQuestion.publicId === SAFETY_GATE_PUBLIC_ID ? 0 : 1;
+    // The safety question and the clinic's own questions don't count toward the assessment's questions.
+    const increment = activeQuestion.publicId === SAFETY_GATE_PUBLIC_ID || isClinicQuestion ? 0 : 1;
     const answeredState: InterviewStateSnapshot = {
       ...currentState,
       askedCount: currentState.askedCount + increment,
@@ -142,15 +193,16 @@ export class TriageInterviewService {
       emergencyAlert: null,
     };
 
-    const patient = await this.loadPatientContext(draft.id);
+    const patient = await this.loadPatientContext(intakeSessionId);
     const ambiguityRequiresReplan = activeQuestion.askIfAmbiguous && this.isAmbiguousAnswer(answer);
-    const riskChanged = activeQuestion.publicId === SAFETY_GATE_PUBLIC_ID
+    const riskChanged = activeQuestion.publicId === SAFETY_GATE_PUBLIC_ID || isClinicQuestion
       ? false
       : this.answerMateriallyChangesRisk(patient, currentState.answers, answer);
     const targetReached = answeredState.targetQuestionCount !== null
       && answeredState.askedCount >= answeredState.targetQuestionCount;
     const shouldReplan =
       activeQuestion.publicId === SAFETY_GATE_PUBLIC_ID
+      || isClinicQuestion
       || currentState.cachedQuestions.length === 0
       || ambiguityRequiresReplan
       || riskChanged
@@ -161,7 +213,7 @@ export class TriageInterviewService {
 
     const nextState = shouldReplan
       ? await this.replenishOrComplete(
-          draft.id,
+          intakeSessionId,
           patientId,
           {
             ...answeredState,
@@ -178,8 +230,21 @@ export class TriageInterviewService {
           pendingCandidates: [],
         };
 
-    const persisted = await this.persistState(draft.id, patientId, nextState, previousPublicId, correlationId);
+    const persisted = await this.persistState(intakeSessionId, patientId, nextState, previousPublicId, correlationId, recordedAnswer);
     return this.toClientState(persisted);
+  }
+
+  async statusByIntakeSession(intakeSessionId: number): Promise<'not_started' | InterviewStatus> {
+    return (await this.loadLatestState(intakeSessionId))?.snapshot.status ?? 'not_started';
+  }
+
+  // This transaction only holds the advisory lock that serializes advances for one intake
+  // session. Writes commit in their own transaction (see persistState) before it releases.
+  private async withClinicInterviewLock<T>(intakeSessionId: number, work: () => Promise<T>): Promise<T> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(74001, ${intakeSessionId})`;
+      return work();
+    }, { timeout: 60_000, maxWait: 60_000 });
   }
 
   async ensureInterviewCompleteBySession(
@@ -205,6 +270,11 @@ export class TriageInterviewService {
 
     if (state.askedCount >= MAX_DYNAMIC_QUESTIONS) {
       return this.completeInterview(intakeSessionId, patientId, state, patient, null, correlationId);
+    }
+
+    const clinicQuestion = this.hasAnsweredSafetyGate(state.answers) ? this.nextClinicQuestion(state) : null;
+    if (clinicQuestion) {
+      return { ...state, status: 'in_progress', phase: clinicQuestion.phase, currentQuestion: clinicQuestion, cachedQuestions: [] };
     }
 
     if (!this.hasAnsweredSafetyGate(state.answers)) {
@@ -275,6 +345,9 @@ export class TriageInterviewService {
           title: generation.result.interrupt.title || 'Get emergency help now',
           body: generation.result.interrupt.body || 'Your latest answers may reflect a life-threatening emergency.',
           recommendation: generation.result.interrupt.recommendation || 'Acknowledge this warning if you still want to continue.',
+          // Staff-facing context for Care; never sent to the patient (see toClientState).
+          reason: generation.result.interrupt.reason?.trim() || undefined,
+          triggerQuestionId: state.answers[state.answers.length - 1]?.questionPublicId,
         },
       };
     }
@@ -406,7 +479,17 @@ export class TriageInterviewService {
     return completedState;
   }
 
-  private buildInitialState(): InterviewStateSnapshot {
+  private isClinicQuestion(state: InterviewStateSnapshot, questionPublicId: string): boolean {
+    return !!state.clinicQuestionnaire?.questions.some((question) => question.publicId === questionPublicId);
+  }
+
+  /** The clinic's next unanswered question, if it has any left. */
+  private nextClinicQuestion(state: InterviewStateSnapshot): InterviewQuestion | null {
+    const answered = new Set(state.answers.map((answer) => answer.questionPublicId));
+    return state.clinicQuestionnaire?.questions.find((question) => !answered.has(question.publicId)) ?? null;
+  }
+
+  private buildInitialState(clinicQuestionnaire: ClinicQuestionnairePin | null = null): InterviewStateSnapshot {
     return {
       interviewPublicId: `intr_${randomUUID()}`,
       status: 'in_progress',
@@ -427,6 +510,7 @@ export class TriageInterviewService {
       providerState: null,
       generationMode: 'fallback',
       governance: this.buildGovernance('fallback', null),
+      clinicQuestionnaire,
     };
   }
 
@@ -450,6 +534,8 @@ export class TriageInterviewService {
       title: 'Get emergency help now',
       body: 'Your answer suggests this may be a life-threatening emergency. Call 911 or go to the nearest emergency department immediately if you cannot get there safely on your own.',
       recommendation: 'Acknowledge this warning if you still want to continue the intake flow.',
+      reason: 'Answered Yes to the immediate danger question.',
+      triggerQuestionId: SAFETY_GATE_PUBLIC_ID,
     };
   }
 
@@ -617,111 +703,9 @@ export class TriageInterviewService {
 
   private buildRescueQuestionBank(): Record<InterviewPhase, ProviderQuestionDraft[]> {
     return {
-      urgent: [
-        {
-          phase: 'urgent',
-          inputType: 'text',
-          prompt: 'When did this start, and how quickly did it become this bad?',
-          helpText: 'A short timeline helps staff understand urgency.',
-          placeholder: 'e.g. started 2 hours ago and worsened over 20 minutes',
-          required: true,
-          choices: [],
-          clinicalReason: 'Onset and time course affect acuity.',
-          askIfAmbiguous: true,
-        },
-        {
-          phase: 'urgent',
-          inputType: 'number',
-          prompt: 'How severe is it right now on a scale from 0 to 10?',
-          helpText: '0 means no symptom and 10 is the worst imaginable.',
-          placeholder: '0-10',
-          required: true,
-          choices: [],
-          clinicalReason: 'Severity helps prioritize acuity.',
-          askIfAmbiguous: false,
-        },
-        {
-          phase: 'urgent',
-          inputType: 'boolean',
-          prompt: 'Is it getting rapidly worse, or are you having trouble breathing, heavy bleeding, or passing out?',
-          helpText: 'Tell us if any of these are happening now.',
-          placeholder: '',
-          required: true,
-          choices: ['Yes', 'No'],
-          clinicalReason: 'Generic red-flag rescue screen.',
-          askIfAmbiguous: false,
-        },
-      ],
-      emergent: [
-        {
-          phase: 'emergent',
-          inputType: 'textarea',
-          prompt: 'What other symptoms are happening with this right now?',
-          helpText: 'A short list is enough.',
-          placeholder: 'e.g. nausea, dizziness, fever, numbness',
-          required: true,
-          choices: [],
-          clinicalReason: 'Associated symptoms help separate higher-risk patterns.',
-          askIfAmbiguous: true,
-        },
-        {
-          phase: 'emergent',
-          inputType: 'text',
-          prompt: 'Have you taken anything or done anything for this already today?',
-          helpText: 'Include medication, inhalers, ice, rest, or anything else important.',
-          placeholder: 'e.g. took Tylenol, used inhaler, nothing yet',
-          required: false,
-          choices: [],
-          clinicalReason: 'Prior actions affect handoff and next questioning.',
-          askIfAmbiguous: false,
-        },
-        {
-          phase: 'emergent',
-          inputType: 'boolean',
-          prompt: 'Do you feel worse with activity, walking, or standing up?',
-          helpText: 'A yes or no is enough.',
-          placeholder: '',
-          required: false,
-          choices: ['Yes', 'No'],
-          clinicalReason: 'Simple worsening/instability screen.',
-          askIfAmbiguous: false,
-        },
-      ],
-      history: [
-        {
-          phase: 'history',
-          inputType: 'text',
-          prompt: 'What medical conditions or past issues matter most for this problem?',
-          helpText: 'A short list is enough.',
-          placeholder: 'e.g. asthma, diabetes, migraines, none',
-          required: false,
-          choices: [],
-          clinicalReason: 'Relevant history improves handoff quality.',
-          askIfAmbiguous: true,
-        },
-        {
-          phase: 'history',
-          inputType: 'text',
-          prompt: 'What medications or allergies should the care team know about right now?',
-          helpText: 'Include daily medications and important allergies.',
-          placeholder: 'e.g. insulin, blood thinner, penicillin allergy, none',
-          required: false,
-          choices: [],
-          clinicalReason: 'Medication and allergy context supports safer intake.',
-          askIfAmbiguous: false,
-        },
-        {
-          phase: 'history',
-          inputType: 'textarea',
-          prompt: 'Anything else important the emergency team should know before you arrive?',
-          helpText: 'Include pregnancy context, recent surgery, or a major concern if relevant.',
-          placeholder: 'Short note',
-          required: false,
-          choices: [],
-          clinicalReason: 'Captures final handoff details.',
-          askIfAmbiguous: false,
-        },
-      ],
+      urgent: RESCUE_QUESTION_BANK.urgent.map((question) => ({ ...question, choices: [...question.choices] })),
+      emergent: RESCUE_QUESTION_BANK.emergent.map((question) => ({ ...question, choices: [...question.choices] })),
+      history: RESCUE_QUESTION_BANK.history.map((question) => ({ ...question, choices: [...question.choices] })),
     };
   }
 
@@ -1066,7 +1050,7 @@ export class TriageInterviewService {
   }
 
   private getDynamicAnswerCount(answers: InterviewAnswerRecord[]): number {
-    return answers.filter((answer) => answer.questionPublicId !== SAFETY_GATE_PUBLIC_ID).length;
+    return answers.filter((answer) => answer.questionPublicId !== SAFETY_GATE_PUBLIC_ID && !answer.questionPublicId.startsWith(CLINIC_QUESTION_ID_PREFIX)).length;
   }
 
   private normalizePrompt(prompt: string): string {
@@ -1082,7 +1066,9 @@ export class TriageInterviewService {
       maxQuestions: snapshot.maxQuestions,
       currentQuestion: snapshot.currentQuestion,
       cachedQuestions: snapshot.cachedQuestions,
-      emergencyAlert: snapshot.emergencyAlert,
+      emergencyAlert: snapshot.emergencyAlert
+        ? { title: snapshot.emergencyAlert.title, body: snapshot.emergencyAlert.body, recommendation: snapshot.emergencyAlert.recommendation }
+        : null,
       summaryPreview: snapshot.summaryPreview,
       generationMode: snapshot.generationMode,
       governance: snapshot.governance,
@@ -1227,7 +1213,16 @@ export class TriageInterviewService {
           value.generationMode === 'fallback' || value.fallbackUsed === true ? 'fallback' : 'ai',
           this.parseProviderState(value.providerState),
         ),
+      clinicQuestionnaire: this.parseClinicQuestionnaire(value.clinicQuestionnaire),
     };
+  }
+
+  private parseClinicQuestionnaire(value: unknown): ClinicQuestionnairePin | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const pin = value as Record<string, unknown>;
+    if (typeof pin.versionId !== 'number' || typeof pin.version !== 'number' || !Array.isArray(pin.questions)) return null;
+    const questions = pin.questions.map((question) => this.parseQuestion(question)).filter((question): question is InterviewQuestion => question !== null);
+    return questions.length ? { versionId: pin.versionId, version: pin.version, questions } : null;
   }
 
   private parseQuestion(value: unknown): InterviewQuestion | null {
@@ -1303,6 +1298,8 @@ export class TriageInterviewService {
       title: alert.title,
       body: alert.body,
       recommendation: alert.recommendation,
+      ...(typeof alert.reason === 'string' && alert.reason.trim() ? { reason: alert.reason } : {}),
+      ...(typeof alert.triggerQuestionId === 'string' && alert.triggerQuestionId ? { triggerQuestionId: alert.triggerQuestionId } : {}),
     };
   }
 
@@ -1416,52 +1413,49 @@ export class TriageInterviewService {
     };
   }
 
+  /**
+   * Stores the new state, together with the answer that produced it when there is one.
+   * Both commit in one transaction, so an answer is never recorded without its state.
+   */
   private async persistState(
     intakeSessionId: number,
     patientId: number,
     snapshot: InterviewStateSnapshot,
     supersedesPublicId: string | null,
     correlationId?: string,
+    recorded?: { answer: InterviewAnswerRecord; attribution?: { mode: InterviewAnswerEntryMode; userId?: number } },
   ): Promise<InterviewStateSnapshot> {
-    await this.intakeSessions.appendContextItemByIntakeSessionId(
+    const stateItem = {
+      itemType: 'ai_interview_state',
+      schemaVersion: 'v2',
+      payload: this.toJsonValue(snapshot),
+      sourceType: ContextSourceType.AI,
+      trustTier: TrustTier.UNTRUSTED,
+      reviewState: ReviewState.UNREVIEWED,
+      visibilityScope: VisibilityScope.STORED_ONLY,
+      patientId,
+      supersedesPublicId: supersedesPublicId ?? undefined,
+    };
+    const answerItem = recorded && {
+      itemType: 'ai_interview_answer',
+      schemaVersion: 'v1',
+      payload: this.toJsonValue(recorded.answer),
+      sourceType: recorded.attribution?.mode === InterviewAnswerEntryMode.STAFF_ASSISTED ? ContextSourceType.INSTITUTION : ContextSourceType.PATIENT,
+      trustTier: TrustTier.UNTRUSTED,
+      reviewState: ReviewState.UNREVIEWED,
+      visibilityScope: VisibilityScope.STORED_ONLY,
+      patientId,
+      answerEntryMode: recorded.attribution?.mode ?? null,
+      enteredByUserId: recorded.attribution?.userId ?? null,
+    };
+
+    await this.intakeSessions.appendContextItemsByIntakeSessionId(
       intakeSessionId,
-      {
-        itemType: 'ai_interview_state',
-        schemaVersion: 'v2',
-        payload: this.toJsonValue(snapshot),
-        sourceType: ContextSourceType.AI,
-        trustTier: TrustTier.UNTRUSTED,
-        reviewState: ReviewState.UNREVIEWED,
-        visibilityScope: VisibilityScope.STORED_ONLY,
-        patientId,
-        supersedesPublicId: supersedesPublicId ?? undefined,
-      },
+      answerItem ? [answerItem, stateItem] : [stateItem],
       correlationId,
     );
 
     return snapshot;
-  }
-
-  private async persistAnswer(
-    intakeSessionId: number,
-    patientId: number,
-    answer: InterviewAnswerRecord,
-    correlationId?: string,
-  ): Promise<void> {
-    await this.intakeSessions.appendContextItemByIntakeSessionId(
-      intakeSessionId,
-      {
-        itemType: 'ai_interview_answer',
-        schemaVersion: 'v1',
-        payload: this.toJsonValue(answer),
-        sourceType: ContextSourceType.PATIENT,
-        trustTier: TrustTier.UNTRUSTED,
-        reviewState: ReviewState.UNREVIEWED,
-        visibilityScope: VisibilityScope.STORED_ONLY,
-        patientId,
-      },
-      correlationId,
-    );
   }
 
   private async persistSummary(
@@ -1473,58 +1467,41 @@ export class TriageInterviewService {
   ): Promise<void> {
     const generatedAt = new Date().toISOString();
 
-    await this.prisma.$transaction(async (tx) => {
-      const latestSummary = await tx.contextItem.findFirst({
-        where: {
-          intakeSessionId,
-          itemType: 'ai_triage_summary',
-          supersededBy: { none: {} },
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        select: { publicId: true },
-      });
-
-      const createdSummary = await this.intakeSessions.appendContextItemByIntakeSessionIdTx(
-        tx,
-        intakeSessionId,
-        {
-          itemType: 'ai_triage_summary',
-          schemaVersion: 'v3',
-          payload: this.toJsonValue({
-            urgency: summary.urgency,
-            redFlags: summary.redFlags,
-            recommendedAction: summary.recommendedAction,
-            summaryPreview: summary.summaryPreview,
-            briefing: summary.briefing,
-            recommendedCtasLevel: summary.recommendedCtasLevel,
-            caseSummary: summary.caseSummary,
-            questionAnswers: summary.questionAnswers,
-            progressionRisks: summary.progressionRisks,
-            details: summary.combinedDetails,
-            sessionGoal: state.sessionGoal,
-            completionReason: state.completionReason,
-            generationMode: state.generationMode,
-            governance: state.governance,
-            generatedAt,
-          }),
-          sourceType: ContextSourceType.AI,
-          trustTier: TrustTier.UNTRUSTED,
-          reviewState: ReviewState.UNREVIEWED,
-          visibilityScope: VisibilityScope.ADMISSIONS,
-          patientId,
-          supersedesPublicId: latestSummary?.publicId,
-        },
-      );
-
-      await this.refreshAiDerivedSummaryProjectionTx(
-        tx,
-        intakeSessionId,
-        createdSummary.encounterId ?? null,
-        summary,
-        state,
+    await this.prisma.$transaction(async (tx) => persistAiSummaryTx(tx, this.intakeSessions, {
+      intakeSessionId,
+      patientId,
+      item: {
+        urgency: summary.urgency,
+        redFlags: summary.redFlags,
+        recommendedAction: summary.recommendedAction,
+        summaryPreview: summary.summaryPreview,
+        briefing: summary.briefing,
+        recommendedCtasLevel: summary.recommendedCtasLevel,
+        caseSummary: summary.caseSummary,
+        questionAnswers: summary.questionAnswers,
+        progressionRisks: summary.progressionRisks,
+        details: summary.combinedDetails,
+        sessionGoal: state.sessionGoal,
+        completionReason: state.completionReason,
+        generationMode: state.generationMode,
+        governance: state.governance,
         generatedAt,
-      );
-    });
+      },
+      projection: {
+        briefing: summary.briefing,
+        recommendedCtasLevel: summary.recommendedCtasLevel,
+        caseSummary: summary.caseSummary,
+        questionAnswers: summary.questionAnswers,
+        progressionRisks: summary.progressionRisks,
+        redFlags: summary.redFlags,
+        recommendedAction: summary.recommendedAction,
+        summaryPreview: summary.summaryPreview,
+        urgency: summary.urgency,
+        generationMode: state.generationMode,
+        governance: state.governance,
+        generatedAt,
+      },
+    }));
 
     await this.loggingService.info(
       'Persisted AI triage summary',
@@ -1541,51 +1518,6 @@ export class TriageInterviewService {
         generationMode: state.generationMode,
       },
     );
-  }
-
-  private async refreshAiDerivedSummaryProjectionTx(
-    tx: Prisma.TransactionClient,
-    intakeSessionId: number,
-    encounterId: number | null,
-    summary: InterviewSummaryRecord,
-    state: InterviewStateSnapshot,
-    generatedAt: string,
-  ): Promise<void> {
-    await tx.summaryProjection.updateMany({
-      where: {
-        intakeSessionId,
-        kind: SummaryProjectionKind.AI_DERIVED,
-        active: true,
-      },
-      data: { active: false },
-    });
-
-    await tx.summaryProjection.create({
-      data: {
-        publicId: `sum_${randomUUID()}`,
-        kind: SummaryProjectionKind.AI_DERIVED,
-        intakeSessionId,
-        encounterId,
-        sourceType: ContextSourceType.AI,
-        trustTier: TrustTier.UNTRUSTED,
-        reviewState: ReviewState.UNREVIEWED,
-        visibilityScope: VisibilityScope.CLINICAL,
-        content: this.toJsonValue({
-          briefing: summary.briefing,
-          recommendedCtasLevel: summary.recommendedCtasLevel,
-          caseSummary: summary.caseSummary,
-          questionAnswers: summary.questionAnswers,
-          progressionRisks: summary.progressionRisks,
-          redFlags: summary.redFlags,
-          recommendedAction: summary.recommendedAction,
-          summaryPreview: summary.summaryPreview,
-          urgency: summary.urgency,
-          generationMode: state.generationMode,
-          governance: state.governance,
-          generatedAt,
-        }),
-      },
-    });
   }
 
   private isPhase(value: unknown): value is InterviewPhase {

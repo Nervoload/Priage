@@ -15,6 +15,7 @@ import {
   Encounter,
   EncounterEvent,
   EncounterStatus,
+  InterviewAnswerEntryMode,
   EventType,
   IntakeSession,
   IntakeSessionStatus,
@@ -30,13 +31,8 @@ import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { buildGuestPlaceholderPasswordHash } from '../patient-auth/patient-password.util';
 import { PrismaService } from '../prisma/prisma.service';
-
-const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
-  EncounterStatus.EXPECTED,
-  EncounterStatus.ADMITTED,
-  EncounterStatus.TRIAGE,
-  EncounterStatus.WAITING,
-];
+import { normalizeHospitalConfig } from '../hospitals/hospital-config';
+import { ACTIVE_ENCOUNTER_STATUSES } from '../../shared/types/encounter-status';
 
 type DraftProjection = {
   firstName?: string;
@@ -82,6 +78,7 @@ export type CreateDraftArgs = {
   authSessionId?: number | null;
   hospitalId?: number | null;
   expiresAt?: Date | null;
+  contactEmail?: string | null;
 };
 
 export type AppendContextItemArgs = {
@@ -96,12 +93,15 @@ export type AppendContextItemArgs = {
   patientId?: number | null;
   partnerId?: number | null;
   supersedesPublicId?: string;
+  answerEntryMode?: InterviewAnswerEntryMode | null;
+  enteredByUserId?: number | null;
 };
 
 export type ConfirmIntakeSessionArgs = {
   hospitalId?: number | null;
   sourceLabel: string;
   patientConfirmed?: boolean;
+  workflow?: 'ED' | 'CLINIC_APPOINTMENT';
 };
 
 export type ConfirmIntakeSessionTxResult = {
@@ -147,6 +147,7 @@ export class IntakeSessionsService {
         authSessionId: args.authSessionId ?? null,
         hospitalId: args.hospitalId ?? null,
         expiresAt: args.expiresAt ?? null,
+        contactEmail: args.contactEmail ?? null,
       },
     });
   }
@@ -277,6 +278,26 @@ export class IntakeSessionsService {
     return created;
   }
 
+  /** Appends the items in order, in one transaction: all of them are stored or none are. */
+  async appendContextItemsByIntakeSessionId(
+    intakeSessionId: number,
+    items: AppendContextItemArgs[],
+    correlationId?: string,
+  ) {
+    const created = await this.prisma.$transaction(async (tx) => {
+      const appended = [];
+      for (const args of items) {
+        appended.push(await this.appendContextItemByIntakeSessionIdTx(tx, intakeSessionId, args));
+      }
+      return appended;
+    });
+
+    for (const item of created) {
+      await this.logContextAppend(item, correlationId);
+    }
+    return created;
+  }
+
   async appendContextItemByIntakeSessionIdTx(
     tx: Prisma.TransactionClient,
     intakeSessionId: number,
@@ -325,6 +346,8 @@ export class IntakeSessionsService {
         itemType: args.itemType,
         schemaVersion: args.schemaVersion ?? 'v1',
         payload: args.payload,
+        answerEntryMode: args.answerEntryMode ?? null,
+        enteredByUserId: args.enteredByUserId ?? null,
         sourceType: args.sourceType,
         trustTier: args.trustTier,
         reviewState: args.reviewState,
@@ -449,12 +472,21 @@ export class IntakeSessionsService {
       throw new BadRequestException(`Intake session ${session.publicId} is not confirmable`);
     }
     if (session.encounterId && session.encounter) {
+      if (args.hospitalId && session.encounter.hospitalId !== args.hospitalId) throw new ConflictException('Intake already belongs to another provider');
       return { encounter: session.encounter, event: null };
     }
 
     const hospitalId = args.hospitalId ?? session.hospitalId;
     if (!hospitalId) {
       throw new BadRequestException('hospitalId is required to confirm an intake session');
+    }
+    const workflow = await tx.hospitalConfig?.findUnique({ where: { hospitalId }, select: { config: true } });
+    const expectedProfile = args.workflow ?? 'ED';
+    if (normalizeHospitalConfig(workflow?.config).workflowProfile !== expectedProfile) {
+      throw new BadRequestException('Selected provider does not support this intake workflow');
+    }
+    if ((args.sourceLabel === 'patient_intake' || args.sourceLabel === 'general_clinic_intake') && !session.contactEmail) {
+      throw new BadRequestException('Visit contact email is required before selecting a provider');
     }
 
     if (args.patientConfirmed) {
@@ -495,12 +527,17 @@ export class IntakeSessionsService {
         publicId: this.newPublicId('enc'),
         patientId,
         hospitalId,
-        status: EncounterStatus.EXPECTED,
+        status: expectedProfile === 'ED' ? EncounterStatus.EXPECTED : EncounterStatus.INTAKE,
         chiefComplaint: projection.chiefComplaint,
         details: projection.details,
-        expectedAt: new Date(),
+        expectedAt: expectedProfile === 'ED' ? new Date() : null,
       },
     });
+
+    if (session.contactEmail) {
+      await tx.encounterContact.create({ data: { encounterId: encounter.id, hospitalId,
+        email: session.contactEmail, source: args.sourceLabel, verifiedAt: null } });
+    }
 
     await tx.intakeSession.update({
       where: { id: intakeSessionId },
@@ -560,7 +597,7 @@ export class IntakeSessionsService {
       hospitalId,
       type: EventType.ENCOUNTER_CREATED,
       metadata: {
-        status: EncounterStatus.EXPECTED,
+        status: expectedProfile === 'ED' ? EncounterStatus.EXPECTED : EncounterStatus.INTAKE,
         intakeSessionPublicId: session.publicId,
         source: args.sourceLabel,
       },
@@ -729,6 +766,7 @@ export class IntakeSessionsService {
       data: {
         email: `${randomUUID()}@intake.local`,
         password: placeholderPasswordHash,
+        accountEnabled: false,
         preferredLanguage: 'en',
       },
       select: { id: true },

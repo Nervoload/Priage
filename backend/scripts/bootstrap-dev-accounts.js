@@ -335,6 +335,11 @@ async function createHospitalUserFlow(prompt) {
 
 async function chooseHospitalForAdmin(prompt) {
   const hospitals = await listHospitals();
+  const tenantName = process.env.PRIAGE_DEV_TENANT_NAME?.trim();
+  if (tenantName && tenantName !== 'ed-1') {
+    const matching = hospitals.find((hospital) => hospital.slug === tenantName);
+    return matching || createHospital(prompt);
+  }
   if (hospitals.length === 0) {
     return createHospital(prompt);
   }
@@ -355,12 +360,16 @@ async function chooseHospitalForAdmin(prompt) {
 }
 
 async function createHospital(prompt) {
-  const name = await prompt.ask('Hospital name');
+  const tenantName = process.env.PRIAGE_DEV_TENANT_NAME?.trim();
+  const clinicDetails = tenantName?.startsWith('clinic-') && process.env.PRIAGE_DEV_CLINIC_DETAILS
+    ? JSON.parse(process.env.PRIAGE_DEV_CLINIC_DETAILS) : null;
+  const name = clinicDetails?.name || tenantName || await prompt.ask('Hospital name');
   const defaultSlug = slugify(name);
-  const slug = await prompt.ask('Hospital slug', {
+  const slug = tenantName || await prompt.ask('Hospital slug', {
     defaultValue: defaultSlug,
     validate: validateSlug,
   });
+  const workflowProfile = process.env.PRIAGE_DEV_WORKFLOW_PROFILE === 'CLINIC_APPOINTMENT' ? 'CLINIC_APPOINTMENT' : 'ED';
 
   try {
     return await prisma.hospital.create({
@@ -369,7 +378,10 @@ async function createHospital(prompt) {
         slug,
         config: {
           create: {
-            config: DEFAULT_HOSPITAL_CONFIG,
+            config: { ...DEFAULT_HOSPITAL_CONFIG, version: 2, workflowProfile,
+              patientExperience: { ...DEFAULT_HOSPITAL_CONFIG.patientExperience,
+                ...(clinicDetails ? { address: clinicDetails.address, phone: clinicDetails.phone,
+                  checkInInstructions: clinicDetails.checkInInstructions } : {}) } },
           },
         },
       },

@@ -81,6 +81,11 @@ const SAFE_STRING_KEYS = new Set([
   'method',
   'path',
   'loginMethod',
+  'promptVersion',
+  'model',
+  'roundType',
+  'outcome',
+  'questionSource',
 ]);
 
 const SAFE_NUMERIC_KEYS = new Set([

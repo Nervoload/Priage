@@ -40,6 +40,10 @@ export async function confirmIntent(payload: ConfirmIntentPayload): Promise<Enco
   return sendDurablePatientCommand<Encounter>('/intake/confirm', 'POST', payload);
 }
 
+export async function attachClinic(clinicAlias: string): Promise<Encounter> {
+  return sendDurablePatientCommand<Encounter>('/intake/clinic-attach', 'POST', { clinicAlias });
+}
+
 export async function startInterview(): Promise<InterviewState> {
   return client<InterviewState>('/intake/interview/start', {
     method: 'POST',

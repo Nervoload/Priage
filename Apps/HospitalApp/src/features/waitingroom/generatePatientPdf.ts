@@ -241,7 +241,7 @@ export function generatePatientPdf(encounter: Encounter): void {
     const timelineItems: [string, string | null | undefined][] = [
         ['Expected', encounter.expectedAt],
         ['Arrived', encounter.arrivedAt],
-        ['Triage Started', encounter.triagedAt],
+        ['Triaged', encounter.triagedAt],
         ['Waiting', encounter.waitingAt],
         ['Seen', encounter.seenAt],
         ['Departed', encounter.departedAt],

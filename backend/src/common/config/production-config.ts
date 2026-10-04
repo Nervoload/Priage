@@ -1,3 +1,5 @@
+import { assertAssessmentProductionConfig } from '../../modules/assessment/assessment-config';
+
 const REQUIRED_PRODUCTION_VALUES = [
   'DATABASE_URL',
   'REDIS_HOST',
@@ -61,6 +63,7 @@ export function assertProductionConfiguration(): void {
   if (process.env.TRIAGE_AI_API_KEY?.trim() || process.env.TRIAGE_AI_BASE_URL?.trim()) {
     throw new Error('External triage AI configuration is not permitted in production');
   }
+  assertAssessmentProductionConfig();
   let dashboardUrl: URL;
   try {
     dashboardUrl = new URL(process.env.HOSPITAL_DASHBOARD_URL || '');

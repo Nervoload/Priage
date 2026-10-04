@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: priage
+      POSTGRES_PASSWORD: priage
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:?POSTGRES_HOST_PORT is required}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U priage -d ${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:?REDIS_HOST_PORT is required}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+volumes:
+  postgres-data:
+  redis-data:

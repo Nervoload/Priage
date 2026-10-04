@@ -30,6 +30,20 @@ class PageAccessDto {
   @IsIn(HOSPITAL_PAGE_KEYS, { each: true })
   ADMIN!: HospitalPageKey[];
 
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(5)
+  @IsIn(HOSPITAL_PAGE_KEYS, { each: true })
+  IT_ADMIN?: HospitalPageKey[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(5)
+  @IsIn(HOSPITAL_PAGE_KEYS, { each: true })
+  CLINICAL_ADMIN?: HospitalPageKey[];
+
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(5)

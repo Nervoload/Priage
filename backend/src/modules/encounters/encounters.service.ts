@@ -24,7 +24,7 @@ import { randomUUID } from 'crypto';
 import { assetSummarySelect, mapAssetSummary } from '../assets/asset-summary.dto';
 import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { ClinicalAccessService } from '../clinical-access/clinical-access.service';
-import { hasClinicalCapability } from '../clinical-access/clinical-access.policy';
+import { hasClinicalCapability, STAFF_OPERATIONAL_ENCOUNTER_FIELDS } from '../clinical-access/clinical-access.policy';
 import { EventsService } from '../events/events.service';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,14 +32,15 @@ import { CreateEncounterDto } from './dto/create-encounter.dto';
 import { CreateAdmittanceEncounterDto } from './dto/create-admittance-encounter.dto';
 import {
   EncounterListResponseDto,
-  EncounterDetailDto,
   PatientEncounterDto,
   PriagePreviewDto,
   PriageSummaryDto,
   PriageSummaryQuestionAnswerDto,
 } from './dto/encounter-response.dto';
 import { ListEncountersQueryDto } from './dto/list-encounters.query.dto';
-import { hashPatientPassword } from '../patient-auth/patient-password.util';
+import { buildGuestPlaceholderPasswordHash } from '../patient-auth/patient-password.util';
+import { normalizeHospitalConfig } from '../hospitals/hospital-config';
+import { ACTIVE_ENCOUNTER_STATUSES, isTerminalEncounterStatus } from '../../shared/types/encounter-status';
 
 export type EncounterActor = {
   actorUserId?: number;
@@ -58,23 +59,10 @@ type EncounterTransition = {
   eventType?: EventType;
 };
 
-const TERMINAL_STATUSES = new Set<EncounterStatus>([
-  EncounterStatus.COMPLETE,
-  EncounterStatus.CANCELLED,
-  EncounterStatus.UNRESOLVED,
-]);
-
 const PRIORITY_ORDER: Prisma.EncounterOrderByWithRelationInput[] = [
   { currentPriorityScore: { sort: 'desc', nulls: 'last' } },
   { createdAt: 'asc' },
   { id: 'asc' },
-];
-
-const ACTIVE_ENCOUNTER_STATUSES: EncounterStatus[] = [
-  EncounterStatus.EXPECTED,
-  EncounterStatus.ADMITTED,
-  EncounterStatus.TRIAGE,
-  EncounterStatus.WAITING,
 ];
 
 const encounterMessageSelect = {
@@ -91,6 +79,19 @@ const encounterMessageSelect = {
     orderBy: { createdAt: 'asc' as const },
   },
 } satisfies Prisma.MessageSelect;
+
+// What a patient view needs to know about the encounter's site to link a clinic visit to its clinic page.
+const clinicVisitSiteSelect = {
+  config: { select: { config: true } },
+  clinicEntrySettings: { select: { canonicalAlias: true } },
+} satisfies Prisma.HospitalSelect;
+
+/** The clinic's canonical alias when the site runs the clinic workflow; null for ED sites. */
+function clinicAliasFor(site: Prisma.HospitalGetPayload<{ select: typeof clinicVisitSiteSelect }>): string | null {
+  return normalizeHospitalConfig(site.config?.config).workflowProfile === 'CLINIC_APPOINTMENT'
+    ? site.clinicEntrySettings?.canonicalAlias ?? null
+    : null;
+}
 
 const priageProjectionSelect = {
   createdAt: true,
@@ -166,6 +167,7 @@ export class EncountersService {
     actor?: EncounterActor,
     correlationId?: string,
   ) {
+    await this.assertEdWorkflow(hospitalId);
     this.loggingService.info(
       'Creating new encounter',
       {
@@ -268,15 +270,15 @@ export class EncountersService {
     dto: CreateAdmittanceEncounterDto,
     actor?: EncounterActor,
     correlationId?: string,
-  ): Promise<EncounterDetailDto> {
+  ) {
+    await this.assertEdWorkflow(hospitalId);
     this.loggingService.info(
-      'Creating admittance encounter with a new patient account',
+      'Creating admittance encounter with a visit-only patient profile',
       {
         service: 'EncountersService',
         operation: 'createAdmittanceEncounter',
         correlationId,
         hospitalId,
-        email: dto.email,
       },
       {
         actorUserId: actor?.actorUserId,
@@ -286,21 +288,13 @@ export class EncountersService {
 
     try {
       const { encounter, event } = await this.prisma.$transaction(async (tx) => {
-        const email = dto.email.trim().toLowerCase();
-        const existingPatient = await tx.patientProfile.findUnique({
-          where: { email },
-          select: { id: true },
-        });
-
-        if (existingPatient) {
-          throw new ConflictException('An account with this email already exists');
-        }
-
-        const password = await hashPatientPassword('00000');
+        const contactEmail = dto.email.trim().toLowerCase();
+        const password = await buildGuestPlaceholderPasswordHash();
         const patient = await tx.patientProfile.create({
           data: {
-            email,
+            email: `${randomUUID()}@intake.local`,
             password,
+            accountEnabled: false,
             firstName: dto.firstName?.trim() || null,
             lastName: dto.lastName?.trim() || null,
             phone: dto.phone?.trim() || null,
@@ -350,6 +344,16 @@ export class EncountersService {
           },
         });
 
+        await tx.encounterContact.create({
+          data: {
+            encounterId: created.id,
+            hospitalId,
+            email: contactEmail,
+            phone: dto.phone?.trim() || null,
+            source: 'STAFF_ADMITTANCE',
+          },
+        });
+
         const createdEvent = await this.events.emitEncounterEventTx(tx, {
           encounterId: created.id,
           hospitalId: created.hospitalId,
@@ -383,7 +387,7 @@ export class EncountersService {
 
       void this.events.dispatchEncounterEventAndMarkProcessed(event);
 
-      return this.getEncounter(hospitalId, encounter.id, correlationId);
+      return encounter;
     } catch (error) {
       await this.loggingService.error(
         'Failed to create admittance encounter',
@@ -407,8 +411,8 @@ export class EncountersService {
   async listEncounters(
     hospitalId: number,
     query: ListEncountersQueryDto,
-    correlationId?: string,
-    readContext?: StaffReadContext,
+    correlationId: string | undefined,
+    readContext: StaffReadContext,
   ): Promise<EncounterListResponseDto> {
     this.loggingService.info(
       'Listing encounters',
@@ -417,13 +421,13 @@ export class EncountersService {
         operation: 'listEncounters',
         correlationId,
         hospitalId,
-        userId: readContext?.actorUserId,
+        userId: readContext.actorUserId,
       },
       {
         status: query.status,
         since: query.since,
         limit: query.limit,
-        role: readContext?.role,
+        role: readContext.role,
       },
     );
 
@@ -441,9 +445,7 @@ export class EncountersService {
       }
 
       const limit = query.limit || 50;
-      const roleCanReadClinical = readContext
-        ? hasClinicalCapability(readContext.role, 'encounter.list.clinical')
-        : true;
+      const roleCanReadClinical = hasClinicalCapability(readContext.role, 'encounter.list.clinical');
 
       const [encounters, total] = await Promise.all([
         this.prisma.encounter.findMany({
@@ -478,13 +480,11 @@ export class EncountersService {
       ]);
       const hasMore = encounters.length > limit;
       const page = hasMore ? encounters.slice(0, limit) : encounters;
-      const clinicallyAccessibleIds = readContext
-        ? await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
-            { userId: readContext.actorUserId, hospitalId, role: readContext.role },
-            page.map((encounter) => encounter.id),
-          )
-        : new Set(page.map((encounter) => encounter.id));
-      if (readContext?.actorUserId) {
+      const clinicallyAccessibleIds = await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
+        { userId: readContext.actorUserId, hospitalId, role: readContext.role },
+        page.map((encounter) => encounter.id),
+      );
+      if (readContext.actorUserId) {
         await this.sensitiveReadAudit.record({
           resource: 'ENCOUNTER_LIST',
           actorUserId: readContext.actorUserId,
@@ -510,7 +510,7 @@ export class EncountersService {
         {
           count: page.length,
           total,
-          role: readContext?.role,
+          role: readContext.role,
         },
       );
 
@@ -542,14 +542,49 @@ export class EncountersService {
     }
   }
 
+  /**
+   * The response to a committed staff write: the encounter as this caller may read it, with the
+   * same care-team check, field shaping and audit as a GET. The write has already committed, so a
+   * failed read returns the written row's operational fields instead of an error the client would
+   * retry (a retried admit would create a second encounter).
+   */
+  async readBackStaffWrite(
+    hospitalId: number,
+    written: { id: number },
+    correlationId: string | undefined,
+    readContext: StaffReadContext,
+  ) {
+    try {
+      return await this.getEncounter(hospitalId, written.id, correlationId, readContext);
+    } catch {
+      await this.loggingService.warn(
+        'Staff write committed but its read-back failed; returning operational fields',
+        {
+          service: 'EncountersService',
+          operation: 'readBackStaffWrite',
+          correlationId,
+          encounterId: written.id,
+          hospitalId,
+          userId: readContext.actorUserId,
+        },
+      );
+      const row = written as Record<string, unknown>;
+      const operationalScalars = STAFF_OPERATIONAL_ENCOUNTER_FIELDS.filter((field) => !field.includes('.'));
+      return {
+        ...Object.fromEntries(operationalScalars.map((field) => [field, row[field] ?? null])),
+        clinicalFieldsRedacted: true,
+      };
+    }
+  }
+
   async getEncounter(
     hospitalId: number,
     encounterId: number,
-    correlationId?: string,
-    readContext?: StaffReadContext,
+    correlationId: string | undefined,
+    readContext: StaffReadContext,
   ) {
-    let canReadClinical = this.canReadClinicalEncounter(readContext?.role);
-    if (canReadClinical && readContext) {
+    let canReadClinical = this.canReadClinicalEncounter(readContext.role);
+    if (canReadClinical) {
       const accessible = await this.clinicalAccess.getClinicallyAccessibleEncounterIds(
         {
           userId: readContext.actorUserId,
@@ -568,10 +603,10 @@ export class EncountersService {
         correlationId,
         encounterId,
         hospitalId,
-        userId: readContext?.actorUserId,
+        userId: readContext.actorUserId,
       },
       {
-        role: readContext?.role,
+        role: readContext.role,
         clinicalReadAllowed: canReadClinical,
       },
     );
@@ -585,6 +620,7 @@ export class EncountersService {
           },
         },
         include: {
+          contact: { select: { email: true, phone: true, source: true } },
           patient: {
             select: {
               id: true,
@@ -657,12 +693,12 @@ export class EncountersService {
         },
         {
           status: encounter.status,
-          role: readContext?.role,
+          role: readContext.role,
           clinicalReadAllowed: canReadClinical,
         },
       );
 
-      if (readContext?.actorUserId) {
+      if (readContext.actorUserId) {
         await this.sensitiveReadAudit.record({
           resource: 'ENCOUNTER_DETAIL',
           actorUserId: readContext.actorUserId,
@@ -753,6 +789,7 @@ export class EncountersService {
     actor?: EncounterActor,
     correlationId?: string,
   ) {
+    await this.assertEdWorkflow(hospitalId);
     const transition = TRANSITIONS[transitionKey];
     if (!transition) {
       await this.loggingService.error(
@@ -820,7 +857,7 @@ export class EncountersService {
           throw new NotFoundException(`Encounter ${encounterId} not found`);
         }
 
-        if (TERMINAL_STATUSES.has(current.status)) {
+        if (isTerminalEncounterStatus(current.status)) {
           await this.loggingService.warn(
             'Transition attempted on terminal status',
             {
@@ -917,7 +954,7 @@ export class EncountersService {
           actor,
         });
 
-        if (TERMINAL_STATUSES.has(updated.status)) {
+        if (isTerminalEncounterStatus(updated.status)) {
           await tx.patientSession.updateMany({
             where: {
               encounterId: updated.id,
@@ -990,6 +1027,13 @@ export class EncountersService {
     }
   }
 
+  private async assertEdWorkflow(hospitalId: number): Promise<void> {
+    const record = await this.prisma.hospitalConfig?.findUnique({ where: { hospitalId }, select: { config: true } });
+    if (normalizeHospitalConfig(record?.config).workflowProfile !== 'ED') {
+      throw new BadRequestException('Clinic visits require clinic-specific commands');
+    }
+  }
+
   // ─── Patient-scoped access methods ──────────────────────────────────────────
 
   /**
@@ -1046,6 +1090,7 @@ export class EncountersService {
               select: assetSummarySelect,
               orderBy: { createdAt: 'asc' },
             },
+            hospital: { select: clinicVisitSiteSelect },
           },
         })
       : await this.prisma.encounter.findUnique({
@@ -1073,6 +1118,7 @@ export class EncountersService {
               select: assetSummarySelect,
               orderBy: { createdAt: 'asc' },
             },
+            hospital: { select: clinicVisitSiteSelect },
           },
         });
 
@@ -1091,6 +1137,7 @@ export class EncountersService {
       chiefComplaint: encounter.chiefComplaint,
       details: encounter.details,
       hospitalId: encounter.hospitalId,
+      clinicAlias: clinicAliasFor(encounter.hospital),
       expectedAt: encounter.expectedAt,
       arrivedAt: encounter.arrivedAt,
       priageSummary: this.toPriageSummary(encounter.summaryProjections[0] ?? null),
@@ -1144,10 +1191,11 @@ export class EncountersService {
         hospitalId: true,
         expectedAt: true,
         arrivedAt: true,
+        hospital: { select: clinicVisitSiteSelect },
       },
     });
 
-    return encounters;
+    return encounters.map(({ hospital, ...encounter }) => ({ ...encounter, clinicAlias: clinicAliasFor(hospital) }));
   }
 
   /**
@@ -1433,8 +1481,8 @@ export class EncountersService {
     return value;
   }
 
-  private canReadClinicalEncounter(role: Role | undefined): boolean {
-    return role ? hasClinicalCapability(role, 'encounter.detail.clinical') : true;
+  private canReadClinicalEncounter(role: Role): boolean {
+    return hasClinicalCapability(role, 'encounter.detail.clinical');
   }
 
   private toOperationalEncounter<T extends {
@@ -1452,6 +1500,7 @@ export class EncountersService {
     departedAt: Date | null;
     cancelledAt: Date | null;
     patient: { id: number; firstName: string | null; lastName: string | null };
+    contact?: { email: string | null; phone: string | null; source: string } | null;
   }>(encounter: T) {
     return {
       id: encounter.id,
@@ -1472,6 +1521,7 @@ export class EncountersService {
         firstName: encounter.patient.firstName,
         lastName: encounter.patient.lastName,
       },
+      contact: encounter.contact ?? null,
       clinicalFieldsRedacted: true,
     };
   }

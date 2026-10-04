@@ -26,6 +26,7 @@ import {
   normalizeHospitalConfig,
   type HospitalFeedbackSubmission,
 } from './hospital-config';
+import { TERMINAL_ENCOUNTER_STATUSES } from '../../shared/types/encounter-status';
 
 @Injectable()
 export class HospitalsService {
@@ -194,7 +195,7 @@ export class HospitalsService {
       where: {
         hospitalId,
         status: {
-          notIn: [EncounterStatus.COMPLETE, EncounterStatus.UNRESOLVED, EncounterStatus.CANCELLED],
+          notIn: TERMINAL_ENCOUNTER_STATUSES,
         },
       },
     });
@@ -271,7 +272,7 @@ export class HospitalsService {
       where: {
         hospitalId,
         status: {
-          notIn: [EncounterStatus.COMPLETE, EncounterStatus.UNRESOLVED, EncounterStatus.CANCELLED],
+          notIn: TERMINAL_ENCOUNTER_STATUSES,
         },
       },
       select: {
@@ -386,8 +387,17 @@ export class HospitalsService {
   async updateConfig(hospitalId: number, dto: UpdateHospitalConfigDto, correlationId?: string) {
     await this.assertHospitalExists(hospitalId);
 
-    const normalized = normalizeHospitalConfig(dto);
-    const normalizedConfigJson = normalized as unknown as Prisma.InputJsonValue;
+    const existing = await this.prisma.hospitalConfig.findUnique({
+      where: { hospitalId },
+      select: { config: true },
+    });
+    const stored = existing?.config && typeof existing.config === 'object' && !Array.isArray(existing.config)
+      ? existing.config as Record<string, unknown>
+      : {};
+    // The staff settings form owns only its current sections. A PUT must not
+    // reset the rollout-only workflow profile or future tenant settings.
+    const normalized = normalizeHospitalConfig({ ...stored, ...dto });
+    const normalizedConfigJson = { ...stored, ...normalized } as unknown as Prisma.InputJsonValue;
 
     this.loggingService.info('Updating hospital configuration', {
       service: 'HospitalsService',

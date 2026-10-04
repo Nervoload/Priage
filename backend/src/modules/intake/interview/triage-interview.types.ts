@@ -35,6 +35,10 @@ export interface InterviewEmergencyAlert {
   title: string;
   body: string;
   recommendation: string;
+  /** Why the warning was raised. Staff-facing only. */
+  reason?: string;
+  /** The answered question that triggered the warning. Staff-facing only. */
+  triggerQuestionId?: string;
 }
 
 export interface InterviewAnswerValue {
@@ -88,6 +92,13 @@ export interface InterviewInterrupt {
   reason: string;
 }
 
+/** A clinic's own questions, fixed for the life of one interview and asked right after the safety question. */
+export interface ClinicQuestionnairePin {
+  versionId: number;
+  version: number;
+  questions: InterviewQuestion[];
+}
+
 export interface InterviewStateSnapshot {
   interviewPublicId: string;
   status: InterviewStatus;
@@ -108,6 +119,8 @@ export interface InterviewStateSnapshot {
   providerState: InterviewProviderState | null;
   generationMode: InterviewGenerationMode;
   governance: InterviewGovernance;
+  /** Set only for clinic visits whose clinic has published questions. */
+  clinicQuestionnaire: ClinicQuestionnairePin | null;
 }
 
 export interface InterviewClientState {

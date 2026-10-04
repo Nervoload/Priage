@@ -14,6 +14,10 @@ import { AssetsProcessor } from './processors/assets.processor';
 import { JobQueueModule } from './job-queue.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
 import { WebhooksProcessor } from './processors/webhooks.processor';
+import { ClinicIntakeModule } from '../clinic/clinic-intake.module';
+import { AppointmentsProcessor } from './processors/appointments.processor';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { NotificationsProcessor } from './processors/notifications.processor';
 
 @Module({
   imports: [
@@ -23,7 +27,9 @@ import { WebhooksProcessor } from './processors/webhooks.processor';
     AlertsModule,
     AssetsModule,
     WebhooksModule,
+    ClinicIntakeModule,
+    NotificationsModule,
   ],
-  providers: [JobsService, EventsProcessor, AlertsProcessor, LoggingProcessor, AssetsProcessor, WebhooksProcessor],
+  providers: [JobsService, EventsProcessor, AlertsProcessor, LoggingProcessor, AssetsProcessor, WebhooksProcessor, AppointmentsProcessor, NotificationsProcessor],
 })
 export class JobsModule {}

@@ -2,23 +2,23 @@ import React from 'react';
 import type { ReactNode } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import '@fontsource-variable/instrument-sans/wght.css';
+import '@fontsource/instrument-serif/400.css';
+import '@fontsource/instrument-serif/400-italic.css';
 import './index.css';
 import { DemoGatePage } from './auth/DemoGatePage';
 import { useDemoGate } from './auth/useDemoGate';
 import { AuthProvider } from './shared/hooks/useAuth';
 import { GuestSessionProvider } from './shared/hooks/useGuestSession';
 import { ToastProvider } from './shared/ui/ToastContext';
+import { LoadingScreen } from './shared/ui/Controls';
 import { PatientApp } from './app/PatientApp';
 
 function DemoGateWrapper({ children }: { children: ReactNode }) {
   const { checking, gateActive, error, verify } = useDemoGate();
 
   if (checking) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', fontFamily: 'sans-serif', color: '#4a5a77' }}>
-        Loading\u2026
-      </div>
-    );
+    return <LoadingScreen full />;
   }
 
   if (gateActive) {

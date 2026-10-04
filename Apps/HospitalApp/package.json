@@ -14,7 +14,10 @@
     "check": "npm run lint && npm run test && npm run build"
   },
   "dependencies": {
+    "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@fontsource/instrument-serif": "^5.3.0",
     "jspdf": "^4.2.0",
+    "qrcode": "^1.5.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "socket.io-client": "^4.8.3"
@@ -22,10 +25,11 @@
   "devDependencies": {
     "@eslint/js": "^9.25.1",
     "@tailwindcss/vite": "^4.2.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
-    "@vitest/coverage-v8": "^3.2.4",
     "@vitejs/plugin-react": "^4.2.0",
+    "@vitest/coverage-v8": "^3.2.4",
     "eslint": "^9.25.1",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.0.0",

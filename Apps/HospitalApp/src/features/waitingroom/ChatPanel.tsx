@@ -13,7 +13,10 @@ interface ChatPanelProps {
 export function ChatPanel({ encounter, messages, onSendMessage, hideHeader = false }: ChatPanelProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const encounterIdRef = useRef(encounter.id);
+  encounterIdRef.current = encounter.id;
 
   const name = patientName(encounter.patient);
   const avatarTheme = getDashboardAvatarTheme(encounter.patientId);
@@ -23,14 +26,24 @@ export function ChatPanel({ encounter, messages, onSendMessage, hideHeader = fal
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
+  useEffect(() => {
+    setDraft('');
+    setSendError(null);
+  }, [encounter.id]);
+
   const handleSend = async () => {
     const text = draft.trim();
     if (!text || sending) return;
 
     try {
       setSending(true);
+      setSendError(null);
       await onSendMessage(encounter.id, text);
-      setDraft('');
+      if (encounterIdRef.current === encounter.id) setDraft('');
+    } catch {
+      if (encounterIdRef.current === encounter.id) {
+        setSendError('Could not confirm this message was sent. Check the conversation before trying again.');
+      }
     } finally {
       setSending(false);
     }
@@ -81,20 +94,23 @@ export function ChatPanel({ encounter, messages, onSendMessage, hideHeader = fal
           <div className="flex flex-col gap-3">
             {messages.map((message) => {
               const isAdmin = message.sender === 'admin';
+              const bubbleClass = message.isInternal
+                ? 'rounded-br-[6px] border border-dashed border-slate-300 bg-slate-100 text-slate-800'
+                : isAdmin
+                  ? 'rounded-br-[6px] bg-priage-700 text-white'
+                  : 'rounded-bl-[6px] border border-slate-200/80 bg-white text-slate-800';
+              const metaClass = isAdmin && !message.isInternal ? 'text-white/70' : 'text-slate-400';
               return (
-                <div key={message.id} className={`flex ${isAdmin ? 'justify-end' : 'justify-start'}`}>
+                <div key={message.id} className={`flex ${isAdmin || message.isInternal ? 'justify-end' : 'justify-start'}`}>
                   <div
                     className={`
                       max-w-[72%] rounded-[18px] px-4 py-3 text-sm shadow-[0_16px_36px_-28px_rgba(15,23,42,0.35)]
-                      ${isAdmin
-                        ? 'rounded-br-[6px] bg-priage-700 text-white'
-                        : 'rounded-bl-[6px] border border-slate-200/80 bg-white text-slate-800'
-                      }
+                      ${bubbleClass}
                     `}
                   >
                     <div className="whitespace-pre-wrap break-words leading-6">{message.text}</div>
-                    <div className={`mt-2 text-[11px] ${isAdmin ? 'text-white/70' : 'text-slate-400'}`}>
-                      {formatTime(message.timestamp)}
+                    <div className={`mt-2 text-[11px] ${metaClass}`}>
+                      {message.isInternal ? `Internal note · not visible to patient · ${formatTime(message.timestamp)}` : formatTime(message.timestamp)}
                     </div>
                   </div>
                 </div>
@@ -109,10 +125,12 @@ export function ChatPanel({ encounter, messages, onSendMessage, hideHeader = fal
         <div className="flex items-end gap-3">
           <textarea
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => { setDraft(event.target.value); setSendError(null); }}
             onKeyDown={handleKeyDown}
+            aria-label="Message to patient"
             placeholder="Type a message..."
             rows={1}
+            disabled={sending}
             className="
               max-h-24 min-h-[44px] flex-1 resize-none rounded-[16px] border border-slate-200 bg-white px-4 py-3
               text-sm text-slate-800 outline-none transition-all placeholder:text-slate-400
@@ -132,6 +150,7 @@ export function ChatPanel({ encounter, messages, onSendMessage, hideHeader = fal
             {sending ? 'Sending…' : 'Send'}
           </button>
         </div>
+        {sendError && <p role="alert" className="mt-2 text-xs text-rose-700">{sendError}</p>}
       </div>
     </div>
   );

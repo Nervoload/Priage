@@ -5,8 +5,11 @@
 // ─── Enums (mirror Prisma enums) ────────────────────────────────────────────
 
 export type EncounterStatus =
+  | 'INTAKE'
+  | 'REQUESTED'
   | 'EXPECTED'
   | 'ADMITTED'
+  | 'CARE'
   | 'TRIAGE'
   | 'WAITING'
   | 'COMPLETE'
@@ -19,12 +22,13 @@ export type SenderType = 'PATIENT' | 'USER' | 'SYSTEM';
 
 export type AlertSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
-export const HOSPITAL_PAGE_KEYS = ['admit', 'triage', 'waiting', 'analytics', 'settings'] as const;
+export const HOSPITAL_PAGE_KEYS = ['admit', 'triage', 'care', 'waiting', 'analytics', 'settings'] as const;
 export type HospitalPageKey = typeof HOSPITAL_PAGE_KEYS[number];
 
 export type HospitalIntakeResponseType = 'text' | 'textarea' | 'boolean' | 'number' | 'select';
 export type HospitalIntakeAppliesTo = 'admit' | 'triage' | 'both';
 export type HospitalSurveyResponseType = 'scale' | 'text' | 'boolean';
+export type HospitalWorkflowProfile = 'ED' | 'CLINIC_APPOINTMENT';
 
 export interface HospitalCustomIntakeQuestion {
   id: string;
@@ -45,7 +49,8 @@ export interface HospitalFeedbackSurveyQuestion {
 }
 
 export interface HospitalOperationalConfig {
-  version: 1;
+  version: 2;
+  workflowProfile: HospitalWorkflowProfile;
   pageAccess: Record<Role, HospitalPageKey[]>;
   customIntakeQuestions: HospitalCustomIntakeQuestion[];
   admittanceFeedbackSurvey: HospitalFeedbackSurveyQuestion[];
@@ -243,6 +248,7 @@ export interface EncounterListItem extends EncounterBase {}
 
 export interface EncounterDetail extends EncounterBase {
   details: string | null;
+  contact?: { email: string | null; phone: string | null; source: string } | null;
 }
 
 export type Encounter = EncounterListItem | EncounterDetail;
@@ -369,6 +375,8 @@ export interface ChatMessage {
   id: string;
   encounterId: number;
   sender: 'admin' | 'patient';
+  /** Staff-only note; never shown to the patient. */
+  isInternal: boolean;
   text: string;
   timestamp: string;
 }
@@ -379,6 +387,7 @@ export function messageToChatMessage(msg: Message): ChatMessage {
     id: String(msg.id),
     encounterId: msg.encounterId,
     sender: msg.senderType === 'PATIENT' ? 'patient' : 'admin',
+    isInternal: msg.isInternal,
     text: msg.content,
     timestamp: msg.createdAt,
   };

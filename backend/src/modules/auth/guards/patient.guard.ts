@@ -5,11 +5,11 @@
 // Attaches { patientId, sessionId, encounterId, hospitalId } to request.patientUser.
 
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
-import { EncounterStatus } from '@prisma/client';
 
 import { PATIENT_SESSION_COOKIE, readCookie } from '../../../common/http/auth-cookie.util';
 import { hashPatientSessionToken } from '../../patient-auth/patient-session-token.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isTerminalEncounterStatus } from '../../../shared/types/encounter-status';
 
 export interface PatientContext {
   patientId: number;
@@ -17,12 +17,6 @@ export interface PatientContext {
   encounterId: number | null;
   hospitalId: number | null;
 }
-
-const TERMINAL_SESSION_ENCOUNTER_STATUSES = new Set<EncounterStatus>([
-  EncounterStatus.COMPLETE,
-  EncounterStatus.CANCELLED,
-  EncounterStatus.UNRESOLVED,
-]);
 
 @Injectable()
 export class PatientGuard implements CanActivate {
@@ -102,7 +96,7 @@ export class PatientGuard implements CanActivate {
     const hasActiveEncounter =
       session.encounterId !== null
       && session.encounter !== null
-      && !TERMINAL_SESSION_ENCOUNTER_STATUSES.has(session.encounter.status);
+      && !isTerminalEncounterStatus(session.encounter.status);
     const activeEncounterHospitalId = hasActiveEncounter && session.encounter
       ? session.encounter.hospitalId
       : null;

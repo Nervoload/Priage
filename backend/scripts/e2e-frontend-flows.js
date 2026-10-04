@@ -46,7 +46,7 @@ let failed = 0;
 let token = null;
 let socket = null;
 let fixtureContext = null;
-const STAFF_AUTH_COOKIE = 'priage_staff_auth';
+const { STAFF_AUTH_COOKIE } = require('./lib/cookie-names');
 
 if (!SEED && (!testEmail || !testPassword)) {
   throw new Error('E2E_TEST_EMAIL/E2E_TEST_PASSWORD or PRIAGE_DEV_ADMIN_EMAIL/PRIAGE_DEV_ADMIN_PASSWORD must be set when not using --seed');
@@ -344,6 +344,7 @@ async function flowCreatePatientAndEncounter(hospitalSlug) {
   const phone = `+1555${Date.now().toString().slice(-7)}`;
   const { status: s1, json: intent, headers: intentHeaders } = await api('POST', '/intake/intent', {
     phone,
+    contactEmail: `e2e-${Date.now()}@example.ca`,
     firstName: 'E2E',
     lastName: 'TestPatient',
     age: 30,
@@ -489,8 +490,11 @@ async function flowListAssessments(encounterId) {
 }
 
 async function flowMoveToWaiting(encounterId) {
-  section('10. Move to waiting (POST /encounters/:id/waiting)');
-  const { status, json } = await api('POST', `/encounters/${encounterId}/waiting`);
+  section('10. Verify waiting after triage assessment');
+  const current = await api('GET', `/encounters/${encounterId}`);
+  const { status, json } = current.json?.status === 'WAITING'
+    ? current
+    : await api('POST', `/encounters/${encounterId}/waiting`);
   assert('Returns 200/201', status === 200 || status === 201);
   assert('Status is WAITING', json?.status === 'WAITING');
   assert('Has waitingAt timestamp', !!json?.waitingAt);

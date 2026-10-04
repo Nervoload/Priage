@@ -42,10 +42,7 @@ export async function listMessages(
 }
 
 // ─── Send a message (staff → patient) ───────────────────────────────────────
-// Phase 6.2: This function is fully built but not yet used by ChatPanel or
-// HospitalApp.handleSendMessage. Wire it in to replace the local-state-only
-// messaging. Optionally, add a socket.emit('message.send', ...) path for
-// even lower latency (see socket.ts Phase 6.2 comment).
+// Staff sends through this endpoint; realtime events update other open clients.
 
 export interface SendMessagePayload {
   content: string;

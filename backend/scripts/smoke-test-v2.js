@@ -19,10 +19,11 @@ const { randomUUID } = require('crypto');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader } = require('./lib/demo-gate');
 const {
+  PATIENT_SESSION_COOKIE,
   extractPatientCookieHeader,
   hashPatientCookie,
 } = require('./lib/session-cookies');
-const STAFF_AUTH_COOKIE = 'priage_staff_auth';
+const { STAFF_AUTH_COOKIE } = require('./lib/cookie-names');
 
 // ============================================================================
 // CONFIGURATION
@@ -296,6 +297,7 @@ function buildIntentPayload(overrides = {}) {
     firstName: 'Smoke',
     lastName: 'TestPatient',
     phone: `+1555${suffix.slice(-7)}`,
+    contactEmail: `smoke-${suffix}@example.ca`,
     age: 45,
     chiefComplaint: 'Chest pain and shortness of breath',
     details: 'Pain started 2 hours ago',
@@ -687,15 +689,15 @@ async function testPatientIntake() {
       () => makeRequest('POST', '/intake/intent', {
         body: { lastName: 'OnlyLastName' },
       }),
-      ['400', 'firstName', 'phone', 'chiefComplaint'],
+      ['400', 'contactEmail', 'firstName', 'phone', 'chiefComplaint'],
       'Intent creation unexpectedly succeeded without required fields',
     );
-    for (const requiredField of ['400', 'firstName', 'phone', 'chiefComplaint']) {
+    for (const requiredField of ['400', 'contactEmail', 'firstName', 'phone', 'chiefComplaint']) {
       if (!missingFieldMessage.includes(requiredField)) {
         throw new Error(`Guest intake validation response missing ${requiredField}: ${missingFieldMessage}`);
       }
     }
-    logSuccess('Guest intake requires firstName, phone, and chiefComplaint');
+    logSuccess('Guest intake requires visit email, firstName, phone, and chiefComplaint');
 
     logSubSection('2B: Create Patient Intent (POST /intake/intent)');
     const intent = await makeRequest('POST', '/intake/intent', {
@@ -727,7 +729,7 @@ async function testPatientIntake() {
     logSubSection('2D: Invalid Patient Token (Expected 401)');
     await expectRequestFailure(
       () => makeRequest('POST', '/intake/confirm', {
-        headers: patientAuth('priage_patient_session=invalid-patient-token'),
+        headers: patientAuth(`${PATIENT_SESSION_COOKIE}=invalid-patient-token`),
         body: { hospitalId: testState.hospital.id },
       }),
       ['401', 'Invalid patient session token', 'Unauthorized'],
@@ -982,40 +984,16 @@ async function testEncounterManagement() {
     }
     logSuccess(`Listed ${encounters.data.length} encounter(s), total: ${encounters.total}`);
 
-    logSubSection('3D.1: List Patients (GET /patients)');
-    const patients = await makeRequest('GET', '/patients', {
-      headers: staffAuth(testState.staffToken),
-    });
-    if (!patients.data || !Array.isArray(patients.data) || !patients.meta) {
-      throw new Error('Expected paginated patient response');
-    }
-    const expectedListedPatientId = testState.intakePatient?.id ?? testState.patient?.id;
-    const listedPatient = patients.data.find((patient) => patient.id === expectedListedPatientId);
-    if (!listedPatient) {
-      throw new Error(`Expected patient ${expectedListedPatientId} in /patients response`);
-    }
-    if (listedPatient.preferredLanguage !== 'en') {
-      throw new Error(`Expected preferredLanguage=en, got ${listedPatient.preferredLanguage}`);
-    }
-    logSuccess(`Listed ${patients.data.length} patient(s), total: ${patients.meta.total}`);
-
-    logSubSection('3D.2: Filter Patients by Encounter Status');
-    const filteredPatients = await makeRequest('GET', '/patients?status=EXPECTED', {
-      headers: staffAuth(testState.staffToken),
-    });
-    if (!filteredPatients.data.some((patient) => patient.id === testState.patient.id || patient.id === testState.intakePatient?.id)) {
-      throw new Error('Expected at least one EXPECTED patient in filtered results');
-    }
-    logSuccess(`Filtered patients by status, ${filteredPatients.data.length} result(s)`);
+    logSubSection('3D.1: Operational staff cannot read clinical patient profiles');
+    await expectRequestFailure(
+      () => makeRequest('GET', '/patients', { headers: staffAuth(testState.staffToken) }),
+      ['403'],
+      'Operational staff unexpectedly read the clinical patient directory',
+    );
+    logSuccess('Clinical patient directory denied to operational staff');
 
     logSubSection('3D.3: Wrong-Hospital Scoping');
     const external = await createExternalEncounter();
-    const scopedPatients = await makeRequest('GET', '/patients', {
-      headers: staffAuth(testState.staffToken),
-    });
-    if (scopedPatients.data.some((patient) => patient.id === external.patient.id)) {
-      throw new Error('Found patient from another hospital in results');
-    }
     await expectRequestFailure(
       () => makeRequest('GET', `/encounters/${external.encounter.id}`, {
         headers: staffAuth(testState.staffToken),
@@ -1025,16 +1003,6 @@ async function testEncounterManagement() {
     );
     logSuccess('Staff encounter reads are hospital scoped');
 
-    logSubSection('3D.4: Reject Invalid Patient Query');
-    await expectRequestFailure(
-      () => makeRequest('GET', '/patients?limit=0', {
-        headers: staffAuth(testState.staffToken),
-      }),
-      ['400'],
-      'Invalid patient query unexpectedly succeeded',
-    );
-    logSuccess('Invalid patient query rejected with 400');
-    
     logSubSection('3E: Get Encounter Details (GET /encounters/:id)');
     const encounter = await makeRequest('GET', `/encounters/${testState.encounter.id}`, {
       headers: staffAuth(testState.staffToken),
@@ -1247,19 +1215,19 @@ async function testMessaging() {
     
     logSubSection('5D: List Encounter Messages');
     const messages = await makeRequest('GET', `/messaging/encounters/${testState.encounter.id}/messages`, {
-      headers: staffAuth(testState.staffToken),
+      headers: staffAuth(testState.nurseToken),
     });
     if (!messages.data || !Array.isArray(messages.data)) {
       throw new Error('Expected paginated { data: [...] }');
     }
     if (!messages.data.some((entry) => entry.id === message.id) || !messages.data.some((entry) => entry.id === internalMessage.id)) {
-      throw new Error('Staff message history is missing public or internal messages');
+      throw new Error('Clinician message history is missing public or internal messages');
     }
     logSuccess(`Listed ${messages.data.length} message(s)`);
     
     logSubSection('5E: Initial Read State');
     const initialReadState = await makeRequest('GET', `/messaging/encounters/${testState.encounter.id}/read-state`, {
-      headers: staffAuth(testState.staffToken),
+      headers: staffAuth(testState.nurseToken),
     });
     if (initialReadState.lastReadMessageId !== null) {
       throw new Error(`Expected null lastReadMessageId before reading, got ${initialReadState.lastReadMessageId}`);
@@ -1268,7 +1236,7 @@ async function testMessaging() {
 
     logSubSection('5F: Mark Message as Read');
     const readResult = await makeRequest('POST', `/messaging/messages/${message.id}/read`, {
-      headers: staffAuth(testState.staffToken),
+      headers: staffAuth(testState.nurseToken),
     });
     if (readResult.ok !== true || readResult.lastReadMessageId !== message.id) {
       throw new Error('Read acknowledgement did not persist the expected cursor');
@@ -1277,7 +1245,7 @@ async function testMessaging() {
 
     logSubSection('5G: Read State After Read');
     const readState = await makeRequest('GET', `/messaging/encounters/${testState.encounter.id}/read-state`, {
-      headers: staffAuth(testState.staffToken),
+      headers: staffAuth(testState.nurseToken),
     });
     if (readState.lastReadMessageId !== message.id || !readState.lastReadAt) {
       throw new Error('Encounter read-state did not update after reading the message');
@@ -1356,7 +1324,7 @@ async function testAlerts() {
     
     logSubSection('6B: List Unacknowledged Alerts');
     const unacked = await makeRequest('GET', `/alerts/hospitals/${testState.hospital.id}/unacknowledged`, {
-      headers: staffAuth(testState.staffToken),
+      headers: staffAuth(testState.nurseToken),
     });
     if (!Array.isArray(unacked)) throw new Error('Alerts not listed correctly');
     if (!unacked.some((entry) => entry.id === alert.id)) {
@@ -1369,7 +1337,7 @@ async function testAlerts() {
     
     logSubSection('6C: Acknowledge Alert');
     const acknowledged = await makeRequest('POST', `/alerts/${alert.id}/acknowledge`, {
-      headers: staffAuth(testState.staffToken),
+      headers: staffAuth(testState.nurseToken),
     });
     if (!acknowledged.acknowledgedAt) {
       throw new Error('Acknowledged alert did not persist acknowledgedAt');
@@ -1387,7 +1355,7 @@ async function testAlerts() {
     
     logSubSection('6E: List Encounter Alerts');
     const encounterAlerts = await makeRequest('GET', `/alerts/encounters/${testState.encounter.id}`, {
-      headers: staffAuth(testState.staffToken),
+      headers: staffAuth(testState.nurseToken),
     });
     if (!Array.isArray(encounterAlerts)) throw new Error('Not listed correctly');
     const resolvedAlert = encounterAlerts.find((entry) => entry.id === alert.id);
@@ -1414,10 +1382,13 @@ async function testEncounterCompletion() {
   logSection('TEST 7: Encounter Completion');
   
   try {
-    logSubSection('7A: Move to Waiting Room');
-    const waitingEncounter = await makeRequest('POST', `/encounters/${testState.encounter.id}/waiting`, {
-      headers: staffAuth(testState.nurseToken),
-    });
+    logSubSection('7A: Verify Waiting Room after triage');
+    const currentEncounter = await prisma.encounter.findUnique({ where: { id: testState.encounter.id } });
+    const waitingEncounter = currentEncounter?.status === 'WAITING'
+      ? currentEncounter
+      : await makeRequest('POST', `/encounters/${testState.encounter.id}/waiting`, {
+          headers: staffAuth(testState.nurseToken),
+        });
     if (waitingEncounter.status !== 'WAITING') {
       throw new Error(`Expected WAITING, got ${waitingEncounter.status}`);
     }
@@ -1490,15 +1461,20 @@ async function testEncounterCompletion() {
     );
     logSuccess('Terminal status protected — cannot transition from COMPLETE');
 
-    logSubSection('7F: Patient Session Hidden After Terminal Status');
-    await expectRequestFailure(
-      () => makeRequest('GET', `/patient/encounters/${testState.encounter.id}`, {
-        headers: patientAuth(testState.patientToken),
-      }),
-      ['401', 'no longer active', 'Unauthorized'],
-      'Completed encounter unexpectedly remained patient-visible',
-    );
-    logSuccess('Completed encounter is hidden behind an inactive patient session');
+    logSubSection('7F: Completed visit remains in patient history without active queue context');
+    const completedHistory = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}`, {
+      headers: patientAuth(testState.patientToken),
+    });
+    if (completedHistory.status !== 'COMPLETE') {
+      throw new Error('Completed visit is missing from patient history');
+    }
+    const completedQueue = await makeRequest('GET', `/patient/encounters/${testState.encounter.id}/queue`, {
+      headers: patientAuth(testState.patientToken),
+    });
+    if (completedQueue.position !== 0 || completedQueue.totalInQueue !== 0) {
+      throw new Error('Completed encounter unexpectedly remained in the active queue');
+    }
+    logSuccess('Completed visit remains readable and has no active queue context');
     
   } catch (error) {
     logError('Encounter completion test failed', error);

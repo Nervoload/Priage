@@ -10,8 +10,9 @@ export const PATIENT_SESSION_EXPIRED_EVENT = 'patient-session-expired';
  */
 export async function client<T = unknown>(
   endpoint: string,
-  options: RequestInit = {},
+  options: RequestInit & { independentSession?: boolean } = {},
 ): Promise<T> {
+  const { independentSession, ...fetchOptions } = options;
   const url = `${API_BASE_URL}${endpoint}`;
 
   const headers: Record<string, string> = {
@@ -20,14 +21,14 @@ export async function client<T = unknown>(
   };
 
   const response = await fetch(url, {
-    ...options,
+    ...fetchOptions,
     credentials: 'include',
     headers,
   });
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    if (response.status === 401) {
+    if (response.status === 401 && !independentSession) {
       window.dispatchEvent(new CustomEvent(PATIENT_SESSION_EXPIRED_EVENT));
     } else if (response.status === 403 && body.includes('Demo access required')) {
       window.dispatchEvent(new CustomEvent(DEMO_ACCESS_REQUIRED_EVENT));

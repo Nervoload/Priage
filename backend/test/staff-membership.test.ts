@@ -30,6 +30,20 @@ describe('staff membership selection', () => {
 });
 
 describe('membership-scoped sessions', () => {
+  it('rejects a different tenant session on the pinned clinic deployment', async () => {
+    const prisma = { staffSession: { findUnique: vi.fn().mockResolvedValue({
+      id: 7,
+      user: { id: 4, email: 'clinician@example.ca' },
+      membership: { ...memberships[0], isActive: true, disabledAt: null },
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+    }) } };
+    const logging = { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() };
+    const service = new AuthService(prisma as never, logging as never, {} as never, { hospitalId: 2 } as never);
+    await expect(service.validateSessionToken('token', undefined, undefined, { touch: false }))
+      .rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
   it('returns role and tenant from the session membership rather than legacy User fields', async () => {
     const prisma = {
       staffSession: {
@@ -51,7 +65,7 @@ describe('membership-scoped sessions', () => {
       },
     };
     const logging = { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() };
-    const service = new AuthService(prisma as never, logging as never, {} as never);
+    const service = new AuthService(prisma as never, logging as never, {} as never, { hospitalId: null } as never);
     await expect(service.validateSessionToken('token', undefined, undefined, { touch: false })).resolves.toMatchObject({
       userId: 4,
       membershipId: 20,
@@ -74,7 +88,7 @@ describe('membership-scoped sessions', () => {
       },
     };
     const logging = { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() };
-    const service = new AuthService(prisma as never, logging as never, {} as never);
+    const service = new AuthService(prisma as never, logging as never, {} as never, { hospitalId: null } as never);
     await expect(service.validateSessionToken('token', undefined, undefined, { touch: false }))
       .rejects.toBeInstanceOf(UnauthorizedException);
     expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({

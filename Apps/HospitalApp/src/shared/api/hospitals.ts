@@ -29,9 +29,10 @@ export async function updateHospitalConfig(
   hospitalId: number,
   config: HospitalOperationalConfig,
 ): Promise<HospitalConfigEnvelope> {
+  const { pageAccess, customIntakeQuestions, admittanceFeedbackSurvey } = config;
   return client<HospitalConfigEnvelope>(`/hospitals/${hospitalId}/config`, {
     method: 'PUT',
-    body: JSON.stringify(config),
+    body: JSON.stringify({ pageAccess, customIntakeQuestions, admittanceFeedbackSurvey }),
   });
 }
 

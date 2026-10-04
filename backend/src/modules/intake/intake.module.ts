@@ -13,10 +13,13 @@ import { IntakeController } from './intake.controller';
 import { OpenAiCompatibleTriageInterviewProvider } from './interview/triage-interview.provider';
 import { TriageInterviewService } from './interview/triage-interview.service';
 import { IntakeService } from './intake.service';
+import { ClinicPilotModule } from '../clinic/clinic-pilot.module';
+import { LegacyIntakeGuard } from '../clinic/legacy-intake.guard';
 
 @Module({
   controllers: [IntakeController],
-  providers: [IntakeService, TriageInterviewService, OpenAiCompatibleTriageInterviewProvider],
-  imports: [AssetsModule, EventsModule, PrismaModule, IntakeSessionsModule],
+  providers: [IntakeService, TriageInterviewService, OpenAiCompatibleTriageInterviewProvider, LegacyIntakeGuard],
+  imports: [AssetsModule, EventsModule, PrismaModule, IntakeSessionsModule, ClinicPilotModule],
+  exports: [TriageInterviewService],
 })
 export class IntakeModule {}

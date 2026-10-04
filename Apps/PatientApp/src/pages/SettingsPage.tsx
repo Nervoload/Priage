@@ -2,9 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { deletePatientAccount, submitPatientFeedback, updateProfile } from '../shared/api/auth';
+import { getDeleteAccountConfirmationError } from '../shared/deleteAccountConfirmation';
 import { useAuth } from '../shared/hooks/useAuth';
 import type { PatientFeedbackType, PatientProfile } from '../shared/types/domain';
-import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
+import { initialsFor } from '../app/AppShell';
+import { friendlyError } from '../shared/api/errors';
+import { Modal } from '../shared/ui/Controls';
+import { cx } from '../shared/ui/cx';
+import { TextAreaField, TextField } from '../shared/ui/Field';
+import { Icon } from '../shared/ui/Icon';
 import { useToast } from '../shared/ui/ToastContext';
 
 interface ProfileDraft {
@@ -48,6 +54,7 @@ export function SettingsPage() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteEmail, setDeleteEmail] = useState('');
   const [deletePassword, setDeletePassword] = useState('');
+  const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -57,7 +64,6 @@ export function SettingsPage() {
     }
 
     setDraft(buildDraft(patient));
-    setDeleteEmail(patient.email);
   }, [patient]);
 
   const hasUnsavedChanges = useMemo(() => {
@@ -79,7 +85,7 @@ export function SettingsPage() {
     }
 
     if (!confirmPassword.trim()) {
-      showToast('Enter your password to confirm these changes.');
+      showToast('Enter your password to save these changes.');
       return;
     }
 
@@ -104,9 +110,9 @@ export function SettingsPage() {
       setEditing(false);
       setSaveModalOpen(false);
       setConfirmPassword('');
-      showToast('Account details updated.', 'success');
+      showToast('Your details are saved.', 'success');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not save your profile changes.');
+      showToast(friendlyError(error, 'We couldn’t save your changes. Check your password and try again.'));
     } finally {
       setSaving(false);
     }
@@ -115,7 +121,7 @@ export function SettingsPage() {
   async function handleSubmitFeedback() {
     const trimmed = feedbackMessage.trim();
     if (!trimmed) {
-      showToast('Add your feedback or bug report before submitting.');
+      showToast('Write a few words before sending.');
       return;
     }
 
@@ -126,9 +132,9 @@ export function SettingsPage() {
         message: trimmed,
       });
       setFeedbackMessage('');
-      showToast(feedbackType === 'bug' ? 'Bug report submitted.' : 'Feedback submitted.', 'success');
+      showToast(feedbackType === 'bug' ? 'Thanks — we’ve logged the problem.' : 'Thanks for the feedback.', 'success');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not submit your feedback.');
+      showToast(friendlyError(error, 'We couldn’t send that. Please try again.'));
     } finally {
       setSubmittingFeedback(false);
     }
@@ -139,13 +145,9 @@ export function SettingsPage() {
       return;
     }
 
-    if (deleteEmail.trim().toLowerCase() !== patient.email.trim().toLowerCase()) {
-      showToast('Enter the exact account email to confirm deletion.');
-      return;
-    }
-
-    if (!deletePassword.trim()) {
-      showToast('Enter your password to confirm account deletion.');
+    const confirmationError = getDeleteAccountConfirmationError(patient.email, deleteEmail, deletePassword, deleteAcknowledged);
+    if (confirmationError) {
+      showToast(confirmationError);
       return;
     }
 
@@ -158,7 +160,7 @@ export function SettingsPage() {
       clearSession();
       navigate('/welcome', { replace: true });
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not delete your account.');
+      showToast(friendlyError(error, 'We couldn’t delete your account. Check your details and try again.'));
     } finally {
       setDeleting(false);
     }
@@ -189,333 +191,202 @@ export function SettingsPage() {
   }
 
   const displayName = [patient.firstName, patient.lastName].filter(Boolean).join(' ') || 'Patient';
+  const deleteError = getDeleteAccountConfirmationError(patient.email, deleteEmail, deletePassword, deleteAcknowledged);
+  const setField = (key: keyof ProfileDraft) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setDraft((current) => ({ ...current, [key]: event.target.value }));
 
   return (
     <>
-      <main style={styles.page}>
-        <section style={styles.container}>
-          <header style={styles.headerCard}>
-            <div style={styles.badge}>Settings</div>
-            <h1 style={styles.title}>Account, preferences, and support</h1>
-            <p style={styles.subtitle}>
-              Manage your profile, leave patient-app feedback, and control your account access from one place.
-            </p>
-          </header>
+      <main id="main" className="page">
+        <header className="page__header">
+          <h1 className="display">Account</h1>
+          <p className="lede">Your details, feedback and account access.</p>
+        </header>
 
-          <section style={styles.sectionCard}>
-            <div style={styles.profileHeader}>
-              <div style={styles.avatar}>
-                {(patient.firstName?.[0] ?? patient.email[0] ?? '?').toUpperCase()}
-              </div>
-              <div style={styles.profileSummary}>
-                <p style={styles.profileName}>{displayName}</p>
-                <p style={styles.profileMeta}>{patient.email}</p>
-                <p style={styles.profileMeta}>Member since {new Date(patient.createdAt).toLocaleDateString()}</p>
-              </div>
+        <section className="card card--pad" aria-label="Profile">
+          <div className="cluster" style={{ '--cluster-gap': '16px', flexWrap: 'nowrap' } as React.CSSProperties}>
+            <span className="avatar avatar--lg" aria-hidden="true">{initialsFor(patient.firstName, patient.lastName, patient.email)}</span>
+            <div className="stack stack--xs" style={{ minWidth: 0 }}>
+              <span className="title">{displayName}</span>
+              <span className="small" style={{ overflowWrap: 'anywhere' }}>{patient.email}</span>
+              <span className="small">Member since {new Date(patient.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</span>
             </div>
+          </div>
+        </section>
 
-            <div style={styles.sectionHeaderRow}>
-              <div>
-                <h2 style={styles.sectionTitle}>Account Details</h2>
-                <p style={styles.sectionBody}>
-                  Keep your patient details current. Saving changes requires your password.
-                </p>
-              </div>
-              {!editing ? (
-                <button type="button" style={styles.secondaryButton} onClick={() => setEditing(true)}>
-                  Edit Details
-                </button>
-              ) : null}
-            </div>
-
-            {editing ? (
-              <>
-                <div style={styles.twoColumn}>
-                  <Field label="First Name" value={draft.firstName} onChange={(value) => setDraft((current) => ({ ...current, firstName: value }))} />
-                  <Field label="Last Name" value={draft.lastName} onChange={(value) => setDraft((current) => ({ ...current, lastName: value }))} />
-                </div>
-                <Field label="Phone" value={draft.phone} onChange={(value) => setDraft((current) => ({ ...current, phone: value }))} type="tel" />
-                <div style={styles.twoColumn}>
-                  <Field label="Age" value={draft.age} onChange={(value) => setDraft((current) => ({ ...current, age: value }))} type="number" />
-                  <Field label="Gender" value={draft.gender} onChange={(value) => setDraft((current) => ({ ...current, gender: value }))} />
-                </div>
-                <div style={styles.twoColumn}>
-                  <Field label="Height (cm)" value={draft.heightCm} onChange={(value) => setDraft((current) => ({ ...current, heightCm: value }))} type="number" />
-                  <Field label="Weight (kg)" value={draft.weightKg} onChange={(value) => setDraft((current) => ({ ...current, weightKg: value }))} type="number" />
-                </div>
-                <Field label="Allergies" value={draft.allergies} onChange={(value) => setDraft((current) => ({ ...current, allergies: value }))} multiline rows={3} />
-                <Field label="Conditions" value={draft.conditions} onChange={(value) => setDraft((current) => ({ ...current, conditions: value }))} multiline rows={3} />
-                <Field label="Preferred Language" value={draft.preferredLanguage} onChange={(value) => setDraft((current) => ({ ...current, preferredLanguage: value }))} />
-                <div style={styles.actionRow}>
-                  <button type="button" style={styles.secondaryButton} onClick={handleCancelEditing}>
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    style={styles.primaryButton}
-                    onClick={() => setSaveModalOpen(true)}
-                    disabled={!hasUnsavedChanges}
-                  >
-                    Save Details
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div style={styles.detailGrid}>
-                <DetailItem label="First Name" value={patient.firstName} />
-                <DetailItem label="Last Name" value={patient.lastName} />
-                <DetailItem label="Phone" value={patient.phone} />
-                <DetailItem label="Age" value={patient.age != null ? String(patient.age) : null} />
-                <DetailItem label="Gender" value={patient.gender} />
-                <DetailItem label="Height" value={patient.heightCm != null ? `${patient.heightCm} cm` : null} />
-                <DetailItem label="Weight" value={patient.weightKg != null ? `${patient.weightKg} kg` : null} />
-                <DetailItem label="Allergies" value={patient.allergies} />
-                <DetailItem label="Conditions" value={patient.conditions} />
-                <DetailItem label="Preferred Language" value={patient.preferredLanguage} />
-              </div>
+        <section className="card" aria-labelledby="details-title">
+          <div className="card__head">
+            <h2 id="details-title" className="heading" style={{ flex: 1 }}>Your details</h2>
+            {!editing && (
+              <button type="button" className="btn btn--secondary btn--sm" onClick={() => setEditing(true)}>
+                <Icon name="edit" size={16} />
+                Edit
+              </button>
             )}
-          </section>
+          </div>
 
-          <section style={styles.sectionCard}>
-            <div style={styles.sectionHeaderRow}>
-              <div>
-                <h2 style={styles.sectionTitle}>Feedback and Bug Reports</h2>
-                <p style={styles.sectionBody}>
-                  Tell us what is working well or what needs attention in the patient app.
-                </p>
+          {editing ? (
+            <div className="form" style={{ padding: 20 }}>
+              <p className="body">Saving changes asks for your password.</p>
+              <div className="field__row">
+                <TextField label="First name" value={draft.firstName} onChange={setField('firstName')} autoComplete="given-name" />
+                <TextField label="Last name" value={draft.lastName} onChange={setField('lastName')} autoComplete="family-name" />
+              </div>
+              <TextField label="Phone" type="tel" value={draft.phone} onChange={setField('phone')} autoComplete="tel" />
+              <div className="field__row">
+                <TextField label="Age" inputMode="numeric" value={draft.age} onChange={setField('age')} />
+                <TextField label="Gender" value={draft.gender} onChange={setField('gender')} />
+              </div>
+              <div className="field__row">
+                <TextField label="Height (cm)" inputMode="decimal" value={draft.heightCm} onChange={setField('heightCm')} />
+                <TextField label="Weight (kg)" inputMode="decimal" value={draft.weightKg} onChange={setField('weightKg')} />
+              </div>
+              <TextAreaField label="Allergies" rows={2} value={draft.allergies} onChange={setField('allergies')} />
+              <TextAreaField label="Conditions" rows={2} value={draft.conditions} onChange={setField('conditions')} />
+              <TextField label="Preferred language" value={draft.preferredLanguage} onChange={setField('preferredLanguage')} />
+              <div className="cluster" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn--quiet" onClick={handleCancelEditing}>Cancel</button>
+                <button type="button" className="btn btn--primary" onClick={() => setSaveModalOpen(true)} disabled={!hasUnsavedChanges}>
+                  Save changes
+                </button>
               </div>
             </div>
+          ) : (
+            <div className="detail-grid">
+              <DetailItem label="First name" value={patient.firstName} />
+              <DetailItem label="Last name" value={patient.lastName} />
+              <DetailItem label="Phone" value={patient.phone} />
+              <DetailItem label="Age" value={patient.age != null ? String(patient.age) : null} />
+              <DetailItem label="Gender" value={patient.gender} />
+              <DetailItem label="Preferred language" value={patient.preferredLanguage} />
+              <DetailItem label="Height" value={patient.heightCm != null ? `${patient.heightCm} cm` : null} />
+              <DetailItem label="Weight" value={patient.weightKg != null ? `${patient.weightKg} kg` : null} />
+              <DetailItem label="Allergies" value={patient.allergies} />
+              <DetailItem label="Conditions" value={patient.conditions} />
+            </div>
+          )}
+        </section>
 
-            <div style={styles.segmentedControl}>
-              <button
-                type="button"
-                style={{ ...styles.segmentButton, ...(feedbackType === 'feedback' ? styles.segmentButtonActive : null) }}
-                onClick={() => setFeedbackType('feedback')}
-              >
-                Feedback
-              </button>
-              <button
-                type="button"
-                style={{ ...styles.segmentButton, ...(feedbackType === 'bug' ? styles.segmentButtonActive : null) }}
-                onClick={() => setFeedbackType('bug')}
-              >
-                Report a Bug
+        <section className="card" aria-labelledby="feedback-title">
+          <div className="card__head">
+            <h2 id="feedback-title" className="heading">Help us improve Priage</h2>
+          </div>
+          <div className="form" style={{ padding: 20 }}>
+            <div className="seg" role="group" aria-label="Feedback type" style={{ alignSelf: 'flex-start' }}>
+              <button type="button" aria-pressed={feedbackType === 'feedback'} onClick={() => setFeedbackType('feedback')}>Feedback</button>
+              <button type="button" aria-pressed={feedbackType === 'bug'} onClick={() => setFeedbackType('bug')}>Report a problem</button>
+            </div>
+            <TextAreaField
+              label={feedbackType === 'bug' ? 'What went wrong?' : 'What would make Priage better?'}
+              rows={4}
+              value={feedbackMessage}
+              onChange={(event) => setFeedbackMessage(event.target.value)}
+              placeholder={feedbackType === 'bug' ? 'What happened, and what were you trying to do?' : 'Tell us what worked and what didn’t.'}
+              hint="Please don’t include medical details here — message your care team instead."
+            />
+            <div>
+              <button type="button" className="btn btn--secondary" onClick={() => void handleSubmitFeedback()} disabled={submittingFeedback || !feedbackMessage.trim()}>
+                {submittingFeedback ? 'Sending…' : 'Send'}
               </button>
             </div>
+          </div>
+        </section>
 
-            <label style={styles.fieldLabel}>
-              {feedbackType === 'bug' ? 'Describe the issue' : 'Share your feedback'}
-              <textarea
-                value={feedbackMessage}
-                onChange={(event) => setFeedbackMessage(event.target.value)}
-                rows={5}
-                style={styles.textarea}
-                placeholder={feedbackType === 'bug' ? 'What happened, and what were you trying to do?' : 'Tell us what would improve your patient experience.'}
-              />
-            </label>
-
-            <div style={styles.actionRow}>
-              <button type="button" style={styles.primaryButton} onClick={() => void handleSubmitFeedback()} disabled={submittingFeedback}>
-                {submittingFeedback ? 'Submitting…' : feedbackType === 'bug' ? 'Submit Bug Report' : 'Submit Feedback'}
-              </button>
-            </div>
-          </section>
-
-          <section style={styles.dangerCard}>
-            <div style={styles.sectionHeaderRow}>
-              <div>
-                <h2 style={styles.sectionTitle}>Account Access</h2>
-                <p style={styles.sectionBody}>
-                  Log out on this device, or permanently remove this account from patient-app access.
-                </p>
-              </div>
-            </div>
-
-            <div style={styles.actionRow}>
-              <button type="button" style={styles.secondaryButton} onClick={() => navigate('/priage')}>
-                Start New Visit
-              </button>
-              <button type="button" style={styles.secondaryButton} onClick={() => void handleLogout()} disabled={loggingOut}>
-                {loggingOut ? 'Logging out…' : 'Log Out'}
-              </button>
-              <button
-                type="button"
-                style={styles.dangerButton}
-                onClick={() => {
-                  setDeleteEmail(patient.email);
-                  setDeletePassword('');
-                  setDeleteModalOpen(true);
-                }}
-              >
-                Delete Account
-              </button>
-            </div>
-          </section>
+        <section className="card" aria-label="Account access">
+          <div className="rows">
+            <button type="button" className="row row--link" onClick={() => void handleLogout()} disabled={loggingOut} style={{ width: '100%', border: 0, borderBottom: '1px solid var(--line)', background: 'transparent', textAlign: 'left' }}>
+              <Icon name="logout" />
+              <span className="row__main"><span className="row__value">{loggingOut ? 'Signing out…' : 'Sign out'}</span></span>
+            </button>
+            <button
+              type="button"
+              className="row row--link"
+              style={{ width: '100%', border: 0, background: 'transparent', textAlign: 'left', color: 'var(--red)' }}
+              onClick={() => {
+                setDeleteEmail('');
+                setDeletePassword('');
+                setDeleteAcknowledged(false);
+                setDeleteModalOpen(true);
+              }}
+            >
+              <Icon name="trash" />
+              <span className="row__main"><span className="row__value">Delete account</span></span>
+            </button>
+          </div>
         </section>
       </main>
 
-      <SettingsModal
+      <Modal
         open={saveModalOpen}
-        title="Confirm profile changes"
-        description="Enter your password to save the updated account details."
+        title="Confirm your changes"
+        description="Enter your password to save your updated details."
+        dismissible={!saving}
         onClose={() => {
-          if (!saving) {
-            setSaveModalOpen(false);
-            setConfirmPassword('');
-          }
+          setSaveModalOpen(false);
+          setConfirmPassword('');
         }}
       >
-        <Field label="Password" value={confirmPassword} onChange={setConfirmPassword} type="password" />
-        <div style={styles.modalActions}>
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={() => {
-              setSaveModalOpen(false);
-              setConfirmPassword('');
-            }}
-            disabled={saving}
-          >
-            Cancel
-          </button>
-          <button type="button" style={styles.primaryButton} onClick={() => void handleConfirmSave()} disabled={saving}>
-            {saving ? 'Saving…' : 'Confirm and Save'}
-          </button>
-        </div>
-      </SettingsModal>
+        <form className="form" onSubmit={(event) => { event.preventDefault(); void handleConfirmSave(); }}>
+          <TextField label="Password" type="password" autoComplete="current-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+          <div className="modal__actions">
+            <button type="button" className="btn btn--quiet" onClick={() => { setSaveModalOpen(false); setConfirmPassword(''); }} disabled={saving}>Cancel</button>
+            <button type="submit" className="btn btn--primary" disabled={saving || !confirmPassword.trim()}>{saving ? 'Saving…' : 'Save changes'}</button>
+          </div>
+        </form>
+      </Modal>
 
-      <SettingsModal
+      <Modal
         open={deleteModalOpen}
-        title="Delete this account"
-        description="Enter your email and password to remove patient-app access. Existing clinic visit records are retained."
+        title="Delete your account?"
+        description="This can’t be undone. You’ll lose app access right away. Clinic visit records stay with the clinic under its retention policy."
+        dismissible={!deleting}
         onClose={() => {
-          if (!deleting) {
-            setDeleteModalOpen(false);
-          }
+          setDeleteModalOpen(false);
+          setDeleteEmail('');
+          setDeletePassword('');
+          setDeleteAcknowledged(false);
         }}
       >
-        <Field label="Email" value={deleteEmail} onChange={setDeleteEmail} type="email" />
-        <Field label="Password" value={deletePassword} onChange={setDeletePassword} type="password" />
-        <div style={styles.modalActions}>
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={() => {
-              setDeleteModalOpen(false);
-              setDeletePassword('');
-            }}
-            disabled={deleting}
-          >
-            Cancel
-          </button>
-          <button type="button" style={styles.dangerButton} onClick={() => void handleDeleteAccount()} disabled={deleting}>
-            {deleting ? 'Deleting…' : 'Delete Account'}
-          </button>
-        </div>
-      </SettingsModal>
+        <form className="form" onSubmit={(event) => { event.preventDefault(); void handleDeleteAccount(); }}>
+          <label className="check">
+            <input type="checkbox" checked={deleteAcknowledged} onChange={(event) => setDeleteAcknowledged(event.target.checked)} />
+            <span>I understand that deleting my account can’t be undone.</span>
+          </label>
+          <TextField label="Type your account email" type="email" autoComplete="off" value={deleteEmail} onChange={(event) => setDeleteEmail(event.target.value)} hint={patient.email} />
+          <TextField label="Password" type="password" autoComplete="current-password" value={deletePassword} onChange={(event) => setDeletePassword(event.target.value)} />
+          <div className="modal__actions">
+            <button
+              type="button"
+              className="btn btn--quiet"
+              onClick={() => {
+                setDeleteModalOpen(false);
+                setDeleteEmail('');
+                setDeletePassword('');
+                setDeleteAcknowledged(false);
+              }}
+              disabled={deleting}
+            >
+              Keep my account
+            </button>
+            <button type="submit" className="btn btn--danger" disabled={deleting || deleteError !== null}>
+              {deleting ? 'Deleting…' : 'Delete account'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </>
   );
 }
 
-function SettingsModal({
-  open,
-  title,
-  description,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  description: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    };
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    document.addEventListener('keydown', handleEscape);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener('keydown', handleEscape);
-    };
-  }, [onClose, open]);
-
-  if (!open) {
-    return null;
-  }
-
-  return (
-    <div style={styles.modalBackdrop} onClick={onClose}>
-      <div style={styles.modalCard} onClick={(event) => event.stopPropagation()}>
-        <div style={styles.modalHeader}>
-          <div>
-            <h2 style={styles.modalTitle}>{title}</h2>
-            <p style={styles.modalDescription}>{description}</p>
-          </div>
-          <button type="button" style={styles.modalCloseButton} onClick={onClose} aria-label="Close dialog">
-            ×
-          </button>
-        </div>
-        <div style={styles.modalBody}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
 function DetailItem({ label, value }: { label: string; value: string | null }) {
+  const filled = !!value?.trim();
   return (
-    <div style={styles.detailItem}>
-      <span style={styles.detailLabel}>{label}</span>
-      <span style={styles.detailValue}>{value?.trim() ? value : 'Not provided'}</span>
+    <div className="row">
+      <span className="row__main">
+        <span className="row__key">{label}</span>
+        <span className={cx('row__value', !filled && 'row__value--empty')}>{filled ? value : 'Not added'}</span>
+      </span>
     </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  type = 'text',
-  multiline = false,
-  rows = 4,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: string;
-  multiline?: boolean;
-  rows?: number;
-}) {
-  return (
-    <label style={styles.fieldLabel}>
-      {label}
-      {multiline ? (
-        <textarea
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          rows={rows}
-          style={styles.textarea}
-        />
-      ) : (
-        <input
-          type={type}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          style={styles.input}
-        />
-      )}
-    </label>
   );
 }
 
@@ -570,291 +441,3 @@ function validateDraft(draft: ProfileDraft): string | null {
 
   return null;
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: 'calc(100vh - 64px)',
-    padding: '1rem 1rem 2rem',
-    background: heroBackdrop,
-    fontFamily: patientTheme.fonts.body,
-    color: patientTheme.colors.ink,
-  },
-  container: {
-    maxWidth: '760px',
-    margin: '0 auto',
-    display: 'grid',
-    gap: '1rem',
-  },
-  headerCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.lg,
-    background: 'rgba(255, 253, 248, 0.98)',
-    boxShadow: patientTheme.shadows.panel,
-    padding: '1rem',
-    display: 'grid',
-    gap: '0.35rem',
-  },
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    width: 'fit-content',
-    border: panelBorder,
-    borderRadius: '999px',
-    background: '#e9f1ff',
-    color: patientTheme.colors.accentStrong,
-    padding: '0.26rem 0.72rem',
-    fontSize: '0.74rem',
-    fontWeight: 700,
-  },
-  title: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.28rem',
-  },
-  subtitle: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-  },
-  sectionCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.lg,
-    background: '#fffdf8',
-    boxShadow: patientTheme.shadows.panel,
-    padding: '1rem',
-    display: 'grid',
-    gap: '0.9rem',
-  },
-  dangerCard: {
-    border: '1px solid #fecaca',
-    borderRadius: patientTheme.radius.lg,
-    background: '#fff7f8',
-    boxShadow: patientTheme.shadows.card,
-    padding: '1rem',
-    display: 'grid',
-    gap: '0.9rem',
-  },
-  profileHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.85rem',
-    flexWrap: 'wrap',
-  },
-  avatar: {
-    width: '52px',
-    height: '52px',
-    borderRadius: '50%',
-    background: 'linear-gradient(135deg, #1949b8 0%, #3b82f6 100%)',
-    color: '#fff',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 800,
-    fontSize: '1.1rem',
-  },
-  profileSummary: {
-    display: 'grid',
-    gap: '0.2rem',
-  },
-  profileName: {
-    margin: 0,
-    fontWeight: 700,
-    fontSize: '0.98rem',
-  },
-  profileMeta: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.82rem',
-  },
-  sectionHeaderRow: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: '0.75rem',
-    flexWrap: 'wrap',
-  },
-  sectionTitle: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1rem',
-  },
-  sectionBody: {
-    margin: '0.25rem 0 0',
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-    fontSize: '0.9rem',
-  },
-  detailGrid: {
-    display: 'grid',
-    gap: '0.75rem',
-  },
-  detailItem: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fff',
-    padding: '0.8rem 0.85rem',
-    display: 'grid',
-    gap: '0.18rem',
-  },
-  detailLabel: {
-    fontSize: '0.76rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.08em',
-    color: patientTheme.colors.inkMuted,
-    fontWeight: 700,
-  },
-  detailValue: {
-    fontSize: '0.94rem',
-    color: patientTheme.colors.ink,
-  },
-  twoColumn: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-    gap: '0.65rem',
-  },
-  fieldLabel: {
-    display: 'grid',
-    gap: '0.35rem',
-    fontSize: '0.8rem',
-    fontWeight: 700,
-    color: patientTheme.colors.ink,
-  },
-  input: {
-    width: '100%',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.72rem 0.78rem',
-    fontSize: '0.94rem',
-    fontFamily: patientTheme.fonts.body,
-    boxSizing: 'border-box',
-  },
-  textarea: {
-    width: '100%',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.78rem',
-    fontSize: '0.94rem',
-    fontFamily: patientTheme.fonts.body,
-    lineHeight: 1.5,
-    boxSizing: 'border-box',
-    resize: 'vertical',
-  },
-  segmentedControl: {
-    display: 'inline-flex',
-    width: 'fit-content',
-    border: panelBorder,
-    borderRadius: '999px',
-    padding: '0.2rem',
-    background: '#f8fafc',
-    gap: '0.25rem',
-  },
-  segmentButton: {
-    border: 'none',
-    borderRadius: '999px',
-    background: 'transparent',
-    color: patientTheme.colors.inkMuted,
-    padding: '0.52rem 0.9rem',
-    fontWeight: 700,
-    fontFamily: patientTheme.fonts.body,
-    cursor: 'pointer',
-  },
-  segmentButtonActive: {
-    background: '#1d4ed8',
-    color: '#fff',
-  },
-  actionRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.6rem',
-  },
-  primaryButton: {
-    border: 'none',
-    borderRadius: patientTheme.radius.sm,
-    background: patientTheme.colors.accent,
-    color: '#fff',
-    padding: '0.78rem 1rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  secondaryButton: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.78rem 1rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  dangerButton: {
-    border: '1px solid #fca5a5',
-    borderRadius: patientTheme.radius.sm,
-    background: '#fee2e2',
-    color: '#991b1b',
-    padding: '0.78rem 1rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  modalBackdrop: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 60,
-    background: 'rgba(15, 23, 42, 0.34)',
-    backdropFilter: 'blur(4px)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '1rem',
-  },
-  modalCard: {
-    width: 'min(92vw, 520px)',
-    borderRadius: patientTheme.radius.lg,
-    background: '#fffdf8',
-    boxShadow: '0 30px 70px rgba(15, 23, 42, 0.26)',
-    overflow: 'hidden',
-  },
-  modalHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: '0.75rem',
-    padding: '1rem 1rem 0.8rem',
-    borderBottom: panelBorder,
-  },
-  modalTitle: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.04rem',
-  },
-  modalDescription: {
-    margin: '0.3rem 0 0',
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-    fontSize: '0.88rem',
-  },
-  modalCloseButton: {
-    border: 'none',
-    background: 'transparent',
-    color: patientTheme.colors.inkMuted,
-    fontSize: '1.5rem',
-    lineHeight: 1,
-    cursor: 'pointer',
-  },
-  modalBody: {
-    display: 'grid',
-    gap: '0.9rem',
-    padding: '1rem',
-  },
-  modalActions: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    flexWrap: 'wrap',
-    gap: '0.6rem',
-  },
-};

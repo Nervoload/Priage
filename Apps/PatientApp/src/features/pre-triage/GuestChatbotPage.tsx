@@ -1,24 +1,46 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { advanceInterview, startInterview } from '../../shared/api/intake';
+import { friendlyError } from '../../shared/api/errors';
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import type { AdvanceInterviewPayload, InterviewQuestion, InterviewState } from '../../shared/types/domain';
-import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
+import { ChoiceList } from '../../shared/ui/ChoiceList';
+import { CtaButton, CtaLink, LoadingScreen } from '../../shared/ui/Controls';
+import { FlowScreen } from '../../shared/ui/FlowScreen';
+import { Icon } from '../../shared/ui/Icon';
 import { useToast } from '../../shared/ui/ToastContext';
 import { QuestionPage } from './QuestionPage';
 
 interface GuestChatbotPageProps {
   onChooseHospital: () => void;
   onBack?: () => void;
-  mode?: 'guest' | 'authenticated';
+  mode?: 'guest' | 'authenticated' | 'clinic';
+  startInterviewFn?: () => Promise<InterviewState>;
+  advanceInterviewFn?: (payload: AdvanceInterviewPayload) => Promise<InterviewState>;
+  chiefComplaint?: string | null;
+  completion?: { badge: string; title: string; description: string; actionLabel: string };
+  /** Flow step counter; pass null when the assessment is the whole flow. */
+  counter?: string | null;
 }
 
-export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: GuestChatbotPageProps) {
+const SAFETY_QUESTION_ID = 'safety_immediate_danger';
+
+export function GuestChatbotPage({
+  onChooseHospital,
+  onBack,
+  mode = 'guest',
+  startInterviewFn = startInterview,
+  advanceInterviewFn = advanceInterview,
+  chiefComplaint,
+  completion,
+  counter = 'Step 2 of 3',
+}: GuestChatbotPageProps) {
   const { session } = useGuestSession();
   const { showToast } = useToast();
 
   const [interview, setInterview] = useState<InterviewState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [draftText, setDraftText] = useState('');
   const [draftNumber, setDraftNumber] = useState('');
@@ -33,13 +55,13 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     async function loadInterview() {
       setLoading(true);
       try {
-        const state = await startInterview();
+        const state = await startInterviewFn();
         if (!cancelled) {
           setInterview(state);
         }
       } catch (error) {
         if (!cancelled) {
-          showToast(error instanceof Error ? error.message : 'Could not load the intake interview.');
+          showToast(friendlyError(error, 'We couldn’t load your questions.'));
         }
       } finally {
         if (!cancelled) {
@@ -52,7 +74,7 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     return () => {
       cancelled = true;
     };
-  }, [showToast]);
+  }, [showToast, startInterviewFn, reloadKey]);
 
   useEffect(() => {
     setDraftText('');
@@ -63,13 +85,21 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
   const progressLabel = useMemo(() => {
     if (!interview) {
-      return 'Loading interview…';
+      return '';
     }
-    if (currentQuestion?.publicId === 'safety_immediate_danger') {
+    if (currentQuestion?.publicId === SAFETY_QUESTION_ID) {
       return 'Safety check';
     }
-    return `Question ${Math.min(interview.askedCount + 1, interview.maxQuestions)} of up to ${interview.maxQuestions}`;
+    const number = Math.min(interview.askedCount + 1, interview.maxQuestions);
+    return `Question ${number} of up to ${interview.maxQuestions}`;
   }, [currentQuestion?.publicId, interview]);
+
+  // The assessment is step two of three; fill the middle third as questions are answered.
+  const progress = useMemo(() => {
+    if (!interview) return 34;
+    const ratio = Math.min(interview.askedCount / Math.max(interview.maxQuestions, 1), 1);
+    return 34 + ratio * 32;
+  }, [interview]);
 
   const currentValue = useMemo(() => {
     if (!currentQuestion) {
@@ -87,58 +117,38 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     }
   }, [currentQuestion, draftBoolean, draftChoice, draftNumber, draftText]);
 
-  function buildQuestionSummary(question: InterviewQuestion) {
-    return (
-      <div style={{ display: 'grid', gap: '0.34rem' }}>
-        <div><strong>Phase:</strong> {formatPhaseLabel(interview?.phase ?? question.phase)}</div>
-        <div><strong>Queued next:</strong> {interview?.cachedQuestions.length ?? 0}</div>
-        {question.clinicalReason && <div><strong>Why we ask:</strong> {question.clinicalReason}</div>}
-        {interview?.summaryPreview && <div><strong>Current summary:</strong> {interview.summaryPreview}</div>}
-        {session?.chiefComplaint && <div><strong>Chief complaint:</strong> {session.chiefComplaint}</div>}
-      </div>
-    );
+  function renderChoices(question: InterviewQuestion, labelledBy: string, options: string[], selected: (choice: string) => boolean, onPick: (choice: string) => void) {
+    return <ChoiceList name={`question-${question.publicId}`} labelledBy={labelledBy} options={options} selected={options.find(selected) ?? null} onPick={onPick} />;
   }
 
-  function renderQuestionInput(question: InterviewQuestion) {
+  function renderQuestionInput(question: InterviewQuestion, labelledBy: string) {
     if (question.inputType === 'boolean') {
-      return (
-        <div style={styles.optionGrid}>
-          {['Yes', 'No'].map((choice) => {
-            const selected = (choice === 'Yes' && draftBoolean === true) || (choice === 'No' && draftBoolean === false);
-            return (
-              <button
-                key={choice}
-                type="button"
-                style={{
-                  ...styles.choiceButton,
-                  ...(selected ? styles.choiceButtonSelected : null),
-                }}
-                onClick={() => setDraftBoolean(choice === 'Yes')}
-              >
-                {choice}
-              </button>
-            );
-          })}
-        </div>
+      return renderChoices(
+        question,
+        labelledBy,
+        ['Yes', 'No'],
+        (choice) => (choice === 'Yes' && draftBoolean === true) || (choice === 'No' && draftBoolean === false),
+        (choice) => setDraftBoolean(choice === 'Yes'),
       );
     }
 
     if (question.inputType === 'single_select') {
+      return renderChoices(question, labelledBy, question.choices, (choice) => draftChoice === choice, setDraftChoice);
+    }
+
+    if (question.inputType === 'number' && isZeroToTenScale(question)) {
+      const groupName = `question-${question.publicId}`;
       return (
-        <div style={styles.optionGrid}>
-          {question.choices.map((choice) => (
-            <button
-              key={choice}
-              type="button"
-              style={{
-                ...styles.choiceButton,
-                ...(draftChoice === choice ? styles.choiceButtonSelected : null),
-              }}
-              onClick={() => setDraftChoice(choice)}
-            >
-              {choice}
-            </button>
-          ))}
+        <div>
+          <fieldset className="scale" aria-labelledby={labelledBy}>
+            {Array.from({ length: 11 }, (_, value) => String(value)).map((value) => (
+              <label key={value} className="slot">
+                <input type="radio" name={groupName} value={value} checked={draftNumber === value} onChange={() => setDraftNumber(value)} />
+                {value}
+              </label>
+            ))}
+          </fieldset>
+          <div className="scale__ends" aria-hidden="true"><span>None</span><span>Worst imaginable</span></div>
         </div>
       );
     }
@@ -146,9 +156,16 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     if (question.inputType === 'number') {
       return (
         <input
-          style={styles.input}
+          className="input"
+          aria-labelledby={labelledBy}
           value={draftNumber}
           onChange={(event) => setDraftNumber(event.target.value.replace(/[^\d]/g, ''))}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && draftNumber) {
+              event.preventDefault();
+              void handleAdvance();
+            }
+          }}
           inputMode="numeric"
           placeholder={question.placeholder || 'Enter a number'}
           autoFocus
@@ -159,16 +176,18 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
     if (question.inputType === 'textarea') {
       return (
         <textarea
-          style={styles.textArea}
+          className="input"
+          aria-labelledby={labelledBy}
           value={draftText}
           onChange={(event) => setDraftText(event.target.value)}
           placeholder={question.placeholder || ''}
+          rows={4}
           autoFocus
         />
       );
     }
 
-    return undefined;
+    return null;
   }
 
   async function handleAdvance() {
@@ -185,10 +204,10 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
     setSubmitting(true);
     try {
-      const nextState = await advanceInterview(payload);
+      const nextState = await advanceInterviewFn(payload);
       setInterview(nextState);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not save your answer.');
+      showToast(friendlyError(error, 'We couldn’t save your answer. Please try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -201,126 +220,145 @@ export function GuestChatbotPage({ onChooseHospital, onBack, mode = 'guest' }: G
 
     setSubmitting(true);
     try {
-      const nextState = await advanceInterview({ action: 'acknowledge_emergency' });
+      const nextState = await advanceInterviewFn({ action: 'acknowledge_emergency' });
       setInterview(nextState);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not continue the intake interview.');
+      showToast(friendlyError(error, 'We couldn’t continue. Please try again.'));
     } finally {
       setSubmitting(false);
     }
   }
 
   if (loading) {
-    return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
-          <div style={styles.spinner} />
-          <p style={styles.statusText}>Loading your intake interview…</p>
-        </section>
-      </main>
-    );
+    return <LoadingScreen full label="Preparing your questions…" />;
   }
 
   if (!interview) {
     return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
-          {onBack && (
-            <button style={styles.backButton} onClick={onBack} type="button">
-              ← Back
-            </button>
-          )}
-          <h1 style={styles.title}>We could not load the interview</h1>
-          <p style={styles.subtitle}>
+      <FlowScreen title="Assessment" onBack={onBack} label="Assessment unavailable">
+        <div className="stack stack--sm">
+          <h1 className="display">We couldn’t load your questions</h1>
+          <p className="lede">
             {mode === 'authenticated'
-              ? 'Please go back and restart this visit from your account.'
-              : 'Please go back and try starting guest check-in again.'}
+              ? 'Check your connection and try again. Your visit details are saved.'
+              : mode === 'clinic'
+                ? 'Check your connection and try again, or reopen this clinic visit.'
+                : 'Check your connection and try again. If it keeps happening, start your check-in again.'}
           </p>
-        </section>
-      </main>
+        </div>
+        <div>
+          <button type="button" className="btn btn--secondary" onClick={() => setReloadKey((key) => key + 1)}>
+            Try again
+          </button>
+        </div>
+      </FlowScreen>
     );
   }
 
   if (interview.status === 'emergency_ack_required' && interview.emergencyAlert) {
     return (
-      <main style={styles.page}>
-        <section style={styles.alertCard}>
-          {onBack && (
-            <button style={styles.backButton} onClick={onBack} type="button">
-              ← Back
+      <FlowScreen
+        tone="white"
+        title="Safety check"
+        onBack={onBack}
+        label="Safety check"
+        footer={(
+          <>
+            <CtaLink href="tel:911" tone="danger" icon="phone">Call 911</CtaLink>
+            <button type="button" className="btn btn--quiet btn--block" onClick={() => void handleEmergencyAcknowledge()} disabled={submitting}>
+              {submitting ? 'Continuing…' : 'I understand — continue'}
             </button>
+          </>
+        )}
+      >
+        <div className="stack stack--lg" style={{ paddingTop: 12 }}>
+          <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 22, background: 'var(--red-bg)', color: 'var(--red)' }}>
+            <Icon name="alertTriangle" size={30} />
+          </span>
+          <h1 className="display">{interview.emergencyAlert.title}</h1>
+          <p className="lede">{interview.emergencyAlert.body}</p>
+          {interview.emergencyAlert.recommendation && (
+            <p className="notice">
+              <Icon name="info" size={18} />
+              <span>{interview.emergencyAlert.recommendation}</span>
+            </p>
           )}
-          <span style={styles.alertBadge}>Emergency Warning</span>
-          <h1 style={styles.title}>{interview.emergencyAlert.title}</h1>
-          <p style={styles.subtitle}>{interview.emergencyAlert.body}</p>
-          <p style={styles.alertRecommendation}>{interview.emergencyAlert.recommendation}</p>
-          <button style={styles.primaryButton} type="button" onClick={() => void handleEmergencyAcknowledge()} disabled={submitting}>
-            {submitting ? 'Continuing…' : 'I understand, continue intake'}
-          </button>
-        </section>
-      </main>
+          <p className="small">This message is based on your answers. It isn’t a diagnosis, and no one has reviewed it yet.</p>
+        </div>
+      </FlowScreen>
     );
   }
 
   if (interview.status === 'complete') {
+    const summaryText = interview.summaryPreview || chiefComplaint || session?.chiefComplaint;
     return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
-          {onBack && (
-            <button style={styles.backButton} onClick={onBack} type="button">
-              ← Back
-            </button>
-          )}
-          <span style={styles.badge}>Interview Complete</span>
-          <h1 style={styles.title}>Your intake summary is ready</h1>
-          <p style={styles.subtitle}>
-            We captured the key details needed before you choose a hospital.
-          </p>
-          {interview.summaryPreview && (
-            <div style={styles.summaryCard}>
-              <strong style={styles.summaryTitle}>Summary preview</strong>
-              <p style={styles.summaryText}>{interview.summaryPreview}</p>
+      <FlowScreen
+        title="Assessment"
+        counter={counter ?? undefined}
+        progress={66}
+        onBack={onBack}
+        label="Assessment complete"
+        footer={<CtaButton onClick={onChooseHospital}>{completion?.actionLabel || 'Choose where to go'}</CtaButton>}
+      >
+        <div className="stack stack--lg" style={{ paddingTop: 12 }}>
+          <div className="stack stack--sm">
+            <h1 className="display">{completion?.title || 'Your answers are ready'}</h1>
+            <p className="lede">{completion?.description || 'Next, choose where you’d like to receive care. They’ll see your answers right away.'}</p>
+          </div>
+          {summaryText && (
+            <div className="card card--pad stack stack--sm">
+              <span className="label">{interview.summaryPreview ? 'Summary for the clinic' : 'What you told us'}</span>
+              <p className="body" style={{ color: 'var(--ink)' }}>{summaryText}</p>
+              {interview.summaryPreview && <p className="small">Created from your answers. The clinic reviews it before your visit.</p>}
             </div>
           )}
-          <button style={styles.primaryButton} type="button" onClick={onChooseHospital}>
-            Choose hospital
-          </button>
-        </section>
-      </main>
+        </div>
+      </FlowScreen>
     );
   }
 
   if (!currentQuestion) {
-    return (
-      <main style={styles.page}>
-        <section style={styles.statusCard}>
-          <div style={styles.spinner} />
-          <p style={styles.statusText}>Preparing the next question…</p>
-        </section>
-      </main>
-    );
+    return <LoadingScreen full label="Preparing the next question…" />;
   }
+
+  const customInput = currentQuestion.inputType !== 'text';
 
   return (
     <QuestionPage
       step={Math.min(interview.askedCount + 1, interview.maxQuestions)}
       totalSteps={interview.maxQuestions}
-      progressLabel={progressLabel}
+      title="Assessment"
+      counter={progressLabel || counter || undefined}
+      progress={progress}
+      questionKey={currentQuestion.publicId}
       question={currentQuestion.prompt}
-      description={currentQuestion.helpText || `Focused ${formatPhaseLabel(currentQuestion.phase)} question`}
+      description={currentQuestion.helpText}
+      why={currentQuestion.clinicalReason}
       value={currentValue}
       onChange={setDraftText}
       onNext={() => void handleAdvance()}
       onBack={onBack}
       placeholder={currentQuestion.placeholder || ''}
       multiline={currentQuestion.inputType === 'textarea'}
-      required={currentQuestion.required}
-      nextLabel={submitting ? 'Saving…' : currentQuestion.publicId === 'safety_immediate_danger' ? 'Continue' : 'Next'}
-      summary={buildQuestionSummary(currentQuestion)}
+      required
+      busy={submitting}
+      nextLabel={submitting ? 'Saving…' : 'Continue'}
+      footerNote={(
+        <span className="flow__note">
+          <Icon name="check" size={15} style={{ color: 'var(--green)' }} />
+          Your answers are saved as you go
+        </span>
+      )}
     >
-      {renderQuestionInput(currentQuestion)}
+      {customInput ? (labelledBy: string) => renderQuestionInput(currentQuestion, labelledBy) : undefined}
     </QuestionPage>
   );
+}
+
+// Rating questions arrive as plain numbers; render the common 0–10 pain or
+// severity scale as tappable steps instead of a free-text box.
+function isZeroToTenScale(question: InterviewQuestion): boolean {
+  return /^\s*0\s*[-–to]+\s*10\s*$/i.test(question.placeholder ?? '') || /\b0 (?:to|-|–) 10\b/.test(question.prompt);
 }
 
 function buildAdvancePayload(
@@ -354,175 +392,3 @@ function buildAdvancePayload(
   payload.valueText = values.draftText;
   return payload;
 }
-
-function formatPhaseLabel(phase: string): string {
-  if (phase === 'urgent') return 'Urgent';
-  if (phase === 'emergent') return 'Emergent';
-  return 'History';
-}
-
-const sharedInput: React.CSSProperties = {
-  width: '100%',
-  border: panelBorder,
-  borderRadius: patientTheme.radius.sm,
-  background: '#fff',
-  color: patientTheme.colors.ink,
-  fontSize: '0.95rem',
-  fontFamily: patientTheme.fonts.body,
-  padding: '0.72rem 0.78rem',
-  boxSizing: 'border-box',
-};
-
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    display: 'grid',
-    placeItems: 'center',
-    background: heroBackdrop,
-    padding: '1rem',
-    fontFamily: patientTheme.fonts.body,
-  },
-  statusCard: {
-    width: '100%',
-    maxWidth: '620px',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.xl,
-    background: 'rgba(255, 253, 248, 0.98)',
-    boxShadow: patientTheme.shadows.panel,
-    padding: '1rem',
-    display: 'grid',
-    gap: '0.8rem',
-  },
-  alertCard: {
-    width: '100%',
-    maxWidth: '620px',
-    border: '1px solid #fca5a5',
-    borderRadius: patientTheme.radius.xl,
-    background: 'rgba(255, 248, 248, 0.98)',
-    boxShadow: '0 18px 42px rgba(220, 38, 38, 0.14)',
-    padding: '1rem',
-    display: 'grid',
-    gap: '0.8rem',
-    fontFamily: patientTheme.fonts.body,
-  },
-  spinner: {
-    width: '36px',
-    height: '36px',
-    borderRadius: '50%',
-    border: '4px solid #dbe3f3',
-    borderTopColor: patientTheme.colors.accent,
-    animation: 'spin 0.9s linear infinite',
-    justifySelf: 'center',
-  },
-  statusText: {
-    margin: 0,
-    textAlign: 'center',
-    color: patientTheme.colors.inkMuted,
-  },
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    width: 'fit-content',
-    border: panelBorder,
-    borderRadius: '999px',
-    background: '#e9f1ff',
-    color: patientTheme.colors.accentStrong,
-    padding: '0.28rem 0.72rem',
-    fontSize: '0.74rem',
-    fontWeight: 700,
-  },
-  alertBadge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    width: 'fit-content',
-    border: '1px solid #fecaca',
-    borderRadius: '999px',
-    background: '#fee2e2',
-    color: '#b91c1c',
-    padding: '0.28rem 0.72rem',
-    fontSize: '0.74rem',
-    fontWeight: 700,
-  },
-  title: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.35rem',
-    color: patientTheme.colors.ink,
-  },
-  subtitle: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.5,
-  },
-  alertRecommendation: {
-    margin: 0,
-    color: '#7f1d1d',
-    lineHeight: 1.45,
-    fontWeight: 700,
-  },
-  primaryButton: {
-    border: 'none',
-    borderRadius: patientTheme.radius.sm,
-    background: patientTheme.colors.accent,
-    color: '#fff',
-    padding: '0.75rem 0.92rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  backButton: {
-    border: 'none',
-    background: 'none',
-    color: patientTheme.colors.inkMuted,
-    fontWeight: 600,
-    fontSize: '0.84rem',
-    cursor: 'pointer',
-    padding: 0,
-    justifySelf: 'start',
-    fontFamily: patientTheme.fonts.body,
-  },
-  summaryCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fff',
-    padding: '0.75rem',
-    display: 'grid',
-    gap: '0.28rem',
-  },
-  summaryTitle: {
-    color: patientTheme.colors.ink,
-    fontSize: '0.88rem',
-  },
-  summaryText: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.45,
-  },
-  optionGrid: {
-    display: 'grid',
-    gap: '0.55rem',
-  },
-  choiceButton: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.82rem 0.86rem',
-    textAlign: 'left',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  choiceButtonSelected: {
-    borderColor: patientTheme.colors.accent,
-    boxShadow: '0 10px 24px rgba(25, 73, 184, 0.14)',
-    background: '#eef5ff',
-    color: patientTheme.colors.accentStrong,
-  },
-  input: sharedInput,
-  textArea: {
-    ...sharedInput,
-    minHeight: '108px',
-    resize: 'vertical',
-  },
-};

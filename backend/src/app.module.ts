@@ -24,6 +24,10 @@ import { HealthModule } from './modules/health/health.module';
 import { HospitalsModule } from './modules/hospitals/hospitals.module';
 import { IntakeModule } from './modules/intake/intake.module';
 import { JobsModule } from './modules/jobs/jobs.module';
+import { LegalDocumentsModule } from './modules/legal/legal-documents.module';
+import { ClinicPilotModule } from './modules/clinic/clinic-pilot.module';
+import { ClinicIntakeModule } from './modules/clinic/clinic-intake.module';
+import { PilotRouteBoundaryGuard } from './modules/clinic/pilot-route-boundary.guard';
 import { LoggingModule } from './modules/logging/logging.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { SensitiveReadAuditModule } from './modules/audit/sensitive-read-audit.module';
@@ -73,6 +77,9 @@ import { SafetyMetricsModule } from './common/metrics/safety-metrics.module';
     PatientsModule,
     IntakeModule,
     PatientAuthModule,
+    LegalDocumentsModule,
+    ClinicPilotModule,
+    ClinicIntakeModule,
     PriageModule,
     WebhooksModule,
     // Keep the partner API isolated at the module boundary.
@@ -81,6 +88,7 @@ import { SafetyMetricsModule } from './common/metrics/safety-metrics.module';
     HealthModule,
   ],
   providers: [
+    { provide: APP_GUARD, useClass: PilotRouteBoundaryGuard },
     {
       provide: APP_INTERCEPTOR,
       useClass: RequestTelemetryInterceptor,

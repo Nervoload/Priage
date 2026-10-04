@@ -361,6 +361,8 @@ async function run() {
     body: {
       firstName: 'Repeat',
       lastName: 'Draft',
+      phone: '+15555550123',
+      contactEmail: `repeat-${Date.now()}@example.ca`,
       chiefComplaint: 'Headache',
       details: 'Started this morning',
     },

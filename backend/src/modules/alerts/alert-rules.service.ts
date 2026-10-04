@@ -13,6 +13,7 @@ import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhookOutboxService } from '../webhooks/webhook-outbox.service';
 import { SafetyMetricsService } from '../../common/metrics/safety-metrics.service';
+import { normalizeHospitalConfig } from '../hospitals/hospital-config';
 import {
   type AlertRuleEncounter,
   type AlertRuleMatch,
@@ -56,9 +57,13 @@ export class AlertRulesService {
           arrivedAt: true,
           triagedAt: true,
           waitingAt: true,
+          hospital: { select: { config: { select: { config: true } } } },
         },
       });
       if (!encounter) throw new NotFoundException('Encounter does not belong to hospital');
+
+      // ED timing rules do not apply to clinic walk-ins or pending clinic intake.
+      if (normalizeHospitalConfig(encounter.hospital?.config?.config).workflowProfile === 'CLINIC_APPOINTMENT') return [];
 
       const matches = evaluateObjectiveAlertRules(encounter, now);
       await this.recordMissingTimestampSignals(encounter, now);

@@ -18,13 +18,16 @@ import { PatientIdempotencyService } from '../auth/patient-idempotency.service';
 import { PatientRateLimitGuard } from '../auth/guards/patient-rate-limit.guard';
 import { PatientContext, PatientGuard } from '../auth/guards/patient.guard';
 import { ConfirmIntentDto } from './dto/confirm-intent.dto';
+import { AttachClinicDto } from './dto/attach-clinic.dto';
 import { CreateIntentDto } from './dto/create-intent.dto';
 import { AdvanceInterviewDto } from './dto/interview.dto';
 import { LocationPingDto } from './dto/location-ping.dto';
 import { UpdateIntakeDetailsDto } from './dto/update-intake-details.dto';
 import { IntakeService } from './intake.service';
+import { LegacyIntakeGuard } from '../clinic/legacy-intake.guard';
 
 @Controller('intake')
+@UseGuards(LegacyIntakeGuard)
 export class IntakeController {
   constructor(
     private readonly intakeService: IntakeService,
@@ -71,6 +74,20 @@ export class IntakeController {
       },
       () => this.intakeService.confirmIntentBySession(patient.sessionId, dto, req.correlationId),
     );
+  }
+
+  @Post('clinic-attach')
+  @UseGuards(PatientGuard, PatientRateLimitGuard)
+  async attachClinic(
+    @Body() dto: AttachClinicDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentPatient() patient: PatientContext,
+    @Req() req: Request,
+  ) {
+    return this.patientIdempotency.execute({
+      patient, command: 'patient.intake.clinic-attach', idempotencyKey,
+      fingerprintInput: { body: dto }, correlationId: req.correlationId,
+    }, () => this.intakeService.attachClinicBySession(patient.sessionId, dto.clinicAlias, req.correlationId));
   }
 
   /**

@@ -6,11 +6,15 @@ import type { EncounterStatus } from '../types/domain';
 interface StatusPillProps {
   status: EncounterStatus;
   className?: string;
+  workflowProfile?: 'ED' | 'CLINIC_APPOINTMENT';
 }
 
 const STATUS_STYLES: Record<EncounterStatus, string> = {
+  INTAKE: 'bg-blue-100 text-blue-700',
+  REQUESTED: 'bg-amber-100 text-amber-700',
   EXPECTED: 'bg-blue-100 text-blue-700',
   ADMITTED: 'bg-indigo-100 text-indigo-700',
+  CARE: 'bg-violet-100 text-violet-700',
   TRIAGE: 'bg-amber-100 text-amber-700',
   WAITING: 'bg-sky-100 text-sky-700',
   COMPLETE: 'bg-green-100 text-green-700',
@@ -19,8 +23,11 @@ const STATUS_STYLES: Record<EncounterStatus, string> = {
 };
 
 const STATUS_LABELS: Record<EncounterStatus, string> = {
+  INTAKE: 'Intake',
+  REQUESTED: 'Requested',
   EXPECTED: 'Expected',
   ADMITTED: 'Admitted',
+  CARE: 'Care',
   TRIAGE: 'Triage',
   WAITING: 'Waiting',
   COMPLETE: 'Complete',
@@ -28,7 +35,10 @@ const STATUS_LABELS: Record<EncounterStatus, string> = {
   CANCELLED: 'Cancelled',
 };
 
-export function StatusPill({ status, className = '' }: StatusPillProps) {
+export function StatusPill({ status, className = '', workflowProfile = 'ED' }: StatusPillProps) {
+  const clinicLabel: Partial<Record<EncounterStatus, string>> = {
+    INTAKE: 'Assessment', REQUESTED: 'Time requested', ADMITTED: 'Arrived',
+  };
   return (
     <span
       className={`
@@ -38,7 +48,7 @@ export function StatusPill({ status, className = '' }: StatusPillProps) {
         ${className}
       `}
     >
-      {STATUS_LABELS[status]}
+      {workflowProfile === 'CLINIC_APPOINTMENT' ? clinicLabel[status] || STATUS_LABELS[status] : STATUS_LABELS[status]}
     </span>
   );
 }

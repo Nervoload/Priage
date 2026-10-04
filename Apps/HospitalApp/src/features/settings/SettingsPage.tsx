@@ -36,6 +36,10 @@ import { DASHBOARD_PAGE_CLASS } from '../../shared/ui/dashboardTheme';
 import { Modal } from '../../shared/ui/Modal';
 import { useToast } from '../../shared/ui/ToastContext';
 import { AlertEscalationSettings } from './AlertEscalationSettings';
+import { ClinicEntrySettingsPanel } from '../clinic/ClinicEntrySettingsPanel';
+import { ClinicAppointmentsPanel } from '../clinic/ClinicAppointmentsPanel';
+import { ClinicNotificationSettingsPanel } from '../clinic/ClinicNotifications';
+import { ClinicQuestionnairePanel } from '../clinic/questionnaire/ClinicQuestionnairePanel';
 
 interface SettingsPageProps {
   onNavigate: (view: View) => void;
@@ -44,6 +48,8 @@ interface SettingsPageProps {
   availableViews: View[];
   configEnvelope: HospitalConfigEnvelope;
   onConfigUpdated: (response: HospitalConfigEnvelope) => void;
+  /** Rendered inside the clinic workspace shell, which supplies navigation. */
+  embedded?: boolean;
 }
 
 type DashboardSection = 'general' | 'staff' | 'patients' | 'integrations' | 'feedback';
@@ -51,6 +57,7 @@ type DashboardSection = 'general' | 'staff' | 'patients' | 'integrations' | 'fee
 const PAGE_LABELS: Record<HospitalPageKey, string> = {
   admit: 'Admittance',
   triage: 'Triage',
+  care: 'Care',
   waiting: 'Waiting Room',
   analytics: 'Analytics',
   settings: 'Settings',
@@ -128,13 +135,14 @@ function formatDateTime(value: string | null | undefined): string {
 function getSectionMeta(
   section: DashboardSection,
   isAdmin: boolean,
+  workflowProfile: 'ED' | 'CLINIC_APPOINTMENT',
 ): { eyebrow: string; title: string; description: string; saveLabel: string | null } {
   switch (section) {
     case 'general':
       return {
         eyebrow: isAdmin ? 'Admin Console' : 'Account',
         title: isAdmin ? 'General Administration' : 'General Settings',
-        description: 'Review account credentials and hospital information for this clinic environment.',
+        description: `Review account credentials and ${workflowProfile === 'CLINIC_APPOINTMENT' ? 'clinic' : 'hospital'} information.`,
         saveLabel: null,
       };
     case 'staff':
@@ -145,6 +153,14 @@ function getSectionMeta(
         saveLabel: 'Save Staff Settings',
       };
     case 'patients':
+      if (workflowProfile === 'CLINIC_APPOINTMENT') {
+        return {
+          eyebrow: 'Patients',
+          title: 'Patient questions',
+          description: 'What your clinic asks every patient, and in what order.',
+          saveLabel: null,
+        };
+      }
       return {
         eyebrow: 'Patients',
         title: 'Intake Form Configuration',
@@ -175,6 +191,7 @@ export function SettingsPage({
   availableViews,
   configEnvelope,
   onConfigUpdated,
+  embedded = false,
 }: SettingsPageProps) {
   const { refreshUser } = useAuth();
   const { showToast } = useToast();
@@ -332,7 +349,7 @@ export function SettingsPage({
     [draftConfig.pageAccess, user],
   );
 
-  const sectionMeta = getSectionMeta(activeSection, isAdmin);
+  const sectionMeta = getSectionMeta(activeSection, isAdmin, configEnvelope.config.workflowProfile);
   const canSaveConfig = isAdmin && activeSection !== 'general';
 
   useEffect(() => {
@@ -411,7 +428,7 @@ export function SettingsPage({
     const nextName = hospitalDraftName.trim();
     const nextSlug = hospitalDraftSlug.trim().toLowerCase();
     if (!nextName || !nextSlug) {
-      showToast('Hospital name and slug are required.', 'error');
+      showToast('Name and slug are required.', 'error');
       return;
     }
     if (!hospitalConfirmPassword) {
@@ -440,7 +457,7 @@ export function SettingsPage({
   };
 
   const togglePageAccess = (role: Role, page: HospitalPageKey) => {
-    if (page === 'settings') return;
+    if (page === 'settings' || draftConfig.workflowProfile === 'CLINIC_APPOINTMENT') return;
 
     setDraftConfig((current) => {
       const next = cloneConfig(current);
@@ -579,20 +596,26 @@ export function SettingsPage({
   };
 
   return (
-    <div className={DASHBOARD_PAGE_CLASS}>
-      <NavBar
-        currentView="settings"
-        onNavigate={onNavigate}
-        onLogout={onLogout}
-        user={user ? { email: user.email, role: user.role } : null}
-        availableViews={availableViews}
-      />
+    <div className={embedded ? 'min-h-screen font-hospital-body' : DASHBOARD_PAGE_CLASS}>
+      {!embedded && (
+        <NavBar
+          currentView="settings"
+          onNavigate={onNavigate}
+          onLogout={onLogout}
+          user={user ? { email: user.email, role: user.role } : null}
+          availableViews={availableViews}
+          workflowProfile={configEnvelope.config.workflowProfile}
+        />
+      )}
 
       <div className="relative mx-auto max-w-[1500px] px-4 py-6 sm:px-5 lg:min-h-[calc(100vh-5rem)] lg:px-6 lg:pl-[20rem]">
         <aside
           className="mb-6 lg:mb-0 lg:w-[240px] lg:fixed lg:top-1/2 lg:-translate-y-1/2"
           style={{
-            left: 'max(1rem, calc((100vw - 1500px) / 2 + 1rem))',
+            // Inside the clinic shell the page starts after the 232px sidebar.
+            left: embedded
+              ? 'calc(232px + max(1rem, calc((100vw - 232px - 1500px) / 2 + 1rem)))'
+              : 'max(1rem, calc((100vw - 1500px) / 2 + 1rem))',
           }}
         >
           <div className="rounded-[30px] border border-white/80 bg-white/88 px-5 py-6 shadow-[0_28px_80px_-52px_rgba(15,23,42,0.48)]">
@@ -659,7 +682,7 @@ export function SettingsPage({
 
               <div className="flex flex-col items-start gap-2 text-sm text-slate-500 lg:items-end">
                 <div>
-                  <span className="font-semibold text-slate-700">Hospital:</span> {user?.hospital?.name ?? 'Unknown'}
+                  <span className="font-semibold text-slate-700">{configEnvelope.config.workflowProfile === 'CLINIC_APPOINTMENT' ? 'Clinic' : 'Hospital'}:</span> {user?.hospital?.name ?? 'Unknown'}
                 </div>
                 <div>
                   <span className="font-semibold text-slate-700">Last admin save:</span> {formatDateTime(configEnvelope.updatedAt)}
@@ -678,7 +701,9 @@ export function SettingsPage({
           </section>
 
           {activeSection === 'general' && (
+            <>
             <GeneralSection
+              workflowProfile={configEnvelope.config.workflowProfile}
               canEditHospitalDetails={isAdmin}
               user={user}
               hospitalSummary={hospitalSummary}
@@ -706,6 +731,10 @@ export function SettingsPage({
               onRequestHospitalSave={() => setShowHospitalConfirmModal(true)}
               onSaveProfile={handleSaveProfile}
             />
+            {isAdmin && configEnvelope.config.workflowProfile === 'CLINIC_APPOINTMENT' && <ClinicEntrySettingsPanel />}
+            {isAdmin && configEnvelope.config.workflowProfile === 'CLINIC_APPOINTMENT' && <ClinicAppointmentsPanel />}
+            {isAdmin && configEnvelope.config.workflowProfile === 'CLINIC_APPOINTMENT' && <ClinicNotificationSettingsPanel />}
+            </>
           )}
 
           {activeSection === 'staff' && isAdmin && (
@@ -724,7 +753,13 @@ export function SettingsPage({
             />
           )}
 
-          {activeSection === 'patients' && isAdmin && (
+          {activeSection === 'patients' && isAdmin && configEnvelope.config.workflowProfile === 'CLINIC_APPOINTMENT' && (
+            user?.role === 'ADMIN' || user?.role === 'CLINICAL_ADMIN'
+              ? <ClinicQuestionnairePanel />
+              : <p className="mt-6 text-sm text-slate-600">Only clinic admins and clinical admins can change the clinic’s questions.</p>
+          )}
+
+          {activeSection === 'patients' && isAdmin && configEnvelope.config.workflowProfile !== 'CLINIC_APPOINTMENT' && (
             <PatientsSection
               draftConfig={draftConfig}
               onAddIntakeQuestion={addIntakeQuestion}
@@ -814,6 +849,7 @@ export function SettingsPage({
 }
 
 function GeneralSection({
+  workflowProfile,
   canEditHospitalDetails,
   user,
   hospitalSummary,
@@ -837,6 +873,7 @@ function GeneralSection({
   onRequestHospitalSave,
   onSaveProfile,
 }: {
+  workflowProfile: 'ED' | 'CLINIC_APPOINTMENT';
   canEditHospitalDetails: boolean;
   user: AuthUser | null;
   hospitalSummary: HospitalSummary | null;
@@ -864,7 +901,7 @@ function GeneralSection({
     <div className="grid gap-5 xl:grid-cols-[1.02fr,0.98fr]">
       <Panel
         title={user && ['ADMIN', 'IT_ADMIN', 'CLINICAL_ADMIN'].includes(user.role) ? 'Admin Account Details' : 'Account Details'}
-        subtitle="Manage the email and password used to access the hospital dashboard."
+        subtitle={`Manage the email and password used to access the ${workflowProfile === 'CLINIC_APPOINTMENT' ? 'clinic' : 'hospital'} dashboard.`}
       >
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Email address">
@@ -923,18 +960,18 @@ function GeneralSection({
       </Panel>
 
       <Panel
-        title="Hospital Details"
-        subtitle="Core identity and volume information for the current clinic environment."
+        title={workflowProfile === 'CLINIC_APPOINTMENT' ? 'Clinic Details' : 'Hospital Details'}
+        subtitle={`Core identity and volume information for the current ${workflowProfile === 'CLINIC_APPOINTMENT' ? 'clinic' : 'hospital'}.`}
       >
         {loadingHospitalSummary ? (
-          <EmptyNotice message="Loading hospital information…" />
+          <EmptyNotice message={`Loading ${workflowProfile === 'CLINIC_APPOINTMENT' ? 'clinic' : 'hospital'} information…`} />
         ) : (
           <>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="grid flex-1 gap-3 sm:grid-cols-2">
-                <Metric label="Hospital name" value={hospitalSummary?.name ?? user?.hospital?.name ?? 'Unknown'} />
+                <Metric label={workflowProfile === 'CLINIC_APPOINTMENT' ? 'Clinic name' : 'Hospital name'} value={hospitalSummary?.name ?? user?.hospital?.name ?? 'Unknown'} />
                 <Metric label="Slug" value={hospitalSummary?.slug ?? user?.hospital?.slug ?? 'Unknown'} />
-                <Metric label="Hospital ID" value={hospitalSummary?.id ?? user?.hospital?.id ?? 'Unknown'} />
+                <Metric label={workflowProfile === 'CLINIC_APPOINTMENT' ? 'Clinic ID' : 'Hospital ID'} value={hospitalSummary?.id ?? user?.hospital?.id ?? 'Unknown'} />
                 <Metric label="Accounts" value={hospitalSummary?._count.users ?? 'Unknown'} />
                 <Metric label="Total encounters" value={hospitalSummary?._count.encounters ?? 'Unknown'} />
                 <Metric label="Signed-in user" value={user?.email ?? 'Unknown'} />
@@ -952,7 +989,7 @@ function GeneralSection({
             {canEditHospitalDetails && isEditingHospitalDetails && (
               <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
                 <div className="grid gap-4 md:grid-cols-2">
-                  <Field label="Hospital name">
+                  <Field label={workflowProfile === 'CLINIC_APPOINTMENT' ? 'Clinic name' : 'Hospital name'}>
                     <input
                       className={FIELD_CLASS}
                       type="text"
@@ -992,8 +1029,7 @@ function GeneralSection({
             )}
 
             <div className="mt-4 rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
-              This workspace is scoped to a single hospital database. Staff access stays tenant-bound through the
-              authenticated hospital account and the server-side hospital ID checks already present in the backend.
+              You are editing settings for this organization. Changes here do not affect other clinics or hospitals.
             </div>
           </>
         )}
@@ -1075,7 +1111,9 @@ function StaffSection({
         <Panel
           title="Role-Based Workspace Access"
           subtitle={
-            isAdmin
+            draftConfig.workflowProfile === 'CLINIC_APPOINTMENT'
+              ? 'Clinic Reception and Care access is enforced by staff role. Care editing is limited to doctors and clinical admins.'
+              : isAdmin
               ? 'Choose exactly which workspaces are available for each role. Settings stays available to every role, with content scoped by permissions.'
               : 'This workspace access matrix is managed by your administrator.'
           }
@@ -1085,7 +1123,7 @@ function StaffSection({
               <thead>
                 <tr>
                   <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Role</th>
-                  {HOSPITAL_PAGE_KEYS.map((page) => (
+                  {HOSPITAL_PAGE_KEYS.filter((page) => draftConfig.workflowProfile === 'CLINIC_APPOINTMENT' ? page === 'admit' || page === 'care' || page === 'settings' : page !== 'care').map((page) => (
                     <th key={page} className="px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                       {PAGE_LABELS[page]}
                     </th>
@@ -1096,15 +1134,17 @@ function StaffSection({
                 {ROLE_ORDER.map((role) => (
                   <tr key={role} className="rounded-[18px] bg-slate-50">
                     <td className="rounded-l-[18px] px-3 py-3 text-sm font-semibold text-slate-900">{ROLE_LABELS[role]}</td>
-                    {HOSPITAL_PAGE_KEYS.map((page) => {
-                      const enabled = draftConfig.pageAccess[role].includes(page);
+                    {HOSPITAL_PAGE_KEYS.filter((page) => draftConfig.workflowProfile === 'CLINIC_APPOINTMENT' ? page === 'admit' || page === 'care' || page === 'settings' : page !== 'care').map((page) => {
+                      const enabled = draftConfig.workflowProfile === 'CLINIC_APPOINTMENT'
+                        ? page === 'admit' || page === 'care' && ['ADMIN', 'CLINICAL_ADMIN', 'NURSE', 'DOCTOR'].includes(role) || page === 'settings' && ['ADMIN', 'IT_ADMIN', 'CLINICAL_ADMIN'].includes(role)
+                        : draftConfig.pageAccess[role].includes(page);
                       return (
                         <td key={`${role}-${page}`} className="px-3 py-3 text-center">
                           <label className="inline-flex items-center justify-center">
                             <input
                               type="checkbox"
                               checked={enabled}
-                              disabled={!isAdmin || page === 'settings'}
+                              disabled={!isAdmin || page === 'settings' || draftConfig.workflowProfile === 'CLINIC_APPOINTMENT'}
                               onChange={() => onTogglePageAccess(role, page)}
                               className="h-4 w-4 rounded border-slate-300 text-priage-600 focus:ring-priage-500 disabled:cursor-not-allowed disabled:opacity-50"
                             />

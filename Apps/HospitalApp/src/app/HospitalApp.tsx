@@ -17,13 +17,18 @@ import {
   connectSocket,
   disconnectSocket,
   getSocket,
-  sendMessageViaSocket,
   subscribeToEncounterRealtime,
 } from '../shared/realtime/socket';
-import { listMessages } from '../shared/api/messaging';
+import { listMessages, sendMessage } from '../shared/api/messaging';
 import type { View } from '../shared/ui/NavBar';
 import { getHospitalConfig } from '../shared/api/hospitals';
 import { getPreferredLandingPage } from '../shared/settings/preferences';
+import { ClinicReceptionBoard } from '../features/clinic/ClinicReceptionBoard';
+import { CareView } from '../features/clinic/care/CareView';
+import { ClinicAnalyticsView } from '../features/clinic/analytics/ClinicAnalyticsView';
+import { ClinicShell, type ClinicView } from '../features/clinic/ui/ClinicShell';
+import { ClinicToastProvider } from '../features/clinic/ui/toast';
+import { EncounterBoardClock, mergeEncounterSnapshot } from './encounterBoardOrdering';
 
 // Re-export domain types so existing component imports keep working
 export type { PatientSummary as Patient, ChatMessage, Encounter } from '../shared/types/domain';
@@ -42,7 +47,8 @@ import { RealtimeEvents, messageToChatMessage } from '../shared/types/domain';
 // View type imported from NavBar
 
 const DEFAULT_HOSPITAL_CONFIG: HospitalOperationalConfig = {
-  version: 1,
+  version: 2,
+  workflowProfile: 'ED',
   pageAccess: {
     ADMIN: ['admit', 'triage', 'waiting', 'analytics', 'settings'],
     IT_ADMIN: ['settings'],
@@ -133,6 +139,7 @@ export function HospitalApp() {
   const encounterFetchInFlight = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const lastEncounterFetch = useRef<{ key: string; completedAt: number } | null>(null);
   const encounterDataSignature = useRef('');
+  const encounterBoardClock = useRef(new EncounterBoardClock());
   const encountersRef = useRef<EncounterListItem[]>([]);
   const encounterOwnerUserId = useRef<number | null>(null);
   const encounterIdsRef = useRef<number[]>([]);
@@ -140,13 +147,23 @@ export function HospitalApp() {
   const seenRealtimeEventIds = useRef<Set<number>>(new Set());
   const effectiveConfig = hospitalConfig ?? DEFAULT_HOSPITAL_CONFIG;
   const availableViews = useMemo<View[]>(
-    () => (user ? effectiveConfig.pageAccess[user.role] : []),
+    () => {
+      if (!user) return [];
+      if (effectiveConfig.workflowProfile === 'CLINIC_APPOINTMENT' || import.meta.env.VITE_CLINIC_PILOT_MODE === 'true') {
+        if (user.role === 'IT_ADMIN') return ['admit', 'settings'];
+        if (user.role === 'DOCTOR' || user.role === 'NURSE') return ['admit', 'care'];
+        if (user.role === 'ADMIN' || user.role === 'CLINICAL_ADMIN') return ['admit', 'care', 'analytics', 'settings'];
+        return ['admit'];
+      }
+      return effectiveConfig.pageAccess[user.role].filter((view) => view !== 'care');
+    },
     [effectiveConfig, user],
   );
   const clinicalMessagingEnabled =
     user?.role === 'ADMIN' || user?.role === 'CLINICAL_ADMIN' || user?.role === 'NURSE' || user?.role === 'DOCTOR';
 
   const visibleEncounterStatuses = useMemo<EncounterStatus[]>(() => {
+    if (effectiveConfig.workflowProfile === 'CLINIC_APPOINTMENT' || import.meta.env.VITE_CLINIC_PILOT_MODE === 'true') return [];
     const statuses = new Set<EncounterStatus>();
 
     if (availableViews.includes('admit')) {
@@ -162,7 +179,7 @@ export function HospitalApp() {
     }
 
     return Array.from(statuses);
-  }, [availableViews]);
+  }, [availableViews, effectiveConfig.workflowProfile]);
   const visibleEncounterStatusesKey = useMemo(
     () => visibleEncounterStatuses.join(','),
     [visibleEncounterStatuses],
@@ -253,6 +270,7 @@ export function HospitalApp() {
       encounterFetchInFlight.current = null;
       lastEncounterFetch.current = null;
       encounterDataSignature.current = '';
+      encounterBoardClock.current.reset();
       encountersRef.current = [];
       setEncounters([]);
       setChatMessages({});
@@ -284,6 +302,7 @@ export function HospitalApp() {
     }
 
     const request = (async () => {
+      const snapshotToken = encounterBoardClock.current.snapshotRequested();
       try {
         if (encountersRef.current.length === 0) {
           setLoadingEncounters(true);
@@ -292,11 +311,16 @@ export function HospitalApp() {
           ? await listEncounters({ status: visibleEncounterStatuses, limit: 100 })
           : { data: [], total: 0 };
         if (isMounted.current) {
-          const nextSignature = buildEncounterSignature(visibleRes.data);
+          const next = mergeEncounterSnapshot(
+            visibleRes.data,
+            encountersRef.current.filter((encounter) => visibleEncounterStatuses.includes(encounter.status)),
+            encounterBoardClock.current.takeChangedSince(snapshotToken),
+          );
+          const nextSignature = buildEncounterSignature(next);
           if (nextSignature !== encounterDataSignature.current) {
             encounterDataSignature.current = nextSignature;
-            encountersRef.current = visibleRes.data;
-            setEncounters(visibleRes.data);
+            encountersRef.current = next;
+            setEncounters(next);
           }
         }
       } catch (err) {
@@ -351,8 +375,10 @@ export function HospitalApp() {
   }, [fetchEncounters]);
 
   const applyEncounterDelta = useCallback(async (encounterId: number) => {
+    const refreshToken = encounterBoardClock.current.encounterChanged(encounterId);
     try {
       const encounter = await getEncounter(encounterId);
+      if (!encounterBoardClock.current.isCurrentRefresh(encounterId, refreshToken)) return;
       setEncounters((current) => {
         const next = !visibleEncounterStatuses.includes(encounter.status)
           ? current.filter((item) => item.id !== encounter.id)
@@ -587,14 +613,19 @@ export function HospitalApp() {
     }
 
     try {
-      const created = await sendMessageViaSocket(encounterId, text);
+      const created = await sendMessage(encounterId, { content: text });
       upsertChatMessage({ ...created, encounterId });
     } catch (err) {
       console.error('[HospitalApp] Failed to send message:', err);
-      showToast('Failed to send message. Please try again.', 'error');
+      // The server may have saved a message even if its response was lost.
+      // Refresh the thread and let the clinician inspect it before retrying.
+      void loadMessagesForEncounter(
+        encounterId,
+        loadedMessageEncounters.current.has(encounterId) ? 'append' : 'replace',
+      );
       throw err;
     }
-  }, [clinicalMessagingEnabled, showToast, upsertChatMessage]);
+  }, [clinicalMessagingEnabled, loadMessagesForEncounter, showToast, upsertChatMessage]);
 
   // Admittance shows EXPECTED and ADMITTED patients
   const admitEncounters = useMemo(
@@ -696,6 +727,21 @@ export function HospitalApp() {
     setHospitalConfig(response.config);
     setConfigUpdatedAt(response.updatedAt);
   };
+
+  if (effectiveConfig.workflowProfile === 'CLINIC_APPOINTMENT' || import.meta.env.VITE_CLINIC_PILOT_MODE === 'true') {
+    const clinicViews = availableViews.filter((view): view is ClinicView => view === 'admit' || view === 'care' || view === 'analytics' || view === 'settings');
+    const clinicView: ClinicView = (currentView === 'care' || currentView === 'analytics' || currentView === 'settings') && clinicViews.includes(currentView) ? currentView : 'admit';
+    return (
+      <ClinicToastProvider>
+        <ClinicShell current={clinicView} views={clinicViews} onNavigate={setCurrentView} onLogout={handleBack} user={userInfo!} clinicName={user.hospital?.name}>
+          {clinicView === 'care' ? <CareView />
+            : clinicView === 'analytics' ? <ClinicAnalyticsView />
+            : clinicView === 'settings' ? <SettingsPage embedded onNavigate={(view) => { if (clinicViews.includes(view as ClinicView)) setCurrentView(view); }} onLogout={handleBack} user={user} availableViews={clinicViews} configEnvelope={{ hospitalId: user.hospitalId, updatedAt: configUpdatedAt, config: effectiveConfig }} onConfigUpdated={handleConfigUpdated} />
+              : <ClinicReceptionBoard user={userInfo!} />}
+        </ClinicShell>
+      </ClinicToastProvider>
+    );
+  }
 
   return (
     <>

@@ -36,7 +36,16 @@
     "audit:export": "node scripts/export-sensitive-audit.js",
     "staff:classify-admins": "node scripts/classify-legacy-admins.js",
     "staff:provision": "node scripts/provision-staff-membership.js",
-    "alerts:verify-activation": "node scripts/verify-alert-activation.js"
+    "patients:backfill-staff-profiles": "node scripts/backfill-staff-created-profiles.js",
+    "clinic:set-workflow-profile": "node scripts/set-clinic-workflow-profile.js",
+    "clinic:publish-legal-document": "node scripts/publish-clinic-legal-document.js",
+    "jobs:remove-obsolete-triage-repeat": "node scripts/remove-obsolete-triage-repeat.js",
+    "test:clinic-intake-smoke": "node scripts/clinic-intake-smoke.js",
+    "test:clinic-booking-smoke": "node scripts/clinic-booking-smoke.js",
+    "test:clinic-entry-smoke": "node scripts/clinic-entry-smoke.js",
+    "alerts:verify-activation": "node scripts/verify-alert-activation.js",
+    "test:clinic-communications-smoke": "node scripts/clinic-communications-smoke.js",
+    "test:clinic-recovery-http-smoke": "node scripts/clinic-recovery-http-smoke.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1068.0",
@@ -64,6 +73,7 @@
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "0.2.2",
+    "resend": "^6.31.0",
     "rxjs": "7.8.2",
     "socket.io": "4.8.3"
   },

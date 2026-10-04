@@ -3,6 +3,7 @@
 
 import type { ReactNode } from 'react';
 import type { HospitalPageKey } from '../types/domain';
+import { PriageLogo } from './PriageLogo';
 
 export type View = HospitalPageKey;
 
@@ -18,6 +19,7 @@ interface NavBarProps {
   onLogout: () => void;
   user: { email: string; role: string } | null;
   availableViews?: View[];
+  workflowProfile?: 'ED' | 'CLINIC_APPOINTMENT';
 }
 
 const tabs: NavTab[] = [
@@ -38,6 +40,15 @@ const tabs: NavTab[] = [
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="3" y="2" width="10" height="12" rx="1" stroke="currentColor" strokeWidth="1.5" fill="none" />
         <path d="M6 6h4M6 9h4M6 12h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    key: 'care',
+    label: 'Care',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M3 2.5h10v11H3zM5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -74,10 +85,11 @@ const tabs: NavTab[] = [
   },
 ];
 
-export function NavBar({ currentView, onNavigate, onLogout, user, availableViews }: NavBarProps) {
+export function NavBar({ currentView, onNavigate, onLogout, user, availableViews, workflowProfile = 'ED' }: NavBarProps) {
   const visibleTabs = tabs
     .filter((tab) => !availableViews || availableViews.includes(tab.key))
     .map((tab) => (
+      tab.key === 'admit' && workflowProfile === 'CLINIC_APPOINTMENT' ? { ...tab, label: user?.role === 'IT_ADMIN' ? 'Availability' : 'Reception' } :
       tab.key === 'settings' && (user?.role === 'ADMIN' || user?.role === 'IT_ADMIN' || user?.role === 'CLINICAL_ADMIN')
         ? { ...tab, label: 'Admin Settings' }
         : tab
@@ -85,65 +97,62 @@ export function NavBar({ currentView, onNavigate, onLogout, user, availableViews
   const homeView = visibleTabs.find((tab) => tab.key === 'waiting')?.key ?? visibleTabs[0]?.key ?? 'settings';
 
   return (
-    <nav className="sticky top-0 z-50 overflow-visible border-b border-white/10 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg">
-      <div className="relative h-16 px-6">
-        <div className="absolute left-6 top-1/2 z-30 flex min-w-[220px] -translate-y-1/2 items-center justify-start">
+    <nav aria-label="Clinic navigation" className="sticky top-0 z-50 border-b border-white/10 bg-gradient-to-r from-priage-800 to-priage-600 shadow-lg">
+      <div className="flex min-h-16 flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 lg:flex-nowrap lg:px-6">
+        <div className="order-1 flex shrink-0 items-center">
           <button
+            type="button"
+            aria-label="Priage Clinic home"
             onClick={() => onNavigate(homeView)}
-            className="flex items-center gap-2 text-white transition-opacity hover:opacity-80"
+            className="flex items-center gap-2 rounded-lg text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15 text-sm font-black text-white ring-1 ring-white/20">
-              P
-            </div>
+            <PriageLogo size={30} color="#FFFFFF" />
             <span className="font-hospital-display text-xl font-semibold tracking-[-0.03em] text-white">
-              Priage
+              Priage Clinic
             </span>
           </button>
         </div>
 
-        <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 flex w-[min(820px,calc(100vw-30rem))] max-w-[calc(100vw-8rem)] -translate-x-1/2 -translate-y-1/2 items-center justify-center">
-          <div className="pointer-events-auto flex w-full items-end justify-center gap-3">
+        <div className="order-3 w-full min-w-0 overflow-x-auto lg:order-2 lg:flex-1">
+          <div className="flex min-w-max items-center gap-1">
             {visibleTabs.map((tab) => {
               const isActive = currentView === tab.key;
               return (
                 <button
                   key={tab.key}
+                  type="button"
+                  aria-current={isActive ? 'page' : undefined}
                   onClick={() => onNavigate(tab.key)}
                   className={`
-                    group relative flex min-h-[46px] min-w-0 flex-1 items-center justify-center gap-2 whitespace-nowrap px-3 pb-3 pt-2 text-center
-                    font-hospital-display text-base font-semibold tracking-[-0.02em] transition-all duration-150 cursor-pointer
-                    ${isActive ? 'text-white' : 'text-white/68 hover:text-white'}
+                    flex min-h-[44px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border-b-2 px-3 py-2
+                    font-hospital-display text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white
+                    ${isActive ? 'border-white text-white' : 'border-transparent text-white/75 hover:bg-white/10 hover:text-white'}
                   `}
                 >
                   <span className="shrink-0">{tab.icon}</span>
                   <span>{tab.label}</span>
-                  <span
-                    className={`
-                      pointer-events-none absolute bottom-0 left-1/2 z-20 h-0.5 w-12 -translate-x-1/2 rounded-full transition-all duration-150
-                      ${isActive ? 'bg-white' : 'bg-transparent group-hover:bg-white/45'}
-                    `}
-                  />
                 </button>
               );
             })}
           </div>
         </div>
 
-        <div className="absolute right-6 top-1/2 z-30 flex min-w-[320px] -translate-y-1/2 items-center justify-end gap-4 whitespace-nowrap">
+        <div className="order-2 ml-auto flex shrink-0 items-center gap-3 whitespace-nowrap lg:order-3">
           {user && (
-            <div className="flex shrink-0 items-center gap-3">
+            <div className="hidden min-w-0 items-center gap-2 sm:flex">
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-600 text-sm font-bold text-white">
                 {user.email[0].toUpperCase()}
               </div>
-              <div className="flex min-w-0 shrink-0 flex-col items-end">
-                <span className="max-w-[220px] truncate text-[15px] font-medium leading-tight text-white/92">{user.email}</span>
+              <div className="flex min-w-0 flex-col items-end">
+                <span className="max-w-[150px] truncate text-sm font-medium leading-tight text-white/92 xl:max-w-[220px]">{user.email}</span>
                 <span className="text-[11px] font-semibold uppercase leading-tight tracking-[0.12em] text-priage-200">{user.role}</span>
               </div>
             </div>
           )}
           <button
+            type="button"
             onClick={onLogout}
-            className="shrink-0 rounded-md px-2.5 py-1.5 text-[15px] font-medium text-white/75 transition-colors hover:bg-white/10 hover:text-red-300 cursor-pointer"
+            className="shrink-0 rounded-md px-2.5 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
           >
             Logout
           </button>

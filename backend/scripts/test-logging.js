@@ -13,7 +13,7 @@ const { randomUUID } = require('crypto');
 const { TestFixtureTracker } = require('./lib/test-fixtures');
 const { demoCookieHeader } = require('./lib/demo-gate');
 const { extractPatientCookieHeader } = require('./lib/session-cookies');
-const STAFF_AUTH_COOKIE = 'priage_staff_auth';
+const { STAFF_AUTH_COOKIE } = require('./lib/cookie-names');
 
 // Initialize Prisma with pg-adapter (Prisma 7 approach)
 const pool = new Pool({
@@ -1100,6 +1100,7 @@ async function testNewServicesLogging() {
       firstName: 'Test',
       lastName: 'IntakePatient',
       phone: '+15555550123',
+      contactEmail: `logging-${Date.now()}@example.ca`,
       age: 30,
       chiefComplaint: 'Test intake logging',
       details: 'Testing patient intent creation logging',

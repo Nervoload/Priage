@@ -30,7 +30,6 @@ import { useSeenEncounters } from '../../shared/hooks/useSeenEncounters';
 import { checkFormCompleteness } from '../../shared/hooks/formCompleteness';
 import { useToast } from '../../shared/ui/ToastContext';
 import { createAdmittanceEncounter, getEncounter } from '../../shared/api/encounters';
-import { sendMessage } from '../../shared/api/messaging';
 import { Modal } from '../../shared/ui/Modal';
 import { ApiError } from '../../shared/api/client';
 
@@ -279,7 +278,7 @@ export function AdmitView({
     setCreatingEncounter(true);
     try {
       await createAdmittanceEncounter(payload);
-      showToast('Patient account and encounter created.', 'success');
+      showToast('Visit created without a patient login account.', 'success');
       setShowCreateEncounterModal(false);
       resetCreateEncounterForm();
       try {
@@ -290,10 +289,6 @@ export function AdmitView({
     } catch (error) {
       console.error('[AdmitView] Failed to create admittance encounter:', error);
       if (error instanceof ApiError && error.status === 401) return;
-      if (error instanceof ApiError && error.status === 409) {
-        showToast('That patient email already has an account. Use the existing patient flow instead.', 'error');
-        return;
-      }
       showToast('Could not create the encounter. Please try again.', 'error');
     } finally {
       setCreatingEncounter(false);
@@ -603,9 +598,9 @@ export function AdmitView({
         width="max-w-4xl"
         title={(
           <div className="space-y-1 pr-10">
-            <div className="text-lg font-semibold text-slate-950">Create patient + encounter</div>
+            <div className="text-lg font-semibold text-slate-950">Create staff-entered visit</div>
             <div className="text-sm text-slate-500">
-              Creates a new patient account with the temporary password <span className="font-semibold text-slate-700">00000</span> and opens an expected encounter.
+              Opens an expected encounter and stores the email as visit contact information. No patient login account is created.
             </div>
           </div>
         )}
@@ -700,7 +695,7 @@ export function AdmitView({
 
           <div className="mt-5 flex flex-col gap-3 border-t border-slate-200/80 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-slate-500">
-              This creates a patient account and the first encounter without any name or email matching heuristics.
+              This creates a visit-only patient record. The contact email is kept with this encounter and does not create a login account.
             </p>
             <div className="flex gap-3">
               <button
@@ -731,9 +726,6 @@ export function AdmitView({
           onAdmit={(encounter) => {
             onAdmit(encounter);
             setSelectedEncounter(null);
-          }}
-          onSendReminder={async (encounter, message) => {
-            await sendMessage(encounter.id, { content: message });
           }}
           customFormQuestions={customFormQuestions}
         />

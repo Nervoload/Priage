@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { allTenantNames, clinicInstanceName, createTenantEntry, databaseNameForTenant, emptyRegistry, parseDevArgs, portsForSlot, selectTenant } from './dev-tenant-config.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, '..');
@@ -11,58 +13,123 @@ const backendDir = join(projectRoot, 'backend');
 const patientAppDir = join(projectRoot, 'Apps', 'PatientApp');
 const hospitalAppDir = join(projectRoot, 'Apps', 'HospitalApp');
 const versionFile = join(projectRoot, 'VERSION');
-const runtimeDir = join(projectRoot, '.priage-dev');
-
-const args = new Set(process.argv.slice(2));
-const wantsHelp = args.has('--help') || args.has('-h');
-const wantsNewUser = args.has('newuser') || args.has('-u');
-const wantsReseed = args.has('reseed');
-const wantsFullseed = args.has('fullseed');
-const wantsSmoke = args.has('test') || args.has('-t');
-const wantsLogs = args.has('logs') || args.has('-l');
-const wantsVerbose = args.has('--verbose') || args.has('-v');
-const wantsKill = args.has('kill') || args.has('-k') || args.has('--kill');
-const wantsCloud = args.has('cloud');
-
-if (wantsCloud) {
-  const cloudArgs = process.argv.slice(2).filter((value) => value !== 'cloud');
+const rootRuntimeDir = process.env.PRIAGE_DEV_RUNTIME_DIR || join(projectRoot, '.priage-dev');
+const rawArgs = process.argv.slice(2);
+if (rawArgs.includes('cloud')) {
+  const cloudArgs = rawArgs.filter((value) => value !== 'cloud');
   const result = spawnSync('node', [join(projectRoot, 'scripts', 'cloud-stack.mjs'), ...(cloudArgs.length > 0 ? cloudArgs : ['up'])], {
     cwd: projectRoot,
     stdio: 'inherit',
   });
   process.exit(result.status ?? 1);
 }
+let parsedArgs;
+try {
+  parsedArgs = parseDevArgs(rawArgs);
+} catch (error) {
+  console.error(`[priage-dev] ${error.message}`);
+  process.exit(1);
+}
+const { tenantName: requestedTenant, instanceName, all: wantsAll, args } = parsedArgs;
+const wantsHelp = args.has('--help') || args.has('-h');
+const wantsNewUser = args.has('newuser') || args.has('-u');
+const wantsReseed = args.has('reseed');
+const wantsFullseed = args.has('fullseed');
+const wantsSmoke = args.has('test') || args.has('-T');
+const wantsLogs = args.has('logs') || args.has('-l');
+const wantsVerbose = args.has('--verbose') || args.has('-v');
+const wantsKill = args.has('kill') || args.has('-k') || args.has('--kill');
+const registry = readRegistry();
+if (wantsHelp) {
+  printUsage();
+  process.exit(0);
+}
+if (wantsAll) {
+  const names = allTenantNames(registry, wantsKill);
+  if (!names.length) console.log('[priage-dev] No registered tenant instances to operate on.');
+  let failed = false;
+  for (const name of names) {
+    console.log(`\n[priage-dev] ${name}: ${[...args].join(' ') || 'start'}`);
+    const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--instance', name, ...args], {
+      cwd: projectRoot, stdio: 'inherit', env: process.env,
+    });
+    if (result.status !== 0) {
+      failed = true;
+      console.error(`[priage-dev] ${name} failed; continuing with the other instances.`);
+    }
+  }
+  process.exit(failed ? 1 : 0);
+}
+let selectedTenantName;
+try {
+  if (instanceName && instanceName !== 'ed-1' && !registry.tenants[instanceName]) {
+    throw new Error(`Unknown instance ${instanceName}. Run ./priage-dev -t clinic to create a clinic.`);
+  }
+  if (requestedTenant === 'clinic') {
+    if (wantsKill) throw new Error('-t clinic creates a new clinic; use --instance NAME -k or -all -k to stop one.');
+    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('-t clinic needs an interactive terminal to collect clinic details.');
+    const details = await promptClinicDetails();
+    selectedTenantName = clinicInstanceName(details.name, registry);
+    const created = createTenantEntry(registry, selectedTenantName);
+    created.clinicDetails = details;
+    writeRegistry();
+    console.log(`[priage-dev] Created ${details.name} as ${selectedTenantName}; each instance has its own database and ports.`);
+  } else {
+    if (requestedTenant?.startsWith('clinic-') && !registry.tenants[requestedTenant]) {
+      throw new Error(`Unknown clinic instance ${requestedTenant}. Run ./priage-dev -t clinic to create it.`);
+    }
+    selectedTenantName = selectTenant(registry, instanceName || requestedTenant, wantsKill);
+  }
+} catch (error) {
+  console.error(`[priage-dev] ${error.message}`);
+  process.exit(1);
+}
+const tenant = selectedTenantName && !wantsKill ? createTenantEntry(registry, selectedTenantName) : registry.tenants[selectedTenantName];
+const ports = tenant ? portsForSlot(tenant.slot) : null;
+const runtimeDir = tenant?.name === 'ed-1' ? rootRuntimeDir : join(rootRuntimeDir, 'tenants', tenant?.name || 'none');
+const isClinic = tenant?.workflowProfile === 'CLINIC_APPOINTMENT';
+const databaseUrl = tenant ? `postgresql://priage:priage@localhost:${ports.postgres}/${databaseNameForTenant(tenant.name)}?schema=public` : null;
+const composeArgs = tenant?.name === 'ed-1'
+  ? ['compose']
+  : ['compose', '-f', 'docker-compose.dev-tenant.yml', '-p', `priage-dev-${tenant?.name}`];
+const composeEnv = tenant?.name === 'ed-1'
+  ? { POSTGRES_USER: 'priage', POSTGRES_PASSWORD: 'priage', POSTGRES_DB: 'priage' }
+  : { POSTGRES_DB: tenant ? databaseNameForTenant(tenant.name) : '', POSTGRES_HOST_PORT: String(ports?.postgres || ''), REDIS_HOST_PORT: String(ports?.redis || '') };
 
 const services = [
   {
     id: 'backend',
     name: 'backend',
-    title: 'Priage Dev: Backend',
+    title: `Priage ${tenant?.name}: Backend`,
     cwd: backendDir,
-    port: 3000,
+    port: ports?.backend,
     command: 'npm run start:dev',
-    env: (version) => ({
+    env: (version, instanceEnv) => ({
       APP_VERSION: version,
+      CLINIC_EMAIL_MODE: process.env.CLINIC_EMAIL_MODE || 'capture',
+      PATIENT_APP_URL: process.env.PATIENT_APP_URL || `http://localhost:${ports?.patient}`,
+      ...instanceEnv,
       ...(wantsVerbose ? { LOG_LEVEL: 'verbose' } : {}),
     }),
   },
   {
     id: 'hospital',
     name: 'hospital',
-    title: 'Priage Dev: Hospital',
+    title: `Priage ${tenant?.name}: Hospital`,
     cwd: hospitalAppDir,
-    port: 5173,
-    command: 'npm run dev -- --host 0.0.0.0 --port 5173 --strictPort',
-    env: () => ({}),
+    port: ports?.hospital,
+    command: `npm run dev -- --host 0.0.0.0 --port ${ports?.hospital} --strictPort`,
+    env: () => ({ VITE_API_URL: `http://localhost:${ports?.backend}`, VITE_CLINIC_PILOT_MODE: String(isClinic),
+      VITE_HOSPITAL_SLUG: isClinic ? tenant.name : '', VITE_PATIENT_APP_URL: `http://localhost:${ports?.patient}` }),
   },
   {
     id: 'patient',
     name: 'patient',
-    title: 'Priage Dev: Patient',
+    title: `Priage ${tenant?.name}: Patient`,
     cwd: patientAppDir,
-    port: 5174,
-    command: 'npm run dev -- --host 0.0.0.0 --port 5174 --strictPort',
-    env: () => ({}),
+    port: ports?.patient,
+    command: `npm run dev -- --host 0.0.0.0 --port ${ports?.patient} --strictPort`,
+    env: () => ({ VITE_API_URL: `http://localhost:${ports?.backend}`, VITE_CLINIC_PILOT_MODE: String(isClinic) }),
   },
 ];
 const backendService = services[0];
@@ -72,29 +139,31 @@ const backendReadinessUrl = `http://localhost:${backendService.port}/health/read
 const hospitalAppUrl = `http://localhost:${hospitalService.port}`;
 const patientAppUrl = `http://localhost:${patientService.port}`;
 
-if (wantsHelp) {
-  printUsage();
-  process.exit(0);
-}
-
 main().catch((error) => {
   console.error(`\n[priage-dev] ${error.message}`);
   process.exit(1);
 });
 
 async function main() {
+  if (!tenant) {
+    console.log('[priage-dev] No running tenant instance to stop.');
+    return;
+  }
   ensureRuntimeDir();
 
   if (wantsKill) {
     stopServices();
-    console.log('Priage dev services stopped.');
+    stopDockerServices();
+    tenant.running = false;
+    writeRegistry();
+    console.log(`[priage-dev] ${tenant.name} processes and containers stopped. Its database remains available when restarted.`);
     return;
   }
 
   ensureFileExists(versionFile, 'Missing VERSION file.');
   const version = readVersion();
 
-  console.log(`Priage v${version}`);
+  console.log(`Priage v${version} · ${tenant.name} (${tenant.workflowProfile})`);
   warnOnVersionDrift(version);
   ensurePlatform();
   ensureEnvFiles();
@@ -120,6 +189,7 @@ async function main() {
   }
 
   let devAccountEnv = loadDevAccountEnv();
+  let instanceEnv = buildInstanceEnv(devAccountEnv);
   if (shouldRunStartup || wantsNewUser) {
     const bootstrapArgs = ['scripts/bootstrap-dev-accounts.js'];
     if (wantsNewUser) {
@@ -131,70 +201,183 @@ async function main() {
       : 'Ensuring local dev accounts';
     runStep(bootstrapLabel, 'node', bootstrapArgs, {
       cwd: backendDir,
-      env: { PRIAGE_DEV_RUNTIME_DIR: runtimeDir },
+      env: { ...instanceEnv, PRIAGE_DEV_RUNTIME_DIR: runtimeDir, PRIAGE_DEV_TENANT_NAME: tenant.name,
+        PRIAGE_DEV_WORKFLOW_PROFILE: tenant.workflowProfile,
+        ...(tenant.clinicDetails ? { PRIAGE_DEV_CLINIC_DETAILS: JSON.stringify(tenant.clinicDetails) } : {}) },
     });
     devAccountEnv = loadDevAccountEnv();
+    instanceEnv = buildInstanceEnv(devAccountEnv);
+  }
+
+  if (isClinic && (shouldRunStartup || wantsReseed || wantsFullseed)) {
+    runStep('Ensuring local clinic preview schedule and mock legal copy', 'node', ['scripts/seed-local-clinic-preview.js'], {
+      cwd: backendDir, env: { ...instanceEnv, PRIAGE_DEV_TENANT_NAME: tenant.name,
+        ...(tenant.clinicDetails ? { PRIAGE_DEV_CLINIC_TIMEZONE: tenant.clinicDetails.timezone,
+          PRIAGE_DEV_CLINIC_ACCEPTS_WALK_INS: String(tenant.clinicDetails.acceptsWalkIns ?? true) } : {}) },
+    });
   }
 
   if (wantsReseed || wantsFullseed) {
     runStep('Reseeding patient-facing dev data', 'node', ['scripts/reseed-dev.js'], {
-      cwd: backendDir,
-      env: devAccountEnv,
+      cwd: backendDir, env: instanceEnv,
     });
-    const seedLabel = wantsFullseed
+    if (!isClinic) {
+      const seedLabel = wantsFullseed
       ? 'Running full demo seed script'
       : 'Running standard seed script';
-    const seedScript = wantsFullseed ? 'scripts/demo-seed.js' : 'scripts/seed.js';
-    runStep(seedLabel, 'node', [seedScript], {
-      cwd: backendDir,
-      env: buildSeedEnv(devAccountEnv),
-    });
+      const seedScript = wantsFullseed ? 'scripts/demo-seed.js' : 'scripts/seed.js';
+      runStep(seedLabel, 'node', [seedScript], {
+        cwd: backendDir, env: { ...instanceEnv, ...buildSeedEnv(devAccountEnv) },
+      });
+    }
   }
 
-  const launchedServices = shouldRunStartup ? launchServices(version, devAccountEnv) : new Set();
-  if (shouldRunStartup && (wantsSmoke || wantsLogs)) {
+  tenant.running = true;
+  tenant.lastStartedAt = new Date().toISOString();
+  writeRegistry();
+  const launchedServices = shouldRunStartup ? launchServices(version, instanceEnv) : new Set();
+  if (shouldRunStartup) {
     await waitForBackend(launchedServices);
+    await waitForFrontendService(hospitalService, hospitalAppUrl, launchedServices);
+    await waitForFrontendService(patientService, patientAppUrl, launchedServices);
   }
   if (wantsLogs && !wantsSmoke) {
     const loggingScript = wantsVerbose ? 'test:logging:verbose' : 'test:logging';
     runStep('Running logging tests', 'npm', ['run', loggingScript], {
       cwd: backendDir,
-      env: devAccountEnv,
+      env: { ...instanceEnv, ...devAccountEnv },
     });
   }
   if (wantsSmoke) {
-    if (shouldRunStartup) {
-      await waitForFrontendService(hospitalService, hospitalAppUrl, launchedServices);
-      await waitForFrontendService(patientService, patientAppUrl, launchedServices);
+    if (isClinic) {
+      runStep('Testing clinic intake preview', 'npm', ['run', 'test:clinic-intake-smoke'], {
+        cwd: backendDir, env: { ...instanceEnv, CLINIC_SMOKE_BASE_URL: `http://localhost:${ports.backend}` },
+      });
+      runStep('Testing clinic booking preview', 'npm', ['run', 'test:clinic-booking-smoke'], {
+        cwd: backendDir, env: { ...instanceEnv, CLINIC_SMOKE_BASE_URL: `http://localhost:${ports.backend}`,
+          ...(tenant.clinicDetails ? { PRIAGE_DEV_CLINIC_TIMEZONE: tenant.clinicDetails.timezone } : {}) },
+      });
+    } else {
+      runStep('Running developer confidence pipeline', 'npm', ['run', 'test:dev-pipeline'], {
+        cwd: backendDir, env: { ...instanceEnv, ...devAccountEnv, BASE_URL: `http://localhost:${ports.backend}` },
+      });
     }
-    runStep('Running developer confidence pipeline', 'npm', ['run', 'test:dev-pipeline'], {
-      cwd: backendDir,
-      env: devAccountEnv,
+  }
+  if (isClinic && wantsFullseed) {
+    runStep('Seeding clinic preview visits and appointments', 'node', ['scripts/seed-local-clinic-demo.js'], {
+      cwd: backendDir, env: { ...instanceEnv, ...devAccountEnv, CLINIC_SEED_BASE_URL: `http://localhost:${ports.backend}` },
     });
   }
+  console.log(`[priage-dev] ${tenant.name}: API http://localhost:${ports.backend} · clinic app http://localhost:${ports.hospital} · patient app http://localhost:${ports.patient}`);
+  console.log(`[priage-dev] Local staff credentials: ${join(runtimeDir, 'accounts.json')}`);
   console.log('Dev stack launcher finished.');
 }
 
 function printUsage() {
-  console.log(`Usage: ./priage-dev [newuser|-u] [reseed|fullseed] [test|-t] [logs|-l] [--verbose|-v]
+  console.log(`Usage: ./priage-dev [-t clinic | --instance NAME | -all] [newuser|-u] [reseed|fullseed] [test|-T] [logs|-l] [--verbose|-v]
 
 Options:
   cloud [up|test|load|chaos|restore|down]
             Run the Dockerized cloud-shaped developer environment
+  -t clinic Create a new clinic and prompt for its name, contact details, timezone, and walk-in choice
+  --instance NAME
+            Select an existing instance by its internal name (for example clinic-1)
+  -all, --all
+            Apply the operation to every registered instance (including ED on startup)
+            With -k, stop every instance while keeping each database volume
+  (no flag) Start or reuse the ED instance (ed-1)
   kill, -k, --kill
-            Stop Priage dev services and close their Terminal windows
+            Stop only the selected instance's processes and containers; without a selector, stop the latest running instance
   newuser, -u
             Create another hospital user for this dev environment
-  reseed    Wipe patient-facing dev data and run backend/scripts/seed.js
-  fullseed  Wipe patient-facing dev data and run backend/scripts/demo-seed.js
-            for a fuller waiting room, admit queue, and triage board
-  test, -t  Wait for the API and run the backend confidence pipeline
+  reseed    Wipe patient-facing dev data; ED instances also run backend/scripts/seed.js
+  fullseed  Wipe patient-facing data and seed ED demo visits or clinic mock intake/booking visits
+  test, -T  Wait for the API and run its workflow-specific confidence pipeline
   logs, -l  Wait for the API and run the logging test suite
   --verbose, -v
             Start the backend with LOG_LEVEL=verbose and run test
             scripts in verbose mode (extra NestJS + test detail)
   --help    Show this help text
 `);
+}
+
+async function promptClinicDetails() {
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    let name = '';
+    while (!name) name = (await prompt.question('Clinic name: ')).trim();
+    const address = (await prompt.question('Clinic address (optional): ')).trim();
+    const phone = (await prompt.question('Clinic phone (optional): ')).trim();
+    let timezone = '';
+    while (!timezone) {
+      timezone = (await prompt.question('Clinic timezone [America/Toronto]: ')).trim() || 'America/Toronto';
+      try { new Intl.DateTimeFormat('en-CA', { timeZone: timezone }); }
+      catch { console.log('Enter a valid IANA timezone.'); timezone = ''; }
+    }
+    const checkInInstructions = (await prompt.question('Check-in instructions (optional): ')).trim();
+    let acceptsWalkIns = true;
+    while (true) {
+      const answer = (await prompt.question('Accept walk-ins for local clinic testing? [Y/n]: ')).trim().toLowerCase();
+      if (!answer || answer === 'y' || answer === 'yes') break;
+      if (answer === 'n' || answer === 'no') { acceptsWalkIns = false; break; }
+      console.log('Enter yes or no.');
+    }
+    return { name, address: address || null, phone: phone || null, timezone,
+      checkInInstructions: checkInInstructions || null, acceptsWalkIns };
+  } finally {
+    prompt.close();
+  }
+}
+
+function readRegistry() {
+  const registryPath = join(rootRuntimeDir, 'registry.json');
+  if (existsSync(registryPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(registryPath, 'utf8'));
+      if (parsed.version === 1 && parsed.tenants && typeof parsed.tenants === 'object') return parsed;
+    } catch {
+      throw new Error('Local tenant registry is unreadable; inspect .priage-dev/registry.json before continuing.');
+    }
+    throw new Error('Local tenant registry has an unsupported format.');
+  }
+  const result = emptyRegistry();
+  // Import the earlier single ED launcher without stopping or replacing its processes.
+  if (existsSync(join(rootRuntimeDir, 'accounts.json')) || ['backend', 'hospital', 'patient'].some((id) => existsSync(join(rootRuntimeDir, `${id}.pid`)))) {
+    const legacy = createTenantEntry(result, 'ed-1');
+    legacy.running = ['backend', 'hospital', 'patient'].some((id) => {
+      const pidFile = join(rootRuntimeDir, `${id}.pid`);
+      return existsSync(pidFile) && processExists(readFileSync(pidFile, 'utf8').trim());
+    });
+    legacy.lastStartedAt = new Date().toISOString();
+  }
+  return result;
+}
+
+function writeRegistry() {
+  mkdirSync(rootRuntimeDir, { recursive: true, mode: 0o700 });
+  const registryPath = join(rootRuntimeDir, 'registry.json');
+  const temporaryPath = `${registryPath}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, registryPath);
+}
+
+function buildInstanceEnv(accountEnv) {
+  if (isClinic && accountEnv.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG && accountEnv.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG !== tenant.name) {
+    throw new Error(`The saved clinic staff account belongs to ${accountEnv.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG}, not ${tenant.name}.`);
+  }
+  return {
+    DATABASE_URL: databaseUrl,
+    NODE_ENV: 'development',
+    REDIS_HOST: 'localhost',
+    REDIS_PORT: String(ports.redis),
+    REDIS_CONNECTION_NAME: `priage-dev-${tenant.name}`,
+    PORT: String(ports.backend),
+    CORS_ORIGINS: `http://localhost:${ports.hospital},http://localhost:${ports.patient}`,
+    AUTH_COOKIE_NAMESPACE: tenant.name === 'ed-1' ? '' : tenant.name,
+    ...(isClinic ? { TRIAGE_INTERVIEW_MODE: 'deterministic' } : {}),
+    CLINIC_PREVIEW_ENABLED: String(isClinic),
+    PILOT_CLINIC_ID: isClinic ? String(accountEnv.PRIAGE_DEV_ADMIN_HOSPITAL_ID || '') : '',
+  };
 }
 
 function ensurePlatform() {
@@ -260,7 +443,6 @@ function ensurePrerequisites() {
     { label: 'npm', cmd: 'npm', args: ['--version'] },
     { label: 'npx', cmd: 'npx', args: ['--version'] },
     { label: 'osascript', cmd: 'osascript', args: ['-e', 'return "ok"'] },
-    { label: 'open', cmd: 'sh', args: ['-lc', 'command -v open >/dev/null'] },
     { label: 'lsof', cmd: 'sh', args: ['-lc', 'command -v lsof >/dev/null'] },
   ];
 
@@ -273,7 +455,7 @@ function ensurePrerequisites() {
 }
 
 function ensureRuntimeDir() {
-  mkdirSync(runtimeDir, { recursive: true });
+  mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
 }
 
 async function getStackStatus() {
@@ -289,7 +471,7 @@ async function getStackStatus() {
     backendReady,
     hospitalReady,
     patientReady,
-    ready: docker.ready && backendReady && hospitalReady && patientReady,
+    ready: docker.ready && backendReady && hospitalReady && patientReady && services.every((service) => !!readManagedPid(service)),
   };
 }
 
@@ -318,8 +500,9 @@ function formatDockerStatus(dockerStatus) {
 }
 
 function getExpectedDockerServices() {
-  const servicesOutput = capture('docker', ['compose', 'config', '--services'], {
+  const servicesOutput = capture('docker', [...composeArgs, 'config', '--services'], {
     cwd: projectRoot,
+    env: composeEnv,
   }).trim();
   return servicesOutput
     .split('\n')
@@ -355,14 +538,14 @@ function ensureDockerServices(dockerStatus = getDockerStatus()) {
 
   if (missingServices.length > 0) {
     console.log(`[priage-dev] Missing containers for: ${missingServices.join(', ')}.`);
-    runStep('Creating docker services', 'docker', ['compose', 'up', '-d'], { cwd: projectRoot });
+    runStep('Creating docker services', 'docker', [...composeArgs, 'up', '-d', '--wait'], { cwd: projectRoot, env: composeEnv });
     verifyDockerRunning(expectedServices);
     return;
   }
 
   if (stoppedServices.length > 0) {
     console.log(`[priage-dev] Starting stopped services: ${stoppedServices.join(', ')}.`);
-    runStep('Starting docker services', 'docker', ['compose', 'up', '-d'], { cwd: projectRoot });
+    runStep('Starting docker services', 'docker', [...composeArgs, 'up', '-d', '--wait'], { cwd: projectRoot, env: composeEnv });
     verifyDockerRunning(expectedServices);
     return;
   }
@@ -371,7 +554,7 @@ function ensureDockerServices(dockerStatus = getDockerStatus()) {
 }
 
 function getComposeState() {
-  const output = capture('docker', ['compose', 'ps', '--all', '--format', 'json'], { cwd: projectRoot }).trim();
+  const output = capture('docker', [...composeArgs, 'ps', '--all', '--format', 'json'], { cwd: projectRoot, env: composeEnv }).trim();
   if (!output) {
     return new Map();
   }
@@ -436,8 +619,8 @@ function ensureDependenciesInstalled(name, cwd) {
 
 function runPrismaSetup() {
   console.log('\n== Prisma ==');
-  runStep('Generating Prisma client', 'npx', ['prisma', 'generate'], { cwd: backendDir });
-  runStep('Applying Prisma migrations', 'npx', ['prisma', 'migrate', 'deploy'], { cwd: backendDir });
+  runStep('Generating Prisma client', 'npx', ['prisma', 'generate'], { cwd: backendDir, env: { DATABASE_URL: databaseUrl } });
+  runStep('Applying Prisma migrations', 'npx', ['prisma', 'migrate', 'deploy'], { cwd: backendDir, env: { DATABASE_URL: databaseUrl } });
 }
 
 function runStep(label, cmd, commandArgs, options = {}) {
@@ -470,22 +653,24 @@ function launchServices(version, sharedEnv = {}) {
   const launched = new Set();
   for (const service of services) {
     clearStalePidFile(service);
+    const portOwner = findPortOwner(service.port);
+    if (portOwner) {
+      if (!readManagedPid(service)) {
+        throw new Error(`Port ${service.port} belongs to an unmanaged process (PID ${portOwner.pid}); refusing to attach ${tenant.name} to it.`);
+      }
+      console.log(`[priage-dev] Reusing ${tenant.name} ${service.name} on port ${service.port}.`);
+      continue;
+    }
+
+    const oldPid = readManagedPid(service);
+    if (oldPid) terminatePid(oldPid, `${tenant.name} stale ${service.name}`);
+    closeTerminalWindow(service);
     removeWindowFile(service);
     removeCommandFile(service);
     removeHistoryFile(service);
     removeLauncherFile(service);
-    const portOwner = findPortOwner(service.port);
-    if (portOwner) {
-      console.warn(
-        `[priage-dev] Port ${service.port} is already in use by PID ${portOwner.pid} (${portOwner.command}); skipping ${service.name} launch.`,
-      );
-      continue;
-    }
 
-    const env = {
-      ...sharedEnv,
-      ...service.env(version),
-    };
+    const env = service.env(version, sharedEnv);
     openTerminalWindow(service, env);
     launched.add(service.id);
     console.log(`[priage-dev] Opened ${service.name} on port ${service.port}.`);
@@ -512,6 +697,11 @@ function stopServices() {
   }
 }
 
+function stopDockerServices() {
+  console.log(`\n== Stop ${tenant.name} Containers ==`);
+  runStep('Stopping selected tenant containers', 'docker', [...composeArgs, 'stop'], { cwd: projectRoot, env: composeEnv });
+}
+
 function pidFileFor(service) {
   return join(runtimeDir, `${service.id}.pid`);
 }
@@ -529,7 +719,7 @@ function historyFileFor(service) {
 }
 
 function launcherFileFor(service) {
-  return join(service.cwd, '.priage-dev-launch');
+  return join(runtimeDir, `${service.id}.launch`);
 }
 
 function readManagedPid(service) {
@@ -644,7 +834,7 @@ function openTerminalWindow(service, env) {
   ];
 
   writeFileSync(commandFile, `${scriptLines.join('\n')}\n`);
-  chmodSync(commandFile, 0o755);
+  chmodSync(commandFile, 0o700);
 
   writeFileSync(
     launcherFile,
@@ -656,25 +846,16 @@ exec ${shellQuote(commandFile)}
   );
   chmodSync(launcherFile, 0o755);
 
-  const openResult = spawnSync('open', ['-a', 'Terminal', service.cwd], {
-    encoding: 'utf8',
-  });
-  if (openResult.status !== 0) {
-    process.stderr.write(openResult.stderr ?? '');
-    throw new Error('Failed to open Terminal.app.');
-  }
-
-  const launchCommand = 'exec ./.priage-dev-launch';
+  const launchCommand = `exec ${shellQuote(launcherFile)}`;
 
   const script = `
 tell application "Terminal"
   activate
-  delay 0.35
-  set targetWindow to front window
-  set targetTab to selected tab of targetWindow
+  set targetTab to do script ""
+  delay 2
+  do script ((ASCII character 21) & ${appleScriptQuote(launchCommand)}) in targetTab
   set custom title of targetTab to ${appleScriptQuote(service.title)}
-  do script ${appleScriptQuote(launchCommand)} in targetTab
-  return id of targetWindow
+  return id of front window
 end tell
 `;
 
@@ -813,9 +994,10 @@ async function waitForBackend(launchedServices = new Set()) {
   const timeoutMs = 90_000;
   const intervalMs = 1_500;
   const deadline = Date.now() + timeoutMs;
+  const pidGraceDeadline = Date.now() + 15_000;
 
   while (Date.now() < deadline) {
-    ensureManagedServiceAlive(backendService, launchedServices);
+    ensureManagedServiceAlive(backendService, launchedServices, pidGraceDeadline);
     if (await checkBackendReady()) {
       // Give the watch-mode process a brief settle period before kicking off smoke tests.
       await sleep(1_000);
@@ -834,9 +1016,10 @@ async function waitForFrontendService(service, url, launchedServices = new Set()
   const timeoutMs = 90_000;
   const intervalMs = 1_500;
   const deadline = Date.now() + timeoutMs;
+  const pidGraceDeadline = Date.now() + 15_000;
 
   while (Date.now() < deadline) {
-    ensureManagedServiceAlive(service, launchedServices);
+    ensureManagedServiceAlive(service, launchedServices, pidGraceDeadline);
     if (await checkFrontendReady(url)) {
       console.log(`[priage-dev] ${service.name} is ready via ${url}.`);
       return;
@@ -848,13 +1031,13 @@ async function waitForFrontendService(service, url, launchedServices = new Set()
   throw new Error(`${service.title} did not become ready via ${url} within 90 seconds.`);
 }
 
-function ensureManagedServiceAlive(service, launchedServices) {
+function ensureManagedServiceAlive(service, launchedServices, pidGraceDeadline) {
   if (!launchedServices.has(service.id)) {
     return;
   }
 
   const pid = readManagedPid(service);
-  if (!pid) {
+  if (!pid && Date.now() >= pidGraceDeadline) {
     throw new Error(`${service.title} exited before readiness completed.`);
   }
 }
@@ -880,6 +1063,9 @@ function loadDevAccountEnv() {
     }
     if (manifest?.admin?.hospitalSlug) {
       env.PRIAGE_DEV_ADMIN_HOSPITAL_SLUG = manifest.admin.hospitalSlug;
+    }
+    if (manifest?.admin?.hospitalId) {
+      env.PRIAGE_DEV_ADMIN_HOSPITAL_ID = String(manifest.admin.hospitalId);
     }
 
     const lastAccount = Array.isArray(manifest?.accounts) && manifest.accounts.length > 0

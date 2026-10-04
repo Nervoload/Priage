@@ -17,6 +17,8 @@ export class JobsService implements OnModuleInit {
     @InjectQueue('logging') private readonly loggingQueue: Queue,
     @InjectQueue('assets') private readonly assetsQueue: Queue,
     @InjectQueue('webhooks') private readonly webhooksQueue: Queue,
+    @InjectQueue('appointments') private readonly appointmentsQueue: Queue,
+    @InjectQueue('notifications') private readonly notificationsQueue: Queue,
     private readonly loggingService: LoggingService,
   ) {
     this.logger.log('JobsService initialized');
@@ -27,6 +29,7 @@ export class JobsService implements OnModuleInit {
 
     try {
       // Set up event polling job
+      await this.notificationsQueue.add('deliver-notifications', {}, { repeat: { every: 15_000 }, removeOnComplete: 100, removeOnFail: 100 });
       await this.eventsQueue.add(
         'poll-events',
         {},
@@ -100,6 +103,16 @@ export class JobsService implements OnModuleInit {
         {},
         {
           repeat: { every: 15000 },
+          removeOnComplete: 100,
+          removeOnFail: 100,
+        },
+      );
+
+      await this.appointmentsQueue.add(
+        'expire-clinic-requests',
+        {},
+        {
+          repeat: { every: 60_000 },
           removeOnComplete: 100,
           removeOnFail: 100,
         },

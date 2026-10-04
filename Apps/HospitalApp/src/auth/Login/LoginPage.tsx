@@ -11,10 +11,12 @@ interface LoginPageProps {
 
 export function LoginPage({ onLogin }: LoginPageProps) {
   const { login, loggingIn } = useAuth();
+  const pilotMode = import.meta.env.VITE_CLINIC_PILOT_MODE === 'true';
+  const pinnedClinicSlug = import.meta.env.VITE_HOSPITAL_SLUG?.trim().toLowerCase() || '';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [hospitalSlug, setHospitalSlug] = useState(() => {
-    const configuredClinic = import.meta.env.VITE_HOSPITAL_SLUG?.trim();
+    const configuredClinic = pinnedClinicSlug;
     if (configuredClinic) return configuredClinic;
     try {
       return window.localStorage.getItem('priage:last-clinic') ?? '';
@@ -28,9 +30,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (pilotMode && !pinnedClinicSlug) {
+      setError('This clinic preview is missing its clinic configuration.');
+      return;
+    }
 
     try {
-      const normalizedClinic = hospitalSlug.trim().toLowerCase();
+      const normalizedClinic = pilotMode ? pinnedClinicSlug : hospitalSlug.trim().toLowerCase();
       await login(email, password, normalizedClinic, mfaCode || undefined);
       try {
         window.localStorage.setItem('priage:last-clinic', normalizedClinic);
@@ -54,7 +60,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       {/* Branding */}
       <div className="text-center mb-10 animate-fade-in-up">
         <h1 className="text-5xl font-bold text-priage-600 mb-1">Priage</h1>
-        <p className="text-gray-500 text-sm">Emergency Room Information &amp; Monitoring Pipeline</p>
+        <p className="text-gray-500 text-sm">Patient intake and care coordination</p>
       </div>
 
       {/* Card */}
@@ -69,8 +75,8 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           </div>
         </div>
 
-        <h2 className="text-xl font-bold text-gray-900 text-center mb-0.5">Hospital App</h2>
-        <p className="text-xs text-gray-400 text-center mb-6">Manage patients, triage, and monitor the ER pipeline</p>
+        <h2 className="text-xl font-bold text-gray-900 text-center mb-0.5">Clinic App</h2>
+        <p className="text-xs text-gray-400 text-center mb-6">Manage patient visits and care-team workflows</p>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           {error && (
@@ -79,7 +85,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             </div>
           )}
 
-          <div>
+          {pilotMode ? <p className="text-sm text-gray-600">Clinic: <strong>{pinnedClinicSlug || 'Not configured'}</strong></p> : <div>
             <label htmlFor="hospitalSlug" className="block text-sm font-medium text-gray-700 mb-1">Clinic</label>
             <input
               id="hospitalSlug"
@@ -91,7 +97,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               placeholder="clinic-slug"
               className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-priage-300 focus:border-priage-400 transition-colors"
             />
-          </div>
+          </div>}
 
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
@@ -132,7 +138,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
           <button
             type="submit"
-            disabled={loggingIn}
+            disabled={loggingIn || (pilotMode && !pinnedClinicSlug)}
             className="w-full py-2.5 bg-accent-600 text-white rounded-lg font-semibold text-sm hover:bg-accent-700 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {loggingIn ? 'Signing In…' : 'Sign In'}

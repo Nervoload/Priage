@@ -1,6 +1,6 @@
 const { createHash, randomBytes } = require('crypto');
 
-const PATIENT_SESSION_COOKIE = 'priage_patient_session';
+const { PATIENT_SESSION_COOKIE } = require('./cookie-names');
 
 function getSetCookieHeaders(headers) {
   if (Array.isArray(headers?.['set-cookie'])) {

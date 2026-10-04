@@ -21,6 +21,10 @@ configs, partner credentials, and webhook subscriptions.
 
 const connectionString =
   process.env.DATABASE_URL || 'postgresql://priage:priage@localhost:5432/priage';
+const databaseUrl = new URL(connectionString);
+const isLocalMockDatabase = process.env.NODE_ENV !== 'production'
+  && ['localhost', '127.0.0.1'].includes(databaseUrl.hostname)
+  && /^\/priage(?:_[a-z0-9_]+)?$/.test(databaseUrl.pathname);
 const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
@@ -83,6 +87,16 @@ async function main() {
         OR: [{ encounterId: { not: null } }, { intakeSessionId: { not: null } }],
       },
     });
+    if (await tx.visitAcceptance.count({}) > 0) {
+      if (!isLocalMockDatabase) {
+        throw new Error('Visit acceptance reset is allowed only for a local mock database');
+      }
+      // The database protects acceptance rows from ordinary deletion. Temporarily
+      // disable only that trigger inside this rollback-safe local reset transaction.
+      await tx.$executeRawUnsafe('ALTER TABLE "VisitAcceptance" DISABLE TRIGGER visit_acceptance_immutable');
+      await tx.visitAcceptance.deleteMany({});
+      await tx.$executeRawUnsafe('ALTER TABLE "VisitAcceptance" ENABLE TRIGGER visit_acceptance_immutable');
+    }
     await tx.intakeSession.deleteMany({});
     await tx.patientSession.deleteMany({});
     await tx.encounter.deleteMany({});
@@ -98,7 +112,7 @@ async function main() {
         where: { correlationId: { in: correlations } },
       });
     }
-  });
+  }, { timeout: 30_000 });
 
   console.log('✅ Patient-facing dev data cleared.');
 }

@@ -1,5 +1,5 @@
 // backend/src/modules/encounters/dto/create-admittance-encounter.dto.ts
-// DTO for creating a new patient account + encounter from hospital admittance.
+// DTO for creating a staff-entered visit with encounter-scoped contact details.
 
 import { IsEmail, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 

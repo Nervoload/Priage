@@ -149,6 +149,7 @@ export class EventsService {
         case EventType.STATUS_CHANGE:
         case EventType.TRIAGE_CREATED:
         case EventType.TRIAGE_COMPLETED:
+        case EventType.CARE_UPDATED:
           await this.realtime.emitEncounterUpdated(
             event.hospitalId,
             event.encounterId,

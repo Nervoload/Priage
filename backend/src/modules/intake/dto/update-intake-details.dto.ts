@@ -1,9 +1,14 @@
 // backend/src/modules/intake/dto/update-intake-details.dto.ts
 
-import { IsInt, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
-import { Sanitize } from '../../../common/decorators/sanitize.decorator';
+import { IsEmail, IsInt, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { Sanitize, SanitizeEmail } from '../../../common/decorators/sanitize.decorator';
 
 export class UpdateIntakeDetailsDto {
+  @IsOptional()
+  @IsEmail()
+  @SanitizeEmail()
+  contactEmail?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(240)

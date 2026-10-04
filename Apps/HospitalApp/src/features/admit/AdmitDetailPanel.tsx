@@ -9,13 +9,12 @@ import {
   getDashboardAvatarTheme,
   getDashboardInitials,
 } from '../../shared/ui/dashboardTheme';
-import { checkFormCompleteness, buildReminderMessage } from '../../shared/hooks/formCompleteness';
+import { checkFormCompleteness } from '../../shared/hooks/formCompleteness';
 
 interface AdmitDetailPanelProps {
   encounter: EncounterDetail;
   onClose: () => void;
   onAdmit: (encounter: EncounterDetail) => void;
-  onSendReminder?: (encounter: EncounterDetail, message: string) => Promise<void>;
   customFormQuestions?: HospitalCustomIntakeQuestion[];
 }
 
@@ -76,21 +75,15 @@ export function AdmitDetailPanel({
   encounter,
   onClose,
   onAdmit,
-  onSendReminder,
   customFormQuestions = [],
 }: AdmitDetailPanelProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>('overview');
   const [expanded, setExpanded] = useState(false);
-  const [sendingReminder, setSendingReminder] = useState(false);
-  const [reminderSent, setReminderSent] = useState(false);
-  const [reminderError, setReminderError] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveTab('overview');
     setExpanded(false);
-    setReminderSent(false);
-    setReminderError(null);
   }, [encounter.id]);
 
   useEffect(() => {
@@ -129,23 +122,6 @@ export function AdmitDetailPanel({
   });
 
   const handleBack = () => onClose();
-
-  const handleSendReminder = async () => {
-    if (!onSendReminder) return;
-    const message = buildReminderMessage(completeness);
-    if (!message) return;
-
-    setSendingReminder(true);
-    setReminderError(null);
-    try {
-      await onSendReminder(encounter, message);
-      setReminderSent(true);
-    } catch (error) {
-      setReminderError(error instanceof Error ? error.message : 'Failed to send reminder');
-    } finally {
-      setSendingReminder(false);
-    }
-  };
 
   return (
     <div
@@ -321,12 +297,8 @@ export function AdmitDetailPanel({
             <FormDetailsPage
               encounter={encounter}
               completeness={completeness}
-              reminderSent={reminderSent}
-              reminderError={reminderError}
-              sendingReminder={sendingReminder}
               healthInfoEntries={healthInfoEntries}
               customFormQuestions={customFormQuestions}
-              onSendReminder={onSendReminder ? handleSendReminder : undefined}
             />
           ) : (
             <SummaryPage encounter={encounter} />
@@ -370,6 +342,7 @@ function OverviewPage({
           <InfoField label="Sex" value={formatDashboardPatientSex(patient.gender)} />
           <InfoField label="Age" value={patient.age != null ? `${patient.age} years` : 'Not recorded'} />
           <InfoField label="Phone" value={patient.phone ?? 'Not recorded'} />
+          <InfoField label="Visit contact email" value={encounter.contact?.email ?? 'Not recorded'} />
           <InfoField label="Language" value={patient.preferredLanguage ?? 'English'} />
         </div>
       </SectionCard>
@@ -401,7 +374,7 @@ function OverviewPage({
           <TimelineItem label="Created" time={encounter.createdAt} />
           <TimelineItem label="Expected" time={encounter.expectedAt} />
           <TimelineItem label="Arrived" time={encounter.arrivedAt} />
-          <TimelineItem label="Triage Started" time={encounter.triagedAt} />
+          <TimelineItem label="Triaged" time={encounter.triagedAt} />
           <TimelineItem label="Waiting" time={encounter.waitingAt} />
           <TimelineItem label="Seen" time={encounter.seenAt} />
           <TimelineItem label="Departed" time={encounter.departedAt} />
@@ -439,21 +412,13 @@ function OverviewPage({
 function FormDetailsPage({
   encounter,
   completeness,
-  reminderSent,
-  reminderError,
-  sendingReminder,
   healthInfoEntries,
   customFormQuestions,
-  onSendReminder,
 }: {
   encounter: EncounterDetail;
   completeness: ReturnType<typeof checkFormCompleteness>;
-  reminderSent: boolean;
-  reminderError: string | null;
-  sendingReminder: boolean;
   healthInfoEntries: Array<[string, unknown]>;
   customFormQuestions: HospitalCustomIntakeQuestion[];
-  onSendReminder?: () => Promise<void>;
 }) {
   const patient = encounter.patient;
   const completenessTone =
@@ -540,28 +505,6 @@ function FormDetailsPage({
           </div>
         )}
 
-        {completeness.issues.length > 0 && onSendReminder && (
-          <div className="mt-4">
-            {reminderSent ? (
-              <div className="rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
-                Reminder sent to the patient to complete missing forms.
-              </div>
-            ) : (
-              <>
-                <button
-                  onClick={() => {
-                    void onSendReminder();
-                  }}
-                  disabled={sendingReminder}
-                  className="inline-flex items-center justify-center rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-                >
-                  {sendingReminder ? 'Sending...' : 'Send Reminder to Complete Forms'}
-                </button>
-                {reminderError && <p className="mt-2 text-sm text-rose-600">{reminderError}</p>}
-              </>
-            )}
-          </div>
-        )}
       </SectionCard>
 
       <SectionCard eyebrow="Forms" title="Detailed Field Review">

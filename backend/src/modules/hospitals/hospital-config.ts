@@ -1,6 +1,7 @@
 import { Role } from '@prisma/client';
 
-export const HOSPITAL_PAGE_KEYS = ['admit', 'triage', 'waiting', 'analytics', 'settings'] as const;
+export const HOSPITAL_PAGE_KEYS = ['admit', 'triage', 'care', 'waiting', 'analytics', 'settings'] as const;
+const ED_PAGE_KEYS: HospitalPageKey[] = ['admit', 'triage', 'waiting', 'analytics', 'settings'];
 export type HospitalPageKey = typeof HOSPITAL_PAGE_KEYS[number];
 
 export const HOSPITAL_INTAKE_RESPONSE_TYPES = ['text', 'textarea', 'boolean', 'number', 'select'] as const;
@@ -11,6 +12,9 @@ export type HospitalIntakeAppliesTo = typeof HOSPITAL_INTAKE_APPLIES_TO[number];
 
 export const HOSPITAL_SURVEY_RESPONSE_TYPES = ['scale', 'text', 'boolean'] as const;
 export type HospitalSurveyResponseType = typeof HOSPITAL_SURVEY_RESPONSE_TYPES[number];
+
+export const HOSPITAL_WORKFLOW_PROFILES = ['ED', 'CLINIC_APPOINTMENT'] as const;
+export type HospitalWorkflowProfile = typeof HOSPITAL_WORKFLOW_PROFILES[number];
 
 export interface HospitalCustomIntakeQuestion {
   id: string;
@@ -31,7 +35,8 @@ export interface HospitalFeedbackSurveyQuestion {
 }
 
 export interface HospitalOperationalConfig {
-  version: 1;
+  version: 2;
+  workflowProfile: HospitalWorkflowProfile;
   pageAccess: Record<Role, HospitalPageKey[]>;
   customIntakeQuestions: HospitalCustomIntakeQuestion[];
   admittanceFeedbackSurvey: HospitalFeedbackSurveyQuestion[];
@@ -58,9 +63,9 @@ const PAGE_ORDER = new Map<HospitalPageKey, number>(
 );
 
 const DEFAULT_PAGE_ACCESS: Record<Role, HospitalPageKey[]> = {
-  [Role.ADMIN]: [...HOSPITAL_PAGE_KEYS],
+  [Role.ADMIN]: [...ED_PAGE_KEYS],
   [Role.IT_ADMIN]: ['settings'],
-  [Role.CLINICAL_ADMIN]: [...HOSPITAL_PAGE_KEYS],
+  [Role.CLINICAL_ADMIN]: [...ED_PAGE_KEYS],
   [Role.NURSE]: ['triage', 'waiting', 'analytics', 'settings'],
   [Role.STAFF]: ['admit', 'settings'],
   [Role.DOCTOR]: ['triage', 'waiting', 'analytics', 'settings'],
@@ -213,7 +218,8 @@ function normalizeSurveyArray(value: unknown): HospitalFeedbackSurveyQuestion[] 
 
 export function getDefaultHospitalConfig(): HospitalOperationalConfig {
   return {
-    version: 1,
+    version: 2,
+    workflowProfile: 'ED',
     pageAccess: {
       [Role.ADMIN]: [...DEFAULT_PAGE_ACCESS[Role.ADMIN]],
       [Role.IT_ADMIN]: [...DEFAULT_PAGE_ACCESS[Role.IT_ADMIN]],
@@ -235,7 +241,10 @@ export function normalizeHospitalConfig(value: unknown): HospitalOperationalConf
     : {};
 
   return {
-    version: 1,
+    version: 2,
+    workflowProfile: HOSPITAL_WORKFLOW_PROFILES.includes(raw.workflowProfile as HospitalWorkflowProfile)
+      ? raw.workflowProfile as HospitalWorkflowProfile
+      : 'ED',
     pageAccess: {
       [Role.ADMIN]: normalizePageAccessList(pageAccess.ADMIN, Role.ADMIN),
       [Role.IT_ADMIN]: normalizePageAccessList(pageAccess.IT_ADMIN, Role.IT_ADMIN),

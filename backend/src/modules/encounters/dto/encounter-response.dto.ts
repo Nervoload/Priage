@@ -76,6 +76,7 @@ export interface EncounterSummaryDto {
 
 export interface EncounterDetailDto extends EncounterSummaryDto {
   details?: string | null;
+  contact?: { email: string | null; phone: string | null; source: string } | null;
 
   seenAt: Date | null;
   departedAt: Date | null;
@@ -148,6 +149,8 @@ export interface PatientEncounterDto {
   chiefComplaint: string | null;
   details: string | null;
   hospitalId: number;
+  /** Clinic visits are shown on the clinic visit page under this alias; null for ED visits. */
+  clinicAlias: string | null;
 
   // Pipeline timestamps visible to patient
   expectedAt: Date | null;

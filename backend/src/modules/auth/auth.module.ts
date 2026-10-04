@@ -8,6 +8,7 @@
 import { Global, Module } from '@nestjs/common';
 
 import { PrismaModule } from '../prisma/prisma.module';
+import { ClinicPilotModule } from '../clinic/clinic-pilot.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PatientIdempotencyService } from './patient-idempotency.service';
@@ -16,7 +17,7 @@ import { StaffMfaService } from './staff-mfa.service';
 
 @Global()
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, ClinicPilotModule],
   controllers: [AuthController],
   providers: [AuthService, PatientIdempotencyService, PatientRateLimitGuard, StaffMfaService],
   exports: [AuthService, PatientIdempotencyService, PatientRateLimitGuard, StaffMfaService],

@@ -1,6 +1,9 @@
 export type EncounterStatus =
+  | 'INTAKE'
+  | 'REQUESTED'
   | 'EXPECTED'
   | 'ADMITTED'
+  | 'CARE'
   | 'TRIAGE'
   | 'WAITING'
   | 'COMPLETE'
@@ -113,6 +116,7 @@ export interface GuestIntakeSession {
   patientId: number;
   encounterId: number | null;
   hospitalSlug: string | null;
+  clinicAlias?: string;
   firstName?: string;
   lastName?: string;
   age?: number;
@@ -158,6 +162,8 @@ export interface Encounter {
   chiefComplaint: string | null;
   details: string | null;
   hospitalId: number;
+  /** Set for clinic visits, which live on the clinic visit page; absent or null for ED visits. */
+  clinicAlias?: string | null;
   expectedAt: string | null;
   arrivedAt: string | null;
   messages: EncounterMessage[];
@@ -171,6 +177,7 @@ export interface EncounterSummary {
   status: EncounterStatus;
   chiefComplaint: string | null;
   hospitalId: number;
+  clinicAlias?: string | null;
   expectedAt: string | null;
   arrivedAt: string | null;
 }
@@ -213,6 +220,7 @@ export function messageToChatMessage(msg: Message): ChatMessage {
 }
 
 export interface CreateIntentPayload {
+  contactEmail: string;
   firstName: string;
   lastName?: string;
   phone: string;
@@ -229,6 +237,7 @@ export interface CreateIntentResponse {
 }
 
 export interface UpdateIntakeDetailsPayload {
+  contactEmail?: string;
   chiefComplaint?: string;
   details?: string;
   firstName?: string;
@@ -327,6 +336,10 @@ export interface Hospital {
     longitude: number;
   } | null;
   customIntakeQuestions: HospitalCustomIntakeQuestion[];
+  workflowProfile?: 'ED' | 'CLINIC_APPOINTMENT';
+  entryPath?: string | null;
+  appointmentBookingAvailable?: boolean;
+  acceptsWalkIns?: boolean;
 }
 
 export type EncounterWorkspaceTab = 'current' | 'chat' | 'profile';

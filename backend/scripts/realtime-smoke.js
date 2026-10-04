@@ -20,7 +20,7 @@ const HOSPITAL_SLUG = process.env.REALTIME_TEST_HOSPITAL_SLUG || process.env.PRI
 const EMAIL = process.env.REALTIME_TEST_EMAIL || process.env.PRIAGE_DEV_ADMIN_EMAIL || '';
 const PASSWORD = process.env.REALTIME_TEST_PASSWORD || process.env.PRIAGE_DEV_ADMIN_PASSWORD || process.env.DEMO_STAFF_PASSWORD || '';
 const FIXTURE_PASSWORD = 'TestPassword123!';
-const STAFF_AUTH_COOKIE = 'priage_staff_auth';
+const { STAFF_AUTH_COOKIE } = require('./lib/cookie-names');
 
 let fixtureContext = null;
 
@@ -277,6 +277,7 @@ async function createEncounter(hospitalSlug) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       phone: `+1555${suffix}`,
+      contactEmail: `realtime-${Date.now()}@example.ca`,
       firstName: 'Realtime',
       lastName: 'Smoke',
       age: 29,
@@ -566,7 +567,7 @@ async function main() {
     const alertCreatedPromise = waitForEvent(
       reconnectedSocket,
       'alert.created',
-      (payload) => payload?.encounterId === encounter.id && payload?.metadata?.type === 'REALTIME_SMOKE',
+      (payload) => payload?.encounterId === encounter.id && Number.isInteger(payload?.metadata?.alertId),
     );
     const createdAlert = await createAlert(encounter.id, token);
     const createdEvent = await alertCreatedPromise;

@@ -10,6 +10,7 @@ import { getRedisConnectionOptions } from '../../common/config/redis.config';
       connection: getRedisConnectionOptions({ maxRetriesPerRequest: null }),
     }),
     BullModule.registerQueue(
+      { name: 'notifications', defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } } },
       {
         name: 'events',
         defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
@@ -28,6 +29,10 @@ import { getRedisConnectionOptions } from '../../common/config/redis.config';
       },
       {
         name: 'webhooks',
+        defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
+      },
+      {
+        name: 'appointments',
         defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
       },
     ),

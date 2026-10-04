@@ -10,7 +10,7 @@ import {
   sendPatientMessageReliable,
 } from '../../shared/patientOutbox';
 import { sendLocationPing, updateIntakeDetails } from '../../shared/api/intake';
-import { ENCOUNTER_STATUS_META } from '../../shared/encounters';
+import { encounterStatusMeta } from '../../shared/encounters';
 import {
   formatHospitalDistance,
   getAppleMapsDirectionsUrl,
@@ -134,7 +134,7 @@ export function Enroute() {
 
   const encounterId = Number(encounterIdParam);
   const fallbackHospitalName = formatHospitalName(session?.hospitalSlug);
-  const statusMeta = ENCOUNTER_STATUS_META[encounter?.status ?? 'EXPECTED'];
+  const statusMeta = encounterStatusMeta(encounter?.status ?? 'EXPECTED');
   const selectedHospital =
     findHospitalBySlug(session?.hospitalSlug)
     ?? findHospitalById(encounter?.hospitalId ?? null);
@@ -364,8 +364,8 @@ export function Enroute() {
     setArrivalSubmitting(true);
     try {
       const note = transportNote.trim()
-        ? `I have arrived at the hospital entrance. Note: ${transportNote.trim()}`
-        : 'I have arrived at the hospital entrance and am heading inside now.';
+        ? `I have arrived at the entrance. Note: ${transportNote.trim()}`
+        : 'I have arrived at the entrance and am heading inside now.';
       const sentMessage = await sendPatientMessageReliable(encounter.id, note, false);
       setMessages((prev) => {
         const merged = appendUniqueMessages(prev, [sentMessage]);
@@ -681,7 +681,7 @@ export function Enroute() {
               {locationSharing ? 'Stop sharing location' : 'Share live location'}
             </button>
             <button style={styles.secondaryButton} onClick={sendArrivalNote} disabled={arrivalSubmitting}>
-              {arrivalSubmitting ? 'Sending...' : "I'm here now"}
+              {arrivalSubmitting ? 'Sending...' : 'Message staff that I arrived'}
             </button>
           </div>
         </article>

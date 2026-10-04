@@ -1,6 +1,6 @@
 # Priage — Full-Stack Setup Guide
 
-> From repo clone to a working local environment with seeded data.
+> From repo clone to a working local environment with seeded data. This guide covers the ED app and the gated local clinic preview; the pilot scope is in [the pilot plan](docs/CLINIC_PILOT_PLAN.md).
 
 ---
 
@@ -109,10 +109,10 @@ APP_VERSION="0.1.0"
 ### 3c. Run database migrations
 
 ```bash
-npx prisma migrate dev
+npx prisma migrate deploy
 ```
 
-This creates all tables in the PostgreSQL database.
+This applies the committed migrations. Use `prisma migrate dev --name <name>` only when authoring a schema change.
 
 ### 3d. Create a private local admin + hospital
 
@@ -226,26 +226,15 @@ The Patient App supports two demo entry paths:
 
 ## 6. Manual Testing Checklist
 
-Log in with the private admin or extra hospital user recorded in `.priage-dev/accounts.json`.
+Log in with the private local admin recorded in `.priage-dev/accounts.json`. Seeded names and encounter counts vary by seed option, so check behavior rather than specific patients.
 
-| # | Test | How | Expected Result |
-|---|------|-----|----------------|
-| 1 | **Login** | Enter credentials, click Sign In | Dashboard loads, user pill shows top-left |
-| 2 | **Admittance list** | Default view | See Alice (EXPECTED) and Bob (ADMITTED) |
-| 3 | **View Details** | Click "View Details" on Alice | TriagePopup opens showing chief complaint |
-| 4 | **Confirm Arrival** | Click "Confirm Arrival" on Alice | Alice moves from EXPECTED → ADMITTED |
-| 5 | **Start Triage** | Click "Start Triage" on Bob (or Alice after confirming) | Patient moves to TRIAGE status |
-| 6 | **Triage tab** | Click "Triage" in nav | See triaged patients (Carol is already here) |
-| 7 | **Triage assessment** | Click "View Details" on Carol → see existing assessment | Shows CTAS 3, vitals, pain level 6 |
-| 8 | **New assessment** | Click "+ New" in Carol's popup | Triage form appears |
-| 9 | **Submit assessment** | Fill CTAS level + complaint, submit | Success, assessment appears in popup |
-| 10 | **Waiting Room** | Click "Waiting Room" in nav | See patients in TRIAGE/WAITING/COMPLETE |
-| 11 | **Alerts** | Check top-right alert badge | Badge shows count of active alerts |
-| 12 | **Refresh** | Click ↻ button on any list | Data refreshes from backend |
-| 13 | **Role test** | Run `./priage-dev newuser`, create another hospital user, then log in as that user | Dashboard loads and the selected role shows in the user pill |
-| 14 | **Bad credentials** | Log out → enter wrong password | "Invalid email or password" error |
-| 15 | **Network tab** | Open DevTools → Network | All calls go to `localhost:3000`, no 404s/500s |
+1. Open Admittance. An `EXPECTED` encounter should appear; opening its details should load data from the backend. Confirm arrival and verify it becomes `ADMITTED`.
+2. Start triage for an admitted encounter. Open the Triage workspace, review the AI assessment if available, save a triage assessment, and reload to verify persistence.
+3. Open Waiting Room for an encounter in `WAITING`; verify patient messages and alerts load from the backend. This ED screen will be hidden for the clinic pilot.
+4. Start a guest visit in the Patient App. Complete the interview, choose a hospital, and verify an `EXPECTED` encounter appears in the staff app. This currently does **not** book an appointment.
+5. Refresh both apps and check that the session and encounter state remain accurate. Verify a user from another clinic cannot see the encounter.
 
+Do not use the staff-created patient form with real patient data until the fixed-password account issue in [the pilot plan](docs/CLINIC_PILOT_PLAN.md#what-exists-now) is fixed.
 ---
 
 ## 7. Smoke Test (Automated)
@@ -292,9 +281,19 @@ Variants:
 ./priage-dev logs -v
 ./priage-dev reseed test
 ./priage-dev fullseed test
+./priage-dev -t clinic
+./priage-dev --instance clinic-1 test
+./priage-dev -k
+./priage-dev --instance ed-1 -k
+./priage-dev -all
+./priage-dev -all reseed
+./priage-dev -all fullseed
+./priage-dev -all -k
 ```
 
-The launcher verifies Docker + local tooling, creates missing `.env` files from each checked-in `.env.example`, installs dependencies in all three apps, runs `npx prisma generate` plus `npx prisma migrate deploy`, creates or reuses a private local admin, optionally creates an extra hospital user when `newuser` / `-u` is passed, optionally clears patient-facing dev data before reseeding, opens the backend and both Vite apps in separate macOS Terminal tabs, and can finish by running the logging test suite (`logs` / `-l`) or the full backend confidence pipeline (`smoke`, `logging`, `realtime`, and frontend-aligned flow checks). Use `reseed` for the lightweight seed and `fullseed` for a denser, more realistic hospital load.
+The launcher verifies Docker + local tooling, creates missing `.env` files, installs dependencies when needed, applies Prisma migrations, creates or reuses a private local admin, and opens the API and both web apps in separate macOS Terminal windows. Plain `./priage-dev` starts ED (`ed-1`). `-t clinic` (or `--tenant clinic`) prompts for clinic name, contact details, timezone, check-in instructions and walk-in acceptance, then creates a new clinic instance; repeat it for another clinic. `--instance NAME` targets an existing instance. `-k` without a selector stops only the most recent running instance. `-all` applies startup, `reseed`, `fullseed`, `test`, or `-k` to every registered instance in turn. `reseed` wipes patient-facing data; ED then runs its standard seed, while clinic retains its mock schedule/legal setup. Clinic `fullseed` creates mock intake and appointment visits through the clinic API, preserving the configured hours and using the saved local admin.
+
+The legacy `ed-1` stack retains PostgreSQL/Redis ports 5432/6379 and API/staff/patient ports 3000/5173/5174. The first additional tenant uses 5433/6380 and 3001/5175/5176. Every named tenant uses separate Compose containers, a PostgreSQL database volume, a Redis volume, process records and auth cookies. A new clinic hospital uses the entered display name, address, phone and check-in instructions; its internal slug remains unique. The clinic preview is pinned to that hospital and its entered timezone; default weekday hours and Terms/Privacy text are mock local test data. Staff credentials are in `.priage-dev/tenants/<name>/accounts.json`; the ED manifest remains at `.priage-dev/accounts.json`. Azure still uses the planned shared, hospital-scoped database rather than this local isolation scheme.
 
 ---
 
@@ -397,7 +396,7 @@ docker exec priage-postgres psql -U priage -d priage -c 'SELECT id, "firstName",
 
 ### "relation does not exist" or Prisma errors
 
-- Run migrations: `cd backend && npx prisma migrate dev`
+- Apply committed migrations: `cd backend && npx prisma migrate deploy`
 - If stuck, reset: `npx prisma migrate reset` (wipes data — re-run seed after)
 
 ### Frontend shows "Loading…" forever
@@ -407,7 +406,7 @@ docker exec priage-postgres psql -U priage -d priage -c 'SELECT id, "firstName",
 
 ### Seed script fails with "column not found"
 
-- Schema drift — run `npx prisma migrate dev` to apply pending schema changes
+- Schema drift — run `npx prisma migrate deploy` to apply committed schema changes
 
 ---
 
@@ -418,7 +417,7 @@ docker exec priage-postgres psql -U priage -d priage -c 'SELECT id, "firstName",
 │   HospitalApp       │  REST   │   NestJS Backend     │
 │   (React + Vite)    │────────▶│   (port 3000)        │
 │   port 5173         │         │                      │
-│                     │◀────────│   JWT Auth           │
+│                     │◀────────│  Session cookies     │
 │   Socket.IO client  │  WS     │   Socket.IO server   │
 └─────────────────────┘         └──────────┬───────────┘
                                            │
@@ -430,7 +429,7 @@ docker exec priage-postgres psql -U priage -d priage -c 'SELECT id, "firstName",
                             └─────────┘         └─────────┘
 ```
 
-- **Frontend → Backend:** REST API calls with JWT in `Authorization: Bearer <token>` header
+- **Frontend → Backend:** REST API calls with HttpOnly session cookies; the staff browser does not keep an auth token in JavaScript
 - **Backend → Frontend:** Socket.IO events for real-time encounter/alert/message updates
 - **Backend → Postgres:** Prisma ORM with the `@prisma/adapter-pg` driver adapter
 - **Backend → Redis:** BullMQ job queues for async event processing

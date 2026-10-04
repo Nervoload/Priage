@@ -1,8 +1,11 @@
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { useGuestSession } from '../shared/hooks/useGuestSession';
 import { getGuestResumeLabel, resolveGuestPath } from '../shared/guestFlow';
-import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
+import { Brand } from '../shared/ui/Brand';
+import { CtaButton } from '../shared/ui/Controls';
+import { FlowScreen } from '../shared/ui/FlowScreen';
+import { Icon } from '../shared/ui/Icon';
 
 export function WelcomePage() {
   const navigate = useNavigate();
@@ -11,145 +14,52 @@ export function WelcomePage() {
   const resumeLabel = getGuestResumeLabel(guestSession);
 
   return (
-    <main style={styles.page}>
-      <section style={styles.mainArea}>
-        <div style={styles.brand}>
-          <span style={styles.badge}>Priage Patient</span>
-          <h1 style={styles.title}>How would you like to continue?</h1>
+    <FlowScreen
+      label="Welcome"
+      header={(
+        <div className="brandbar">
+          <Brand to="/welcome" />
+          <Link to="/auth/login" className="pill-link">Sign in</Link>
         </div>
+      )}
+      footer={(
+        <>
+          <CtaButton onClick={() => navigate('/guest/start')}>Start a visit</CtaButton>
+          <p className="flow__note">
+            New here?
+            <Link to="/auth/signup" className="text-btn" style={{ minHeight: 0 }}>Create an account</Link>
+          </p>
+        </>
+      )}
+    >
+      <div className="stack stack--lg" style={{ paddingTop: 12 }}>
+        <h1 className="display display--xl">Care starts before you arrive.</h1>
+        <p className="lede">
+          Tell us what’s going on, then choose where to go. Your care team reads your answers first, so you only explain once.
+        </p>
 
-        <div style={styles.actions}>
-          {guestSession && (
-            <button style={styles.resumeAction} onClick={() => navigate(guestPath)}>
-              <strong style={styles.actionTitle}>{resumeLabel}</strong>
-              <span style={styles.actionBody}>Jump back into your saved guest flow without starting over.</span>
-            </button>
-          )}
+        {guestSession && (
+          <Link to={guestPath} className="link-card">
+            <span className="tile__icon"><Icon name="clock" /></span>
+            <span className="row__main">
+              <span className="heading">{resumeLabel}</span>
+              <span className="small">Pick up where you left off.</span>
+            </span>
+            <Icon name="chevronRight" />
+          </Link>
+        )}
 
-          <button style={styles.primaryAction} onClick={() => navigate('/guest/start')}>
-            <strong style={styles.actionTitle}>Quick Check-In</strong>
-            <span style={styles.actionBody}>Start as a guest and notify the hospital immediately.</span>
-          </button>
+        <ol className="index-list">
+          <li><span className="index-list__n">1</span>Answer a few questions<span className="index-list__meta">About 5 minutes</span></li>
+          <li><span className="index-list__n">2</span>Choose an emergency department or clinic</li>
+          <li><span className="index-list__n">3</span>Stay in touch with your care team</li>
+        </ol>
 
-          <button style={styles.secondaryAction} onClick={() => navigate('/auth/login')}>
-            <strong style={styles.actionTitle}>Sign In</strong>
-            <span style={styles.actionBody}>Open your account, active visit, and message history.</span>
-          </button>
-
-          <button style={styles.linkAction} onClick={() => navigate('/auth/signup')}>
-            Create account
-          </button>
-        </div>
-      </section>
-    </main>
+        <p className="safety-line">
+          <Icon name="alertTriangle" size={18} />
+          <span><strong>Emergency?</strong> Call 911 or go to the nearest emergency department. Don’t wait to finish this form.</span>
+        </p>
+      </div>
+    </FlowScreen>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-    padding: '1rem',
-    background: heroBackdrop,
-    color: patientTheme.colors.ink,
-    fontFamily: patientTheme.fonts.body,
-  },
-  mainArea: {
-    flex: 1,
-    display: 'grid',
-    alignContent: 'center',
-    justifyItems: 'center',
-    gap: '1rem',
-  },
-  brand: {
-    textAlign: 'center',
-    display: 'grid',
-    gap: '0.45rem',
-  },
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifySelf: 'center',
-    border: panelBorder,
-    borderRadius: '999px',
-    background: '#e9f1ff',
-    color: patientTheme.colors.accentStrong,
-    padding: '0.3rem 0.72rem',
-    fontSize: '0.75rem',
-    fontWeight: 700,
-    letterSpacing: '0.02em',
-  },
-  title: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: 'clamp(1.45rem, 4vw, 2.15rem)',
-    lineHeight: 1.1,
-    letterSpacing: '-0.02em',
-  },
-  actions: {
-    width: '100%',
-    maxWidth: '500px',
-    display: 'grid',
-    gap: '0.58rem',
-  },
-  primaryAction: {
-    border: 'none',
-    borderRadius: patientTheme.radius.lg,
-    background: 'linear-gradient(132deg, #1b3f9f 0%, #2156d1 100%)',
-    color: '#fff',
-    padding: '1rem',
-    textAlign: 'left',
-    boxShadow: '0 16px 36px rgba(33, 86, 209, 0.28)',
-    cursor: 'pointer',
-    display: 'grid',
-    gap: '0.24rem',
-    fontFamily: patientTheme.fonts.body,
-  },
-  resumeAction: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.lg,
-    background: 'linear-gradient(135deg, rgba(241, 247, 255, 0.98) 0%, rgba(255, 253, 248, 0.98) 100%)',
-    color: patientTheme.colors.ink,
-    padding: '1rem',
-    textAlign: 'left',
-    boxShadow: patientTheme.shadows.card,
-    cursor: 'pointer',
-    display: 'grid',
-    gap: '0.24rem',
-    fontFamily: patientTheme.fonts.body,
-  },
-  secondaryAction: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.lg,
-    background: '#fffdf8',
-    color: patientTheme.colors.ink,
-    padding: '1rem',
-    textAlign: 'left',
-    boxShadow: patientTheme.shadows.card,
-    cursor: 'pointer',
-    display: 'grid',
-    gap: '0.24rem',
-    fontFamily: patientTheme.fonts.body,
-  },
-  actionTitle: {
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.03rem',
-  },
-  actionBody: {
-    fontSize: '0.87rem',
-    lineHeight: 1.4,
-    opacity: 0.9,
-  },
-  linkAction: {
-    border: 'none',
-    background: 'transparent',
-    color: patientTheme.colors.accent,
-    fontWeight: 700,
-    textAlign: 'center',
-    padding: '0.35rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-};

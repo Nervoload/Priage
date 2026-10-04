@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { confirmIntent } from '../../shared/api/intake';
+import { attachClinic, confirmIntent } from '../../shared/api/intake';
+import { friendlyError } from '../../shared/api/errors';
 import {
   formatHospitalDistance,
   getAppleMapsDirectionsUrl,
@@ -11,13 +12,20 @@ import {
 import { useGuestSession } from '../../shared/hooks/useGuestSession';
 import { useHospitalDirectory } from '../../shared/hooks/useHospitalDirectory';
 import type { Hospital } from '../../shared/types/domain';
-import { heroBackdrop, panelBorder, patientTheme } from '../../shared/ui/theme';
+import { CtaButton, LoadingScreen } from '../../shared/ui/Controls';
+import { TextField } from '../../shared/ui/Field';
+import { FlowScreen } from '../../shared/ui/FlowScreen';
+import { Icon } from '../../shared/ui/Icon';
 import { useToast } from '../../shared/ui/ToastContext';
 
 interface RoutingProps {
-  onConfirmed: (encounterId: number) => void;
+  onConfirmed: (encounterId: number, clinicAlias?: string) => void;
   onBack?: () => void;
   mode?: 'guest' | 'authenticated';
+}
+
+function isClinic(hospital: Hospital | null | undefined): boolean {
+  return hospital?.workflowProfile === 'CLINIC_APPOINTMENT';
 }
 
 export function Routing({ onConfirmed, onBack, mode = 'guest' }: RoutingProps) {
@@ -36,7 +44,7 @@ export function Routing({ onConfirmed, onBack, mode = 'guest' }: RoutingProps) {
       return;
     }
 
-    showToast('Could not load hospital list. You can still enter a slug manually.');
+    showToast('We couldn’t load care locations. You can still enter a hospital code.');
   }, [error, showToast]);
 
   const sortedHospitals = useMemo(() => {
@@ -73,26 +81,34 @@ export function Routing({ onConfirmed, onBack, mode = 'guest' }: RoutingProps) {
 
   if (isGuestFlow && !session) return null;
   const currentSession = session;
+  const clinicSelected = isClinic(selectedHospital);
+  const clinicUnavailable = clinicSelected && !selectedHospital?.appointmentBookingAvailable;
 
   async function handleConfirm() {
     if (!hospitalSlug.trim()) {
-      showToast('Please choose a hospital first.');
+      showToast('Choose where you’d like to receive care first.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const encounter = await confirmIntent({ hospitalSlug: hospitalSlug.trim() });
+      const clinicAlias = clinicSelected ? selectedHospital?.entryPath?.split('/')[1] : undefined;
+      if (clinicSelected && (!clinicAlias || !selectedHospital?.appointmentBookingAvailable)) {
+        showToast('This clinic isn’t accepting appointment requests right now.');
+        return;
+      }
+      const encounter = clinicAlias ? await attachClinic(clinicAlias) : await confirmIntent({ hospitalSlug: hospitalSlug.trim() });
       if (isGuestFlow && currentSession) {
         setSession({
           ...currentSession,
           encounterId: encounter.id,
           hospitalSlug: hospitalSlug.trim(),
+          clinicAlias,
         });
       }
-      onConfirmed(encounter.id);
+      onConfirmed(encounter.id, clinicAlias);
     } catch (confirmError) {
-      showToast(confirmError instanceof Error ? confirmError.message : 'Could not confirm hospital.');
+      showToast(friendlyError(confirmError, 'We couldn’t send your answers. Please try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -100,8 +116,7 @@ export function Routing({ onConfirmed, onBack, mode = 'guest' }: RoutingProps) {
 
   function handleLocateMe() {
     if (!navigator.geolocation) {
-      setLocationError('Location is not available in this browser.');
-      showToast('Location is not available in this browser.');
+      setLocationError('Location isn’t available in this browser.');
       return;
     }
 
@@ -118,365 +133,149 @@ export function Routing({ onConfirmed, onBack, mode = 'guest' }: RoutingProps) {
       },
       () => {
         setLocating(false);
-        setLocationError('We could not read your location. You can still select a hospital manually.');
-        showToast('We could not read your location. You can still select a hospital manually.');
+        setLocationError('We couldn’t read your location. You can still choose from the list.');
       },
       { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
     );
   }
 
+  const ctaLabel = submitting
+    ? 'Sending…'
+    : clinicSelected
+      ? 'Continue to appointment times'
+      : 'Send my answers';
+
   return (
-    <main style={styles.page}>
-      <section style={styles.card}>
-        <header style={styles.header}>
-          <span style={styles.badge}>Final Step</span>
-          <h1 style={styles.title}>Select your hospital</h1>
-          <p style={styles.subtitle}>
-            We will send your intake details immediately so staff can prepare before you arrive.
+    <FlowScreen
+      title="Where to go"
+      counter="Step 3 of 3"
+      progress={88}
+      onBack={onBack}
+      label="Choose where to receive care"
+      footer={(
+        <>
+          <CtaButton onClick={() => void handleConfirm()} busy={submitting} disabled={submitting || loading || clinicUnavailable || !hospitalSlug.trim()}>
+            {ctaLabel}
+          </CtaButton>
+          <p className="flow__note">
+            {clinicSelected
+              ? 'The clinic confirms your requested time before it’s booked.'
+              : 'The emergency department sees your answers as soon as you send them.'}
           </p>
-        </header>
+        </>
+      )}
+    >
+      <div className="stack stack--sm">
+        <h1 className="display">Where would you like to go?</h1>
+        <p className="lede">Choose an emergency department to share your answers now, or a clinic to request an appointment.</p>
+      </div>
 
-        {loading ? (
-          <p style={styles.loadingLabel}>Loading hospitals…</p>
-        ) : sortedHospitals.length > 0 ? (
-          <>
-            <div style={styles.locationRow}>
-              <button style={styles.secondaryButton} onClick={handleLocateMe} type="button" disabled={locating}>
-                {locating ? 'Finding you…' : patientLocation ? 'Refresh my location' : 'Use my location'}
-              </button>
-              <span style={styles.locationHint}>
-                {locationError
-                  ?? (patientLocation
-                    ? 'Hospitals with coordinates are sorted by distance from you.'
-                    : 'Share your location to compare nearby hospitals faster.')}
-              </span>
-            </div>
-
-            <div style={styles.optionGrid}>
-              {sortedHospitals.map((hospital) => {
-                const selected = hospital.slug === hospitalSlug;
-                const distanceLabel = formatHospitalDistance(getHospitalDistanceKm(hospital, patientLocation));
-
-                return (
-                  <button
-                    key={hospital.id}
-                    style={{
-                      ...styles.optionCard,
-                      borderColor: selected ? patientTheme.colors.accent : patientTheme.colors.line,
-                      boxShadow: selected ? '0 12px 26px rgba(25,73,184,0.18)' : patientTheme.shadows.card,
-                    }}
-                    onClick={() => setHospitalSlug(hospital.slug)}
-                    type="button"
-                  >
-                    <div style={styles.optionTop}>
-                      <strong style={styles.optionTitle}>{hospital.name}</strong>
-                      {distanceLabel && <span style={styles.distancePill}>{distanceLabel}</span>}
-                    </div>
-                    <span style={styles.optionMeta}>{hospital.address ?? `Hospital slug: ${hospital.slug}`}</span>
-                    {hospital.phone && <span style={styles.optionMeta}>Phone: {hospital.phone}</span>}
-                    <span style={styles.optionMeta}>
-                      {selected ? 'Selected for check-in' : 'Tap to choose this hospital'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {selectedHospital && (
-              <HospitalDetailsCard
-                hospital={selectedHospital}
-                patientLocation={patientLocation}
-              />
-            )}
-          </>
-        ) : (
-          <label style={styles.manualLabel}>
-            Hospital slug
-            <input
-              value={hospitalSlug}
-              onChange={(event) => setHospitalSlug(event.target.value)}
-              placeholder="e.g. priage-general"
-              style={styles.input}
-              autoFocus
-            />
-          </label>
-        )}
-
-        <div style={styles.buttonRow}>
-          {onBack && (
-            <button style={styles.secondaryButton} type="button" onClick={onBack}>
-              ← Back
+      {loading ? (
+        <LoadingScreen label="Finding care locations…" />
+      ) : sortedHospitals.length > 0 ? (
+        <>
+          <div className="cluster" style={{ '--cluster-gap': '12px' } as React.CSSProperties}>
+            <button type="button" className="btn btn--secondary btn--sm" onClick={handleLocateMe} disabled={locating}>
+              <Icon name="locate" size={18} />
+              {locating ? 'Finding you…' : patientLocation ? 'Update my location' : 'Sort by distance'}
             </button>
-          )}
-          <button style={styles.primaryButton} type="button" onClick={handleConfirm} disabled={submitting}>
-            {submitting ? 'Notifying hospital…' : 'Notify hospital'}
-          </button>
-        </div>
+            {(locationError || patientLocation) && (
+              <span className="small" role="status">{locationError ?? 'Sorted by distance from you.'}</span>
+            )}
+          </div>
 
-        <footer style={styles.footer}>
-          After confirmation, you will see live status updates and messaging from the care team.
-        </footer>
-      </section>
-    </main>
+          <fieldset className="choice-list" style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend className="sr-only">Care locations</legend>
+            {sortedHospitals.map((hospital) => {
+              const distance = formatHospitalDistance(getHospitalDistanceKm(hospital, patientLocation));
+              const clinic = isClinic(hospital);
+              const unavailable = clinic && !hospital.appointmentBookingAvailable;
+              return (
+                <label key={hospital.id} className="choice place">
+                  <input
+                    type="radio"
+                    name="care-location"
+                    value={hospital.slug}
+                    checked={hospital.slug === hospitalSlug}
+                    onChange={() => setHospitalSlug(hospital.slug)}
+                  />
+                  <span className="choice__dot" style={{ marginTop: 2 }}><Icon name="check" size={12} strokeWidth={2.6} /></span>
+                  <span className="choice__text">
+                    <span className="place__kind">{clinic ? 'Clinic' : 'Emergency department'}{distance ? `, ${distance}` : ''}</span>
+                    <span className="place__name">{hospital.name}</span>
+                    <span className="choice__meta">
+                      {unavailable ? 'Not taking appointment requests right now' : hospital.address ?? 'Address not listed'}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </fieldset>
+
+          {selectedHospital && <HospitalDetails hospital={selectedHospital} patientLocation={patientLocation} />}
+        </>
+      ) : (
+        <div>
+          <TextField
+            label="Hospital code"
+            value={hospitalSlug}
+            onChange={(event) => setHospitalSlug(event.target.value)}
+            placeholder="e.g. priage-general"
+            hint="Your hospital can give you this code."
+            autoFocus
+          />
+        </div>
+      )}
+    </FlowScreen>
   );
 }
 
-function HospitalDetailsCard({
+function HospitalDetails({
   hospital,
   patientLocation,
 }: {
   hospital: Hospital;
   patientLocation: PatientCoordinates | null;
 }) {
-  const distanceLabel = formatHospitalDistance(getHospitalDistanceKm(hospital, patientLocation));
-
+  const hasNotes = hospital.checkInInstructions || hospital.parkingNotes;
   return (
-    <article style={styles.selectedCard}>
-      <div style={styles.selectedTop}>
-        <div>
-          <h2 style={styles.selectedTitle}>{hospital.name}</h2>
-          <p style={styles.selectedBody}>
-            {hospital.address ?? 'Address is not configured yet. Directions will use the hospital name.'}
-          </p>
+    <section className="card" aria-label={`${hospital.name} details`}>
+      {hasNotes && (
+        <div className="rows">
+          {hospital.checkInInstructions && (
+            <div className="row">
+              <span className="row__main">
+                <span className="row__key">When you arrive</span>
+                <span className="row__value">{hospital.checkInInstructions}</span>
+              </span>
+            </div>
+          )}
+          {hospital.parkingNotes && (
+            <div className="row">
+              <span className="row__main">
+                <span className="row__key">Parking and entrance</span>
+                <span className="row__value">{hospital.parkingNotes}</span>
+              </span>
+            </div>
+          )}
         </div>
-        {distanceLabel && <span style={styles.distancePill}>{distanceLabel}</span>}
-      </div>
-
-      {hospital.checkInInstructions && (
-        <p style={styles.selectedBody}>
-          <strong>Check-in:</strong> {hospital.checkInInstructions}
-        </p>
       )}
-
-      {hospital.parkingNotes && (
-        <p style={styles.selectedBody}>
-          <strong>Arrival notes:</strong> {hospital.parkingNotes}
-        </p>
-      )}
-
-      <div style={styles.linkRow}>
-        <a
-          href={getGoogleMapsDirectionsUrl(hospital, patientLocation)}
-          target="_blank"
-          rel="noreferrer"
-          style={styles.linkButton}
-        >
+      <div className="cluster" style={{ padding: 16, borderTop: hasNotes ? '1px solid var(--line)' : undefined }}>
+        <a className="btn btn--secondary btn--sm" href={getGoogleMapsDirectionsUrl(hospital, patientLocation)} target="_blank" rel="noreferrer">
+          <Icon name="navigation" size={17} />
           Google Maps
         </a>
-        <a
-          href={getAppleMapsDirectionsUrl(hospital, patientLocation)}
-          target="_blank"
-          rel="noreferrer"
-          style={styles.linkButton}
-        >
+        <a className="btn btn--secondary btn--sm" href={getAppleMapsDirectionsUrl(hospital, patientLocation)} target="_blank" rel="noreferrer">
+          <Icon name="mapPin" size={17} />
           Apple Maps
         </a>
         {hospital.phone && (
-          <a href={`tel:${hospital.phone}`} style={styles.linkButton}>
-            Call hospital
+          <a className="btn btn--secondary btn--sm" href={`tel:${hospital.phone}`}>
+            <Icon name="phone" size={17} />
+            Call
           </a>
         )}
       </div>
-    </article>
+    </section>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    display: 'grid',
-    placeItems: 'center',
-    background: heroBackdrop,
-    padding: '1rem',
-    fontFamily: patientTheme.fonts.body,
-  },
-  card: {
-    width: '100%',
-    maxWidth: '760px',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.xl,
-    background: 'rgba(255, 253, 248, 0.98)',
-    boxShadow: patientTheme.shadows.panel,
-    padding: '1rem',
-    display: 'grid',
-    gap: '0.72rem',
-  },
-  header: {
-    display: 'grid',
-    gap: '0.32rem',
-  },
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    width: 'fit-content',
-    border: panelBorder,
-    borderRadius: '999px',
-    background: '#e9f1ff',
-    color: patientTheme.colors.accentStrong,
-    padding: '0.28rem 0.72rem',
-    fontSize: '0.74rem',
-    fontWeight: 700,
-  },
-  title: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.32rem',
-  },
-  subtitle: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.45,
-    fontSize: '0.9rem',
-  },
-  loadingLabel: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-  },
-  locationRow: {
-    display: 'grid',
-    gap: '0.35rem',
-    alignItems: 'start',
-  },
-  locationHint: {
-    fontSize: '0.8rem',
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.45,
-  },
-  optionGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-    gap: '0.55rem',
-  },
-  optionCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fff',
-    textAlign: 'left',
-    padding: '0.7rem',
-    display: 'grid',
-    gap: '0.3rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  optionTop: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '0.4rem',
-  },
-  optionTitle: {
-    fontSize: '0.9rem',
-    lineHeight: 1.3,
-  },
-  optionMeta: {
-    fontSize: '0.77rem',
-    color: patientTheme.colors.inkMuted,
-    lineHeight: 1.45,
-  },
-  distancePill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    borderRadius: '999px',
-    background: '#eef4ff',
-    color: patientTheme.colors.accentStrong,
-    padding: '0.18rem 0.5rem',
-    fontSize: '0.7rem',
-    fontWeight: 700,
-    whiteSpace: 'nowrap',
-  },
-  selectedCard: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fffdf8',
-    padding: '0.8rem',
-    display: 'grid',
-    gap: '0.45rem',
-    boxShadow: patientTheme.shadows.card,
-  },
-  selectedTop: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    gap: '0.7rem',
-    alignItems: 'flex-start',
-    flexWrap: 'wrap',
-  },
-  selectedTitle: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1rem',
-  },
-  selectedBody: {
-    margin: 0,
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.84rem',
-    lineHeight: 1.5,
-  },
-  linkRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.45rem',
-  },
-  linkButton: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.55rem 0.72rem',
-    fontWeight: 700,
-    fontSize: '0.78rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-    textDecoration: 'none',
-  },
-  manualLabel: {
-    display: 'grid',
-    gap: '0.3rem',
-    fontSize: '0.82rem',
-    fontWeight: 700,
-    color: patientTheme.colors.ink,
-  },
-  input: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.68rem 0.74rem',
-    fontSize: '0.92rem',
-    fontFamily: patientTheme.fonts.body,
-  },
-  buttonRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.52rem',
-    justifyContent: 'space-between',
-  },
-  primaryButton: {
-    border: 'none',
-    borderRadius: patientTheme.radius.sm,
-    background: patientTheme.colors.accent,
-    color: '#fff',
-    padding: '0.7rem 0.95rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-    flex: 1,
-    minWidth: '180px',
-  },
-  secondaryButton: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.7rem 0.95rem',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  footer: {
-    borderTop: panelBorder,
-    paddingTop: '0.62rem',
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.8rem',
-    lineHeight: 1.45,
-  },
-};

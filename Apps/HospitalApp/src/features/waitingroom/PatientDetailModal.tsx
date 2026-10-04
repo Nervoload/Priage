@@ -492,7 +492,7 @@ function PatientProfile({
           <div className="space-y-4">
             <TimelineItem label="Expected" time={encounter.expectedAt} />
             <TimelineItem label="Arrived" time={encounter.arrivedAt} />
-            <TimelineItem label="Triage Started" time={encounter.triagedAt} />
+            <TimelineItem label="Triaged" time={encounter.triagedAt} />
             <TimelineItem label="Waiting" time={encounter.waitingAt} />
             <TimelineItem label="Seen" time={encounter.seenAt} />
             <TimelineItem label="Departed" time={encounter.departedAt} />

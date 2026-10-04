@@ -1,58 +1,80 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { createIntent } from '../shared/api/intake';
+import { friendlyError } from '../shared/api/errors';
 import { useGuestSession } from '../shared/hooks/useGuestSession';
-import { heroBackdrop, panelBorder, patientTheme } from '../shared/ui/theme';
-import { useToast } from '../shared/ui/ToastContext';
+import { CtaButton } from '../shared/ui/Controls';
+import { FieldHint, SelectField, TextAreaField, TextField, focusFirstInvalid } from '../shared/ui/Field';
+import { FlowScreen } from '../shared/ui/FlowScreen';
+import { Icon } from '../shared/ui/Icon';
 
-export function Login() {
+export type VisitStartDetails = {
+  firstName: string; lastName?: string; phone?: string; contactEmail: string;
+  age?: number; gender?: string; chiefComplaint: string; details?: string;
+};
+
+type StartErrors = Partial<Record<'firstName' | 'phone' | 'contactEmail' | 'age' | 'gender' | 'chiefComplaint' | 'form', string>>;
+
+const COMPLAINT_LIMIT = 240;
+
+export function Login({ clinic }: { clinic?: {
+  name: string; bookingAvailable: boolean; account: boolean; authActions: ReactNode;
+  initialDetails?: Partial<VisitStartDetails>;
+  onStart: (details: VisitStartDetails) => Promise<void>;
+} } = {}) {
   const navigate = useNavigate();
-  const { showToast } = useToast();
   const { setSession } = useGuestSession();
 
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [age, setAge] = useState('');
-  const [gender, setGender] = useState('');
+  const [firstName, setFirstName] = useState(clinic?.initialDetails?.firstName ?? '');
+  const [lastName, setLastName] = useState(clinic?.initialDetails?.lastName ?? '');
+  const [phone, setPhone] = useState(clinic?.initialDetails?.phone ?? '');
+  const [contactEmail, setContactEmail] = useState(clinic?.initialDetails?.contactEmail ?? '');
+  const [age, setAge] = useState(clinic?.initialDetails?.age?.toString() ?? '');
+  const [gender, setGender] = useState(clinic?.initialDetails?.gender ?? '');
   const [chiefComplaint, setChiefComplaint] = useState('');
   const [details, setDetails] = useState('');
+  const [errors, setErrors] = useState<StartErrors>({});
   const [submitting, setSubmitting] = useState(false);
+
+  const isClinic = !!clinic;
+  const usesAccount = !!clinic?.account;
+
+  function validate(): StartErrors {
+    const next: StartErrors = {};
+    if (!usesAccount && !firstName.trim()) next.firstName = 'Enter your first name.';
+    if (!isClinic && !phone.trim()) next.phone = 'Enter a phone number the care team can reach.';
+    if (!contactEmail.trim()) next.contactEmail = 'Enter an email for visit updates.';
+    else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail.trim())) next.contactEmail = 'Enter an email like name@example.com.';
+    if (!isClinic && !age.trim()) next.age = 'Enter your age.';
+    if (!isClinic && !gender.trim()) next.gender = 'Choose an option.';
+    if (!chiefComplaint.trim()) next.chiefComplaint = 'Tell us the main reason for your visit.';
+    return next;
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (!firstName.trim()) {
-      showToast('Please enter your first name.');
-      return;
-    }
-    if (!phone.trim()) {
-      showToast('Please enter your phone number.');
-      return;
-    }
-    if (!age.trim()) {
-      showToast('Please enter your age.');
-      return;
-    }
-    if (!gender.trim()) {
-      showToast('Please select your sex.');
-      return;
-    }
-    if (!chiefComplaint.trim()) {
-      showToast('Please describe what brings you in today.');
+    const nextErrors = validate();
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      focusFirstInvalid('visit-start-form');
       return;
     }
 
     setSubmitting(true);
     try {
+      const detailsPayload: VisitStartDetails = {
+        contactEmail: contactEmail.trim(), firstName: firstName.trim(), lastName: lastName.trim() || undefined,
+        phone: phone.trim() || undefined, age: age.trim() ? Number.parseInt(age, 10) : undefined,
+        gender: gender.trim() || undefined, chiefComplaint: chiefComplaint.trim(), details: details.trim() || undefined,
+      };
+      if (clinic) {
+        await clinic.onStart(detailsPayload);
+        return;
+      }
       const result = await createIntent({
-        firstName: firstName.trim(),
-        lastName: lastName.trim() || undefined,
-        phone: phone.trim(),
-        age: Number.parseInt(age, 10),
-        gender: gender.trim(),
-        chiefComplaint: chiefComplaint.trim(),
-        details: details.trim() || undefined,
+        ...detailsPayload,
+        phone: phone.trim(), age: Number.parseInt(age, 10), gender: gender.trim(),
       });
 
       setSession({
@@ -64,284 +86,145 @@ export function Login() {
         age: Number.parseInt(age, 10),
         gender: gender.trim(),
         chiefComplaint: chiefComplaint.trim(),
-        details: details.trim() || undefined,
+        details: detailsPayload.details,
       });
       navigate('/guest/chatbot');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not start guest check-in.');
+      setErrors({ form: friendlyError(error, isClinic ? 'We couldn’t start this visit. Please try again.' : 'We couldn’t start your check-in. Please try again.') });
     } finally {
       setSubmitting(false);
     }
   }
 
+  const accountSummary = [[firstName, lastName].filter(Boolean).join(' '), age ? `age ${age}` : '', phone].filter(Boolean).join(', ');
+  const blocked = isClinic && !clinic.bookingAvailable;
+
   return (
-    <main style={styles.page}>
-      <section style={styles.card}>
-        <button style={styles.backButton} onClick={() => navigate('/welcome')} type="button">
-          ← Back
-        </button>
-        <header style={styles.header}>
-          <span style={styles.badge}>Guest Check-In</span>
-          <h1 style={styles.title}>Fast emergency intake</h1>
-          <p style={styles.subtitle}>
-            Tell us what brings you in. Your information will be shared with the hospital care team.
+    <FlowScreen
+      title="About you"
+      counter="Step 1 of 3"
+      progress={12}
+      onBack={isClinic ? undefined : () => navigate('/welcome')}
+      label="About you"
+      footer={(
+        <CtaButton type="submit" form="visit-start-form" busy={submitting} disabled={submitting || blocked}>
+          {submitting ? 'Starting…' : 'Start assessment'}
+        </CtaButton>
+      )}
+    >
+      <div className="stack stack--sm">
+        {isClinic && (
+          <span className="small" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="building" size={18} />
+            {clinic.name}
+          </span>
+        )}
+        <h1 className="display">{usesAccount ? 'What’s going on today?' : 'First, a little about you'}</h1>
+        <p className="lede">
+          {isClinic
+            ? 'Only this clinic sees your answers. After a short assessment you can request an appointment time.'
+            : 'Your answers go to the care team you choose next.'}
+        </p>
+        {clinic?.authActions}
+      </div>
+
+      {blocked && (
+        <p className="notice notice--warn" role="status">
+          <Icon name="clock" size={18} />
+          <span>This clinic isn’t accepting appointment requests right now.</span>
+        </p>
+      )}
+
+      <form id="visit-start-form" className="form" onSubmit={handleSubmit} noValidate>
+        {errors.form && (
+          <p className="notice notice--danger" role="alert">
+            <Icon name="alertCircle" size={18} />
+            <span>{errors.form}</span>
           </p>
-        </header>
+        )}
 
-        <form onSubmit={handleSubmit} style={styles.form}>
-          <div style={styles.nameRow}>
-            <label style={styles.fieldLabel}>
-              First name *
-              <input
-                style={styles.input}
-                value={firstName}
-                onChange={(event) => setFirstName(event.target.value)}
-                autoComplete="given-name"
-                placeholder="First name"
-              />
-            </label>
-            <label style={styles.fieldLabel}>
-              Last name
-              <input
-                style={styles.input}
-                value={lastName}
-                onChange={(event) => setLastName(event.target.value)}
-                autoComplete="family-name"
-                placeholder="Last name"
-              />
-            </label>
+        {usesAccount ? (
+          <div className="link-card link-card--static">
+            <span className="tile__icon tile__icon--neutral"><Icon name="user" /></span>
+            <span className="row__main">
+              <span className="row__key">Using your account details</span>
+              <span className="row__value">{accountSummary || 'Your patient account'}</span>
+            </span>
           </div>
+        ) : (
+          <div className="field__row">
+            <TextField label="First name" value={firstName} onChange={(event) => setFirstName(event.target.value)} autoComplete="given-name" error={errors.firstName} />
+            <TextField label="Last name" optional value={lastName} onChange={(event) => setLastName(event.target.value)} autoComplete="family-name" />
+          </div>
+        )}
 
-          <label style={styles.fieldLabel}>
-            Phone number *
-            <input
-              style={styles.input}
+        <TextField
+          label="Email for visit updates"
+          type="email"
+          value={contactEmail}
+          onChange={(event) => setContactEmail(event.target.value)}
+          autoComplete="email"
+          error={errors.contactEmail}
+          hint={<FieldHint>Used only for this visit. It doesn’t create an account.</FieldHint>}
+        />
+
+        {!usesAccount && (
+          <>
+            <TextField
+              label="Phone number"
+              optional={isClinic}
+              type="tel"
+              inputMode="tel"
               value={phone}
               onChange={(event) => setPhone(event.target.value)}
               autoComplete="tel"
-              inputMode="tel"
-              placeholder="(555) 123-4567"
+              error={errors.phone}
             />
-          </label>
-
-          <div style={styles.demographicsRow}>
-            <label style={styles.fieldLabel}>
-              Age *
-              <input
-                style={styles.input}
-                value={age}
-                onChange={(event) => setAge(event.target.value.replace(/[^\d]/g, ''))}
+            <div className="field__row">
+              <TextField
+                label="Age"
+                optional={isClinic}
                 inputMode="numeric"
-                placeholder="e.g. 39"
+                value={age}
+                onChange={(event) => setAge(event.target.value.replace(/[^\d]/g, '').slice(0, 3))}
+                error={errors.age}
               />
-            </label>
-
-            <label style={styles.fieldLabel}>
-              Sex *
-              <select
-                style={styles.input}
-                value={gender}
-                onChange={(event) => setGender(event.target.value)}
-              >
+              <SelectField label="Sex" optional={isClinic} value={gender} onChange={(event) => setGender(event.target.value)} error={errors.gender}>
                 <option value="">Select</option>
                 <option value="Female">Female</option>
                 <option value="Male">Male</option>
+                <option value="Non-binary">Non-binary</option>
                 <option value="Intersex">Intersex</option>
                 <option value="Prefer not to say">Prefer not to say</option>
-              </select>
-            </label>
-          </div>
+              </SelectField>
+            </div>
+          </>
+        )}
 
-          <label style={styles.fieldLabel}>
-            What brings you in today? *
-            <textarea
-              style={styles.textArea}
-              value={chiefComplaint}
-              onChange={(event) => setChiefComplaint(event.target.value)}
-              placeholder="Describe the main concern and how quickly it changed."
-              required
-            />
-          </label>
+        <TextAreaField
+          label="What’s the main reason for your visit?"
+          value={chiefComplaint}
+          onChange={(event) => setChiefComplaint(event.target.value.slice(0, COMPLAINT_LIMIT))}
+          placeholder="For example: sore throat and fever since Sunday"
+          rows={3}
+          error={errors.chiefComplaint}
+          count={`${chiefComplaint.length} / ${COMPLAINT_LIMIT}`}
+        />
 
-          <label style={styles.fieldLabel}>
-            Briefly explain the situation
-            <textarea
-              style={styles.textArea}
-              value={details}
-              onChange={(event) => setDetails(event.target.value)}
-              placeholder="Share timing, triggers, what changed, or anything else staff should know."
-            />
-          </label>
+        <TextAreaField
+          label="Anything else the care team should know?"
+          optional
+          value={details}
+          onChange={(event) => setDetails(event.target.value)}
+          placeholder="When it started, what makes it better or worse, medications you’ve taken"
+          rows={3}
+        />
+      </form>
 
-          <button style={styles.primaryButton} type="submit" disabled={submitting}>
-            {submitting ? 'Starting check-in…' : 'Next'}
-          </button>
-        </form>
-
-        <footer style={styles.footer}>
-          <strong>What happens next:</strong> complete a short safety check, answer a few dynamic intake questions, then choose your hospital and notify the care team.
-        </footer>
-      </section>
-    </main>
+      <p className="safety-line">
+        <Icon name="alertTriangle" size={18} />
+        <span><strong>Emergency?</strong> Call 911 or go to the nearest emergency department.</span>
+      </p>
+    </FlowScreen>
   );
 }
-
-const sharedInput: React.CSSProperties = {
-  width: '100%',
-  border: panelBorder,
-  borderRadius: patientTheme.radius.sm,
-  background: '#fff',
-  color: patientTheme.colors.ink,
-  padding: '0.67rem 0.74rem',
-  fontSize: '0.92rem',
-  fontFamily: patientTheme.fonts.body,
-  boxSizing: 'border-box',
-};
-
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    display: 'grid',
-    placeItems: 'center',
-    padding: '1rem',
-    background: heroBackdrop,
-    fontFamily: patientTheme.fonts.body,
-  },
-  card: {
-    width: '100%',
-    maxWidth: '620px',
-    border: panelBorder,
-    borderRadius: patientTheme.radius.xl,
-    background: 'rgba(255, 253, 248, 0.98)',
-    boxShadow: patientTheme.shadows.panel,
-    padding: '1rem',
-    display: 'grid',
-    gap: '0.82rem',
-  },
-  header: {
-    display: 'grid',
-    gap: '0.3rem',
-  },
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    width: 'fit-content',
-    border: panelBorder,
-    borderRadius: '999px',
-    background: '#e9f1ff',
-    color: patientTheme.colors.accentStrong,
-    padding: '0.28rem 0.72rem',
-    fontSize: '0.74rem',
-    fontWeight: 700,
-  },
-  title: {
-    margin: 0,
-    fontFamily: patientTheme.fonts.heading,
-    fontSize: '1.35rem',
-  },
-  subtitle: {
-    margin: 0,
-    fontSize: '0.9rem',
-    lineHeight: 1.45,
-    color: patientTheme.colors.inkMuted,
-  },
-  scenarioSummary: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.md,
-    background: '#fff',
-    padding: '0.75rem',
-  },
-  summaryTitle: {
-    margin: 0,
-    fontSize: '0.9rem',
-    fontFamily: patientTheme.fonts.heading,
-  },
-  summaryBody: {
-    margin: '0.3rem 0 0',
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.86rem',
-    lineHeight: 1.45,
-  },
-  summaryFoot: {
-    margin: '0.35rem 0 0',
-    color: patientTheme.colors.ink,
-    fontSize: '0.82rem',
-  },
-  presetRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.45rem',
-  },
-  form: {
-    display: 'grid',
-    gap: '0.68rem',
-  },
-  twoCol: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '0.5rem',
-  },
-  nameRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '0.5rem',
-  },
-  demographicsRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '0.5rem',
-  },
-  fieldLabel: {
-    display: 'grid',
-    gap: '0.32rem',
-    fontSize: '0.8rem',
-    fontWeight: 700,
-    color: patientTheme.colors.ink,
-  },
-  input: sharedInput,
-  textArea: {
-    ...sharedInput,
-    minHeight: '88px',
-    resize: 'vertical',
-  },
-  primaryButton: {
-    border: 'none',
-    borderRadius: patientTheme.radius.sm,
-    background: patientTheme.colors.accent,
-    color: '#fff',
-    fontWeight: 700,
-    fontSize: '0.92rem',
-    padding: '0.74rem 0.9rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  secondaryButton: {
-    border: panelBorder,
-    borderRadius: patientTheme.radius.sm,
-    background: '#fff',
-    color: patientTheme.colors.ink,
-    padding: '0.48rem 0.74rem',
-    fontWeight: 700,
-    fontSize: '0.8rem',
-    cursor: 'pointer',
-    fontFamily: patientTheme.fonts.body,
-  },
-  backButton: {
-    border: 'none',
-    background: 'none',
-    color: patientTheme.colors.inkMuted,
-    fontWeight: 600,
-    fontSize: '0.84rem',
-    cursor: 'pointer',
-    padding: '0.2rem 0',
-    fontFamily: patientTheme.fonts.body,
-    justifySelf: 'start',
-  },
-  footer: {
-    borderTop: panelBorder,
-    paddingTop: '0.65rem',
-    color: patientTheme.colors.inkMuted,
-    fontSize: '0.81rem',
-    lineHeight: 1.45,
-  },
-};

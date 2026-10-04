@@ -6,6 +6,7 @@ import { EncounterStatus, EventType, Prisma } from '@prisma/client';
 
 import { SensitiveReadAuditService } from '../audit/sensitive-read-audit.service';
 import { EventsService } from '../events/events.service';
+import { normalizeHospitalConfig } from '../hospitals/hospital-config';
 import { LoggingService } from '../logging/logging.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTriageAssessmentDto } from './dto/create-triage-assessment.dto';
@@ -49,6 +50,13 @@ export class TriageService {
       const priorityScore = this.computePriorityScore(dto.ctasLevel, dto.painLevel);
 
       const { assessment, createdEvent, completedEvent } = await this.prisma.$transaction(async (tx) => {
+        const hospital = await tx.hospital.findUnique({
+          where: { id: hospitalId },
+          select: { config: { select: { config: true } } },
+        });
+        if (normalizeHospitalConfig(hospital?.config?.config).workflowProfile === 'CLINIC_APPOINTMENT') {
+          throw new BadRequestException('ED triage assessments are unavailable for clinic encounters');
+        }
         const allowedStatuses = new Set<EncounterStatus>([
           EncounterStatus.ADMITTED,
           EncounterStatus.TRIAGE,

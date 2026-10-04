@@ -4,7 +4,7 @@ Hospital patient monitoring and traffic management platform.
 
 ## Overview
 
-Priage is a comprehensive hospital management system that helps hospitals monitor patients and manage traffic while providing better access to patient information throughout the entire encounter lifecycle.
+The backend serves the existing emergency-department workflow and a gated clinic intake and booking preview. The preview creates `INTAKE` encounters, visit contacts and walk-ins for a pinned clinic, then supports slot requests, Terms/Privacy acceptance and Reception confirmation. The gated preview also includes physician Care and appointment confirmation/reminders with separate verified scheduling recovery; local email defaults to capture. Provider delivery and clinic launch remain gated. See the [clinic pilot plan](../docs/CLINIC_PILOT_PLAN.md), [intake rollout](docs/CLINIC_INTAKE_PREVIEW_ROLLOUT.md) and [booking rollout](docs/CLINIC_BOOKING_PREVIEW_ROLLOUT.md).
 
 ### Technology Stack
 
@@ -12,7 +12,7 @@ Priage is a comprehensive hospital management system that helps hospitals monito
 - **Database**: PostgreSQL with Prisma 7
 - **Caching/Queue**: Redis with BullMQ
 - **Real-time**: Socket.IO
-- **Authentication**: JWT with Passport
+- **Authentication**: Cookie-backed staff sessions with role guards, patient sessions, and partner credentials; JWT assertion verification is available for configured staff SSO
 
 ## Quick Start
 
@@ -41,15 +41,15 @@ For detailed setup instructions, see [docs/QUICK_START.md](./docs/QUICK_START.md
 
 ## Patient Encounter Workflow
 
-Priage manages the complete patient encounter lifecycle:
+The current flow is:
 
-1. **Intake** - Patient creates encounter with chief complaint
-2. **En Route** - Patient provides location and additional information
-3. **Admission** - Staff admits patient upon arrival
-4. **Triage** - Nurses/doctors perform assessment (CTAS scoring)
-5. **Waiting** - Patient waits for treatment
-6. **Examination** - Medical staff provides care
-7. **Discharge** - Patient is discharged and encounter completed
+1. **Intake draft** - Patient supplies a chief complaint and completes the AI interview.
+2. **Hospital selection and confirmation** - The draft becomes an `EXPECTED` encounter.
+3. **Arrival** - Staff changes `EXPECTED` to `ADMITTED`; this action is currently named `confirm` in one API route.
+4. **Triage or waiting** - Staff may move the encounter to `TRIAGE` or `WAITING` and record a CTAS assessment.
+5. **Completion** - Staff may move an active encounter to `COMPLETE`; cancellation and unresolved exits also exist.
+
+The gated clinic preview has a separate appointment confirmation action before arrival. A Care workspace for the physician remains to build. See [the proposed state model](../docs/CLINIC_PILOT_PLAN.md#recommended-product-model).
 
 Throughout this workflow:
 - Staff can communicate with patients via messaging
@@ -318,6 +318,10 @@ Internal use only - Priage Hospital Management System
 
 ---
 
-**Version**: 0.1.0  
-**Last Updated**: January 20, 2026  
+**Version**: 0.1.0
+**Last Updated**: September 26, 2026
 **Maintained By**: John Surette
+
+### Clinic appointment communications
+
+The gated clinic preview now supports transactional confirmation/reminders, Resend and local capture delivery, Reception delivery history, Admin email settings and separate verified scheduling recovery. See the [communications rollout](docs/CLINIC_COMMUNICATIONS_PREVIEW_ROLLOUT.md) for configuration, US external processing, test modes and launch gates. Run `npm run test:clinic-communications-smoke` against a loopback mock PostgreSQL database after building.

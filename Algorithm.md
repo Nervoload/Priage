@@ -1,5 +1,7 @@
 # Priage Queue Priority Algorithm
 
+This document describes the existing emergency-department Waiting Room feature. The proposed clinic pilot hides that screen and does not use this queue ranking for appointments or physician Care. See [the clinic pilot plan](docs/CLINIC_PILOT_PLAN.md).
+
 ## Overview
 
 The Priage queue priority algorithm determines the order patients should be seen in the emergency department waiting room. It balances **clinical urgency** (CTAS level) with **wait-time fairness** so that higher-acuity patients are always prioritized, while lower-acuity patients are never left waiting indefinitely.

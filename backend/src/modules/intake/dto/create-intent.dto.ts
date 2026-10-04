@@ -1,10 +1,14 @@
 // backend/src/modules/intake/dto/create-intent.dto.ts
 
-import { IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsEmail, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 
-import { Sanitize } from '../../../common/decorators/sanitize.decorator';
+import { Sanitize, SanitizeEmail } from '../../../common/decorators/sanitize.decorator';
 
 export class CreateIntentDto {
+  @IsEmail()
+  @SanitizeEmail()
+  contactEmail!: string;
+
   @IsString()
   @MinLength(1)
   @MaxLength(120)

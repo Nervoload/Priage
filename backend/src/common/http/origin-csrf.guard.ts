@@ -1,13 +1,15 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 
 import { getAllowedCorsOrigins } from './cors.util';
-import { PATIENT_SESSION_COOKIE, STAFF_AUTH_COOKIE, parseCookieHeader } from './auth-cookie.util';
+import { APPOINTMENT_RECOVERY_COOKIE, PATIENT_SESSION_COOKIE, STAFF_AUTH_COOKIE, parseCookieHeader } from './auth-cookie.util';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const PROTECTED_MUTATION_PREFIXES = [
   '/alerts',
   '/analytics',
   '/assets',
+  '/clinic-intake',
+  '/clinic-notifications',
   '/encounters',
   '/hospitals',
   '/intake',
@@ -76,7 +78,7 @@ function isProtectedMutation(req: Record<string, any>): boolean {
 
 function hasSessionCookie(req: Record<string, any>): boolean {
   const cookies = parseCookieHeader(req.headers?.cookie);
-  return Boolean(cookies[STAFF_AUTH_COOKIE] || cookies[PATIENT_SESSION_COOKIE]);
+  return Boolean(cookies[STAFF_AUTH_COOKIE] || cookies[PATIENT_SESSION_COOKIE] || cookies[APPOINTMENT_RECOVERY_COOKIE]);
 }
 
 @Injectable()

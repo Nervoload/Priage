@@ -12,6 +12,7 @@ import * as bcrypt from 'bcrypt';
 import { verify as verifyJwt, type JwtPayload } from 'jsonwebtoken';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { ClinicPilotService } from '../clinic/clinic-pilot.service';
 import { LoggingService } from '../logging/logging.service';
 import { STAFF_AUTH_TTL_MS } from '../../common/http/auth-cookie.util';
 import { LoginDto } from './dto/login.dto';
@@ -66,6 +67,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly loggingService: LoggingService,
     private readonly staffMfa: StaffMfaService,
+    private readonly pilot: ClinicPilotService,
   ) {
     this.logger.log('AuthService initialized');
   }
@@ -121,6 +123,7 @@ export class AuthService {
 
       const membership = selectMembershipForLogin(user.hospitalMemberships, dto.hospitalSlug);
       if (!membership) throw new UnauthorizedException('Invalid credentials');
+      this.assertPilotMembership(membership.hospitalId);
 
       const mfaRequired = user.mfaEnabled || this.readBooleanEnv('STAFF_MFA_REQUIRED', false);
       if (mfaRequired) {
@@ -243,6 +246,7 @@ export class AuthService {
 
     const membership = selectMembershipForLogin(user.hospitalMemberships, hospitalSlug);
     if (!membership) throw new UnauthorizedException('SSO identity is not provisioned');
+    this.assertPilotMembership(membership.hospitalId);
 
     const { sessionToken, session } = await this.createSession(
       user.id,
@@ -365,6 +369,7 @@ export class AuthService {
       }
 
       const membership = session.membership;
+      this.assertPilotMembership(membership.hospitalId);
 
       if (session.revokedAt) {
         await this.loggingService.warn('Staff session validation failed - session revoked', {
@@ -502,6 +507,12 @@ export class AuthService {
       sessionId: existing.id,
       reason,
     });
+  }
+
+  private assertPilotMembership(hospitalId: number): void {
+    if (this.pilot.hospitalId && hospitalId !== this.pilot.hospitalId) {
+      throw new UnauthorizedException('Staff session is unavailable on this deployment');
+    }
   }
 
   private generateSessionToken(): string {

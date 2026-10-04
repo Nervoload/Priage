@@ -7,7 +7,6 @@ import { randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import {
   ContextSourceType,
-  EncounterStatus,
   Prisma,
   ReviewState,
   TrustTier,
@@ -26,13 +25,7 @@ import { SubmitPatientFeedbackDto } from './dto/submit-feedback.dto';
 import { DeletePatientAccountDto } from './dto/delete-account.dto';
 import { hashPatientPassword } from './patient-password.util';
 import { generatePatientSessionToken, hashPatientSessionToken } from './patient-session-token.util';
-
-const ACTIVE_SESSION_ENCOUNTER_STATUSES: EncounterStatus[] = [
-  EncounterStatus.EXPECTED,
-  EncounterStatus.ADMITTED,
-  EncounterStatus.TRIAGE,
-  EncounterStatus.WAITING,
-];
+import { ACTIVE_ENCOUNTER_STATUSES, isActiveEncounterStatus } from '../../shared/types/encounter-status';
 
 @Injectable()
 export class PatientAuthService {
@@ -67,6 +60,7 @@ export class PatientAuthService {
       data: {
         email: dto.email,
         password: hashedPassword,
+        accountEnabled: true,
         firstName: dto.firstName,
         lastName: dto.lastName,
         phone: dto.phone,
@@ -111,7 +105,7 @@ export class PatientAuthService {
       where: { email: dto.email },
     });
 
-    if (!patient) {
+    if (!patient || !patient.accountEnabled) {
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -132,7 +126,7 @@ export class PatientAuthService {
           {
             encounter: {
               status: {
-                in: ACTIVE_SESSION_ENCOUNTER_STATUSES,
+                in: ACTIVE_ENCOUNTER_STATUSES,
               },
             },
           },
@@ -174,7 +168,7 @@ export class PatientAuthService {
       where: { id: patientId },
     });
 
-    if (!patient) {
+    if (!patient || !patient.accountEnabled) {
       throw new UnauthorizedException('Patient not found');
     }
 
@@ -283,11 +277,11 @@ export class PatientAuthService {
       where: { id: patientId },
     });
 
-    if (!patient) {
+    if (!patient || !patient.accountEnabled) {
       throw new UnauthorizedException('Patient not found');
     }
 
-    if (dto.email.trim().toLowerCase() !== patient.email.trim().toLowerCase()) {
+    if (dto.email !== patient.email) {
       throw new BadRequestException('Enter the exact account email to confirm deletion');
     }
 
@@ -309,6 +303,7 @@ export class PatientAuthService {
         data: {
           email: deletedEmail,
           password: replacementPassword,
+          accountEnabled: false,
           firstName: null,
           lastName: null,
           phone: null,
@@ -368,7 +363,7 @@ export class PatientAuthService {
     }
 
     // Only allow upgrade for guest profiles (intake.local placeholder emails)
-    if (!patient.email.endsWith('@intake.local')) {
+    if (patient.accountEnabled || !patient.email.endsWith('@intake.local')) {
       throw new BadRequestException('This account is already a full account');
     }
 
@@ -387,6 +382,7 @@ export class PatientAuthService {
       data: {
         email: dto.email,
         password: hashedPassword,
+        accountEnabled: true,
         firstName: dto.firstName ?? patient.firstName,
         lastName: dto.lastName ?? patient.lastName,
         phone: dto.phone ?? patient.phone,
@@ -415,7 +411,7 @@ export class PatientAuthService {
 
     const reusableEncounterId =
       currentSession?.encounterId && currentSession.encounter
-        ? ACTIVE_SESSION_ENCOUNTER_STATUSES.includes(currentSession.encounter.status)
+        ? isActiveEncounterStatus(currentSession.encounter.status)
           ? currentSession.encounterId
           : null
         : currentSession?.encounterId ?? null;
@@ -443,7 +439,7 @@ export class PatientAuthService {
   }
 
   private sanitizePatient(patient: any) {
-    const { password, ...safe } = patient;
+    const { password, accountEnabled, ...safe } = patient;
     return safe;
   }
 

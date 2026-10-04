@@ -1,8 +1,16 @@
 import type { CookieOptions } from 'express';
 
-export const STAFF_AUTH_COOKIE = 'priage_staff_auth';
-export const STAFF_DEVICE_COOKIE = 'priage_staff_device';
-export const PATIENT_SESSION_COOKIE = 'priage_patient_session';
+const namespace = process.env.AUTH_COOKIE_NAMESPACE?.trim();
+if (namespace && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(namespace)) {
+  throw new Error('AUTH_COOKIE_NAMESPACE must be a lowercase tenant slug');
+}
+const cookieSuffix = namespace ? `_${namespace.replaceAll('-', '_')}` : '';
+
+export const STAFF_AUTH_COOKIE = `priage_staff_auth${cookieSuffix}`;
+export const STAFF_DEVICE_COOKIE = `priage_staff_device${cookieSuffix}`;
+export const PATIENT_SESSION_COOKIE = `priage_patient_session${cookieSuffix}`;
+export const CLINIC_ASSESSMENT_COOKIE = `priage_clinic_assessment${cookieSuffix}`;
+export const APPOINTMENT_RECOVERY_COOKIE = `priage_appointment_recovery${cookieSuffix}`;
 
 const DEFAULT_STAFF_AUTH_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_PATIENT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
